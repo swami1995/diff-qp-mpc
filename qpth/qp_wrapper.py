@@ -253,15 +253,15 @@ class MPC(Module):
             u = self.u_init
             if u.ndimension() == 2:
                 u = u.unsqueeze(1).expand(self.T, n_batch, -1).clone()
-        u = u.type_as(x_init.data)
+        u = u.type_as(x0.data)
 
         if self.x_init is None:
-            x = torch.zeros(self.T, n_batch, self.n_ctrl).type_as(x_init.data)
+            x = torch.zeros(self.T, n_batch, self.n_ctrl).type_as(x0.data)
         else:
             x = self.x_init
             if x.ndimension() == 2:
                 x = x.unsqueeze(1).expand(self.T, n_batch, -1).clone()
-        x = x.type_as(x_init.data)
+        x = x.type_as(x0.data)
 
         if self.verbose > 0:
             print('Initial mean(cost): {:.4e}'.format(
