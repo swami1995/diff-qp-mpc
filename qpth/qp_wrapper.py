@@ -13,10 +13,10 @@ from enum import Enum
 import sys
 
 from . import util
-from .pnqp import pnqp
-from .lqr_step import LQRStep
-from .dynamics import CtrlPassthroughDynamics
-
+# from .pnqp import pnqp
+# from .lqr_step import LQRStep
+# from .dynamics import CtrlPassthroughDynamics
+import qp
 
 QuadCost = namedtuple('QuadCost', 'C c')
 LinDx = namedtuple('LinDx', 'F f')
@@ -193,8 +193,8 @@ class MPC(Module):
 
         idx = torch.arange(n_state + n_ctrl)
         idx_0, idx_1 = torch.meshgrid(idx, idx)
-        self.Q_slices_xu1 = torch.cat([idx_1 + (n_state+n_ctrl)*i for i in range(T)], dim=0)
-        self.Q_slices_xu0 = torch.cat([idx_0 + (n_state+n_ctrl)*i for i in range(T)], dim=0)
+        self.Q_slices_xu1 = torch.cat([idx_1 + (n_state+n_ctrl)*i for i in range(T+1)], dim=0)
+        self.Q_slices_xu0 = torch.cat([idx_0 + (n_state+n_ctrl)*i for i in range(T+1)], dim=0)
 
 
         def flatmeshgrid(*args, **kwargs):
@@ -279,18 +279,18 @@ class MPC(Module):
                 x, util.detach_maybe(u), dx, diff=False)
         
         Q, q = self.compute_Qq_dense(cost.C, cost.c)
-        A, b = self.compute_Ab_dense(F, f)
-        G1, h1 = torch.cat([torch.zeros(self.n_batch, self.n_ctrl, self.n_state), torch.eye(self.n_ctrl)[None]], dim=2), torch.ones(self.n_batch, self.n_ctrl)*self.u_upper
-        G2, h2 = -torch.cat([torch.zeros(self.n_batch, self.n_ctrl, self.n_state), torch.eye(self.n_ctrl)[None]], dim=2), -torch.ones(self.n_batch, self.n_ctrl)*self.u_lower
+        A, b = self.compute_Ab_dense(F, f, x0)
+        G1, h1 = torch.cat([torch.zeros(self.n_batch, self.n_ctrl, self.n_state), torch.eye(self.n_ctrl)[None]], dim=2), torch.ones((self.n_batch, self.n_ctrl))*self.u_upper
+        G2, h2 = -torch.cat([torch.zeros(self.n_batch, self.n_ctrl, self.n_state), torch.eye(self.n_ctrl)[None]], dim=2), -torch.ones((self.n_batch, self.n_ctrl))*self.u_lower
         G, h = torch.cat([G1, G2], dim=1), torch.cat([h1, h2], dim=1)
-        xhats_qpf = qpth.qp.QPFunction()(Q, q, G, h, A, b)
+        xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
             
-        # Q, q = self.compute_Qq_dense(cost.C, cost.c)
-        # A, b = self.compute_Ab_dense(F, f)
+        # Q, q = self.compute_Qq_sparse(cost.C, cost.c)
+        # A, b = self.compute_Ab_sparse(F, f)
         # G1, h1 = torch.cat([torch.zeros(self.n_batch, self.n_ctrl, self.n_state), torch.eye(self.n_ctrl)[None]], dim=2), torch.ones(self.n_batch, self.n_ctrl)*self.u_upper
         # G2, h2 = -torch.cat([torch.zeros(self.n_batch, self.n_ctrl, self.n_state), torch.eye(self.n_ctrl)[None]], dim=2), -torch.ones(self.n_batch, self.n_ctrl)*self.u_lower
         # G, h = torch.cat([G1, G2], dim=1), torch.cat([h1, h2], dim=1)
-        # xhats_qpf = qpth.qp.SpQPFunction(Qi, Qsz, Gi, Gsz, Ai, Asz)(Qv, p, Gv, h, Av, b)
+        # xhats_qpf = qp.SpQPFunction(Qi, Qsz, Gi, Gsz, Ai, Asz)(Qv, p, Gv, h, Av, b)
         xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T+1, -1)
         x = xhats_qpf[:, :, :self.n_state].transpose(0,1)
         u = xhats_qpf[:, :, self.n_state:].transpose(0,1)
@@ -453,17 +453,20 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
                 F, f = list(map(Variable, [F, f]))
             return F, f
 
-    def compute_Ab_dense(self, F, f):
+    def compute_Ab_dense(self, F, f, x0):
         T, n_batch, n_state, n_tau = F.size()
-        A = torch.zeros(n_batch, T*n_state, T*n_tau)
+        A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau)
+        b = torch.zeros(n_batch, (T+1)*n_state)
         A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
         A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
-        b = f.transpose(0,1).contiguous().view(n_batch, -1)
+        A[:, T*n_state:, :n_state] += torch.eye(n_state).unsqueeze(0)#.expand(n_batch, n_state, n_state)
+        b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
+        b[:, T*n_state:] = x0
         return A, b
 
     def compute_Qq_dense(self, C, c):
         T, n_batch, n_tau, n_tau = C.size()
-        Q = torch.zeros(n_batch, T*n_tau, T*n_tau)
+        Q = torch.zeros(n_batch, (T+1)*n_tau, (T+1)*n_tau)
         Q[:, self.Q_slices_xu0, self.Q_slices_xu1] = C.transpose(0,1).contiguous().view(n_batch, -1)
         q = c.transpose(0,1).contiguous().view(n_batch, -1)
         return Q, q
