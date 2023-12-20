@@ -5,10 +5,15 @@ from .util import bger, expandParam, extract_nBatch
 from . import solvers
 from .solvers.pdipm import batch as pdipm_b
 from .solvers.pdipm import spbatch as pdipm_spb
+from .solvers.pdipm import SparseStructure as ss
+from .solvers.pdipm import spbatch_LU as pdipm_spb_LU
+from .solvers.pdipm import batch_LU as pdipm_b_LU
 # from .solvers.pdipm import single as pdipm_s
 
 from enum import Enum
-
+from qpth.extlib.cusolver_lu_solver import CusolverLUSolver
+from typing import Any, Dict, List, Optional, Type, Union
+import ipdb
 
 class QPSolvers(Enum):
     PDIPM_BATCHED = 1
@@ -80,8 +85,8 @@ def QPFunction(eps=1e-12, verbose=0, notImprovedLim=3,
 
             if check_Q_spd:
                 for i in range(nBatch):
-                    e, _ = torch.eig(Q[i])
-                    if not torch.all(e[:,0] > 0):
+                    e, _ = torch.linalg.eig(Q[i])
+                    if not torch.all(e.real > 0):
                         raise RuntimeError('Q is not SPD.')
 
             _, nineq, nz = G.size()
@@ -201,7 +206,7 @@ class SpQPFunction(Function):
     def forward(self, Qv, p, Gv, h, Av, b):
         self.nBatch = Qv.size(0)
 
-        zhats, self.nus, self.lams, self.slacks = pdipm_spb.forward(
+        zhats, self.nus, self.lams, self.slacks, K = pdipm_spb.forward(
             self.Qi, Qv, self.Qsz, p, self.Gi, Gv, self.Gsz, h,
             self.Ai, Av, self.Asz, b, self.eps, self.verbose,
             self.notImprovedLim, self.maxIter)
@@ -250,3 +255,273 @@ class SpQPFunction(Function):
         grads = (dQs, dps, dGs, dhs, dAs, dbs)
 
         return grads
+
+
+
+def SparseQPFunction(Qi, Gi, Ai, bsz = 1,
+                 eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20):
+    
+    # def __init__(self, ):
+    #     super(SparseQPFunction, self).__init__()
+        # Qi = Qi
+        # Gi = Gi
+        # Ai = Ai
+    GTi = Gi.transpose()
+    ATi = Ai.transpose()
+    Qcol_idx, Qrw_ptr = Qi.col_ind, Qi.row_ptr
+    Gcol_idx, Grw_ptr = Gi.col_ind, Gi.row_ptr
+    Acol_idx, Arw_ptr = Ai.col_ind, Ai.row_ptr
+    GTcol_idx, GTrw_ptr = GTi.col_ind, GTi.row_ptr
+    ATcol_idx, ATrw_ptr = ATi.col_ind, ATi.row_ptr
+
+    def compute_KKT_i():
+        Kcol_idx = []
+        Krow_idx = []
+        Krw_ptr = [0]
+        Ki_cat_idx = []
+        Ki_cat_idx1 = []
+        for i in range(len(Qrw_ptr)-1):
+            Kcol_idx.append(Qcol_idx[Qrw_ptr[i]:Qrw_ptr[i+1]])
+            Kcol_idx.append(GTcol_idx[GTrw_ptr[i]:GTrw_ptr[i+1]] + Qi.num_cols + Gi.num_rows)
+            Kcol_idx.append(ATcol_idx[ATrw_ptr[i]:ATrw_ptr[i+1]] + Qi.num_cols + Gi.num_rows + Gi.num_rows)
+
+            num_elems = Kcol_idx[-1].shape[-1] + Kcol_idx[-2].shape[-1] + Kcol_idx[-3].shape[-1]
+            Krow_idx.append(torch.Tensor([i]*num_elems))
+            Krw_ptr.append(Krw_ptr[-1] + num_elems)
+
+            Ki_cat_idx1.append(torch.arange(Qrw_ptr[i],Qrw_ptr[i+1]))
+            Ki_cat_idx1.append(torch.arange(GTrw_ptr[i], GTrw_ptr[i+1]) + Qrw_ptr[-1])
+            Ki_cat_idx1.append(torch.arange(ATrw_ptr[i], ATrw_ptr[i+1]) + Qrw_ptr[-1] + GTrw_ptr[-1])
+        
+        Ki_cat_idx2 = []
+        for i in range(len(Grw_ptr)-1):
+            Kcol_idx.append(torch.Tensor([Qi.num_cols + i]))
+            Kcol_idx.append(torch.Tensor([Qi.num_cols + Gi.num_rows + i]))
+
+            num_elems = 2
+            Krow_idx.append(torch.Tensor([i+Qi.num_rows]*num_elems))
+            Krw_ptr.append(Krw_ptr[-1] + num_elems)
+
+            Ki_cat_idx2.append(torch.Tensor([i]))
+            Ki_cat_idx2.append(torch.Tensor([i]) + Gi.num_rows)
+
+        Ki_cat_idx3 = []
+        for i in range(len(Grw_ptr)-1):
+            Kcol_idx.append(Gcol_idx[Grw_ptr[i]:Grw_ptr[i+1]])   
+            Kcol_idx.append(torch.Tensor([Gi.num_cols + i]))
+            Kcol_idx.append(torch.Tensor([Gi.num_cols + Gi.num_rows + i]))
+
+            num_elems = Kcol_idx[-1].shape[-1] + Kcol_idx[-2].shape[-1] + Kcol_idx[-3].shape[-1]
+            Krow_idx.append(torch.Tensor([i+Qi.num_rows+Gi.num_rows]*num_elems))
+            Krw_ptr.append(Krw_ptr[-1] + num_elems)
+
+            Ki_cat_idx3.append(torch.arange(Grw_ptr[i], Grw_ptr[i+1]))
+            Ki_cat_idx3.append(torch.Tensor([i]) + Grw_ptr[-1])
+            Ki_cat_idx3.append(torch.Tensor([i]) + Grw_ptr[-1] + Gi.num_rows)
+
+        Ki_cat_idx4 = []
+        for i in range(len(Arw_ptr)-1):
+            Kcol_idx.append(Acol_idx[Arw_ptr[i]:Arw_ptr[i+1]])
+            Kcol_idx.append(torch.Tensor([Ai.num_cols + Gi.num_rows + Gi.num_rows + i]))
+
+            num_elems = Kcol_idx[-1].shape[-1] + Kcol_idx[-2].shape[-1]
+            Krow_idx.append(torch.Tensor([i+Qi.num_rows+Gi.num_rows]*num_elems))
+            Krw_ptr.append(Krw_ptr[-1] + num_elems)
+
+            Ki_cat_idx4.append(torch.arange(Arw_ptr[i], Arw_ptr[i+1]))
+            Ki_cat_idx4.append(torch.Tensor([i]) + Arw_ptr[-1])
+
+        Ki_cat_idx.append(torch.cat(Ki_cat_idx1).long())
+        Ki_cat_idx.append(torch.cat(Ki_cat_idx2).long())
+        Ki_cat_idx.append(torch.cat(Ki_cat_idx3).long())
+        Ki_cat_idx.append(torch.cat(Ki_cat_idx4).long())
+        Kcol_idx = torch.cat(Kcol_idx).int()
+        Krw_ptr = torch.Tensor(Krw_ptr).int()
+        Krow_idx = torch.cat(Krow_idx).int()
+        # ipdb.set_trace()
+        return Kcol_idx, Krw_ptr, Ki_cat_idx#Krow_idx, 
+
+    
+    Kcol_idx, Krw_ptr, Ki_cat_idx = compute_KKT_i()
+    num_rows = num_cols = Qi.num_cols + Gi.num_rows*2 + Ai.num_rows
+    Ki = ss.SparseStructure(Krw_ptr, Kcol_idx, num_rows=num_rows, num_cols=num_cols)
+    Ki_cat_idx = Ki_cat_idx
+
+    eps = eps
+    verbose = verbose
+    notImprovedLim = notImprovedLim
+    maxIter = maxIter
+
+    nineq, nz = Gi.size()
+    neq, _ = Ai.size()
+    # ipdb.set_trace()
+    _solver_contexts: List[CusolverLUSolver] = [
+        CusolverLUSolver(
+            bsz,
+            Ki.shape[1],
+            Ki.row_ptr.cuda().int(),
+            Ki.col_ind.cuda().int(),
+        )
+        for _ in range(10)
+    ]
+    
+    def make_csrs(Qv, Gv, Av):
+        # ipdb.set_trace()
+        nbatch = Qv.size(0)
+        Q = ss.SparseStructure(Qrw_ptr[None].repeat(nbatch, 1), Qcol_idx[None].repeat(nbatch, 1), Qv, Qi.num_rows,Qi.num_cols).double().cuda()
+        G = ss.SparseStructure(Grw_ptr[None].repeat(nbatch, 1), Gcol_idx[None].repeat(nbatch, 1), Gv, Gi.num_rows,Gi.num_cols).double().cuda()
+        A = ss.SparseStructure(Arw_ptr[None].repeat(nbatch, 1), Acol_idx[None].repeat(nbatch, 1), Av, Ai.num_rows,Ai.num_cols).double().cuda()
+        GT = G.transpose()
+        AT = A.transpose()
+        return Q, G, GT, A, AT
+        
+    class Solver(Function):
+        @staticmethod
+        def forward(ctx, Qv, p, Gv, h, Av, b):
+            nBatch = Qv.size(0)
+            Q, G, GT, A, AT = make_csrs(Qv, Gv, Av)
+            p = p.double().cuda()
+            h = h.double().cuda()
+            b = b.double().cuda()
+            # ipdb.set_trace()
+
+            zhats, nus, lams, slacks, K, Ktilde = pdipm_spb_LU.forward(
+                _solver_contexts[0], Ki, Ki_cat_idx, Q, p, G, GT, h, A, AT, b, eps, verbose,
+                notImprovedLim, maxIter)
+
+            ctx.save_for_backward(zhats, nus, lams, K.value, Ktilde.value, K.row_ptr, K.col_ind, Q.value, p, G.value, A.value)
+            return zhats
+
+        @staticmethod
+        def backward(ctx, dl_dzhat):
+            zhats, nus, lams, Kv, Ktildev, Kr, Kc, Qv, p, Gv, Av = ctx.saved_tensors
+
+            # Di = type(Qi)([range(nineq), range(nineq)])
+            # Dv = lams / slacks
+            # Dsz = torch.Size([nineq, nineq])
+            K = ss.SparseStructure(Kr, Kc, Kv)#, num_rows=num_rows, num_cols=num_cols)
+            Ktilde = ss.SparseStructure(Kr, Kc, Ktildev)#, num_rows=num_rows, num_cols=num_cols)
+            nBatch = Qv.shape[0]
+
+            dx, _, dlam, dnu = pdipm_spb_LU.solve_kkt(
+                _solver_contexts[0], K, Ktilde, dl_dzhat,
+                type(p)(nBatch, nineq).zero_().to(dl_dzhat),
+                type(p)(nBatch, nineq).zero_().to(dl_dzhat),
+                type(p)(nBatch, neq).zero_().to(dl_dzhat))
+
+            dps = dx
+
+            dGs = bger(dlam, zhats) + bger(lams, dx)
+            GM = torch.sparse_csr_tensor(Gi.row_ptr, Gi.col_ind, Gi.value).to_dense().bool().expand_as(dGs)
+            # GM = torch.cuda.sparse.DoubleTensor(
+                # Gi, G[0].clone().fill_(1.0), Gsz
+            # ).to_dense().byte().expand_as(dGs)
+            dGs = dGs[GM].view_as(Gv)
+
+            dhs = -dlam
+
+            dAs = bger(dnu, zhats) + bger(nus, dx)
+            # AM = torch.cuda.sparse.DoubleTensor(
+            #     Ai, A[0].clone().fill_(1.0), Asz
+            # ).to_dense().byte().expand_as(dAs)
+            # ipdb.set_trace()
+            AM = torch.sparse_csr_tensor(Ai.row_ptr, Ai.col_ind, Ai.value, size=(Ai.num_rows, Ai.num_cols)).to_dense().bool().expand_as(dAs)
+            dAs = dAs[AM].view_as(Av)
+
+            dbs = -dnu
+
+            dQs = 0.5 * (bger(dx, zhats) + bger(zhats, dx))
+            QM = torch.sparse_csr_tensor(Qi.row_ptr, Qi.col_ind, Qi.value).to_dense().bool().expand_as(dQs)
+            dQs = dQs[QM].view_as(Qv)
+
+            # grads = (dQs.cpu(), dps.cpu(), dGs.cpu(), dhs.cpu(), dAs.cpu(), dbs.cpu())
+            grads = (dQs, dps, dGs, dhs, dAs, dbs)
+
+            return grads
+    return Solver.apply
+
+
+def DenseQPFunction(bsz = 1,
+                 eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20):
+    
+    eps = eps
+    verbose = verbose
+    notImprovedLim = notImprovedLim
+    maxIter = maxIter
+
+    def preprocess(Q, G, A):
+        # ipdb.set_trace()
+        nz = Q.size(1)
+        neq = A.size(1)
+        nineq = G.size(1)
+        nbatch = Q.size(0)
+        GT = G.transpose(dim0=-2, dim1=-1)
+        AT = A.transpose(dim0=-2, dim1=-1)
+        Zidx = torch.stack([torch.arange(nz, nz+nineq)]*2, dim=0)
+        Sidx = torch.stack([torch.arange(nz, nz+nineq), torch.arange(nz+nineq, nz+2*nineq)]*2, dim=0)
+        Didx = (Zidx, Sidx)
+        Iin = torch.eye(nineq)[None].to(Q).repeat(nbatch, 1, 1)
+        Z1 = torch.zeros(neq, nineq)[None].to(Q).repeat(nbatch, 1, 1)
+        Z2 = torch.zeros(nineq, neq)[None].to(Q).repeat(nbatch, 1, 1)
+        Z3 = torch.zeros(nineq, nineq)[None].to(Q).repeat(nbatch, 1, 1)
+        Z4 = torch.zeros(neq, neq)[None].to(Q).repeat(nbatch, 1, 1)
+        K1 = torch.cat([Q, GT*0, GT, AT], dim=-1)
+        K2 = torch.cat([G*0, Iin, Iin, Z2], dim=-1)
+        K3 = torch.cat([G, Iin, Z3, Z2], dim=-1)
+        K4 = torch.cat([A, Z1, Z1, Z4], dim=-1)
+        K = torch.cat([K1, K2, K3, K4], dim=-2)#.double()
+
+        return K, GT, AT, Didx
+        
+    class Solver(Function):
+        @staticmethod
+        def forward(ctx, Q, p, G, h, A, b):
+            nBatch = Q.size(0)
+            # Q = Q.double()#.cuda()
+            # G = G.double()#.cuda()
+            # A = A.double()#.cuda()
+            # p = p.double()#.cuda()
+            # h = h.double()#.cuda()
+            # b = b.double()#.cuda()
+            K, GT, AT, Didx = preprocess(Q, G, A)
+
+            zhats, nus, lams, slacks, K = pdipm_b_LU.forward(
+                K, Didx, Q, p, G, GT, h, A, AT, b, eps, verbose,
+                notImprovedLim, maxIter)
+
+            ctx.save_for_backward(zhats, nus, lams, K, Q, p, G, A)
+            return zhats
+
+        @staticmethod
+        def backward(ctx, dl_dzhat):
+            zhats, nus, lams, K, Q, p, G, A = ctx.saved_tensors
+
+            # Di = type(Qi)([range(nineq), range(nineq)])
+            # Dv = lams / slacks
+            # Dsz = torch.Size([nineq, nineq])
+            nBatch = Q.size(0)
+            nineq, neq = G.size(1), A.size(1)
+
+            dx, _, dlam, dnu = pdipm_b_LU.solve_kkt(
+                K, K, dl_dzhat,
+                torch.zeros(nBatch, nineq).to(p),
+                torch.zeros(nBatch, nineq).to(p),
+                torch.zeros(nBatch, neq).to(p))
+
+            dps = dx
+
+            dGs = bger(dlam, zhats) + bger(lams, dx)
+
+            dhs = -dlam
+
+            dAs = bger(dnu, zhats) + bger(nus, dx)
+
+            dbs = -dnu
+
+            dQs = 0.5 * (bger(dx, zhats) + bger(zhats, dx))
+            # ipdb.set_trace()
+
+            grads = (dQs, dps, dGs, dhs, dAs, dbs)
+
+            return grads
+    return Solver.apply

@@ -7,3 +7,4 @@ gurobi.log
 *.html
 
 .ipynb_checkpoints
+.vscode

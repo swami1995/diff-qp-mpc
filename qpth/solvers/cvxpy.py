@@ -1,5 +1,9 @@
-import cvxpy as cp
+
 import numpy as np
+try:
+    import cvxpy as cp
+except ImportError:
+    print("cvxpy not installed, skipping test")
 
 
 def forward_single_np(Q, p, G, h, A, b):
