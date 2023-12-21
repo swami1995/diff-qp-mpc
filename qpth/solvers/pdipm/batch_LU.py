@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from enum import Enum
-from . import SparseStructure as ss
 # from block import block
 import ipdb
 

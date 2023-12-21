@@ -16,7 +16,6 @@ from . import util
 # from .pnqp import pnqp
 # from .lqr_step import LQRStep
 # from .dynamics import CtrlPassthroughDynamics
-from .solvers.pdipm import SparseStructure as ss
 from . import qp
 import ipdb
 
@@ -204,38 +203,7 @@ class MPC(Module):
             self.Q_slices_xu0 = torch.cat([idx_0 + (n_state+n_ctrl)*i for i in range(T)], dim=0).view(-1)
 
             self.G_slices_uu1 = torch.cat([torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(i) for i in range(T)], dim=0).view(-1)
-            self.G_slices_uu0 = torch.cat([torch.arange(n_ctrl) + (n_ctrl)*i for i in range(T)], dim=0).view(-1)
-        elif solver_type == 'sparse':            
-            Qrw_ptr = torch.arange(0, (n_state+n_ctrl)*(T)+1)
-            Qcol_ind = torch.arange(0, (n_state+n_ctrl)*(T))
-            Acol_ind = []
-            Arw_ptr = [0]
-            
-            for i in range(n_state*(T-1)):
-                i_ = i // n_state
-                j = i % n_state
-                Acol_ind.append(torch.arange(n_state + n_ctrl) + (n_state+n_ctrl)*(i_))
-                Acol_ind.append(torch.Tensor([j]).long() + (n_state+n_ctrl)*(i_+1))
-                Arw_ptr.append(Acol_ind[-2].shape[0] + Acol_ind[-1].shape[0] + Arw_ptr[-1])
-            Acol_ind.append(torch.arange(n_state))
-            Arw_ptr += list(Arw_ptr[-1] + np.arange(n_state) + 1)
-            # ipdb.set_trace()
-            Arw_ptr = torch.Tensor(Arw_ptr).long()
-            Acol_ind = torch.cat(Acol_ind, dim=0)
-            
-            if u_upper is None:
-                Grw_ptr = torch.arange(0, n_ctrl+1)
-                Gcol_ind = torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(T-1)
-            else:
-                Grw_ptr = torch.arange(0, n_ctrl*(T)*2+1)
-                Gcol_ind = torch.cat([torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(i) for i in range(T)], dim=0).view(-1)
-                Gcol_ind = torch.cat([Gcol_ind, Gcol_ind], dim=0)
-                # Gcol_ind = torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(T-1)
-
-            self.Qi = ss.SparseStructure(Qrw_ptr, Qcol_ind)
-            self.Ai = ss.SparseStructure(Arw_ptr, Acol_ind, value=None, num_rows=n_state*T, num_cols=(n_state+n_ctrl)*T)
-            self.Gi = ss.SparseStructure(Grw_ptr, Gcol_ind)
-            self.QP = qp.SparseQPFunction(self.Qi, self.Gi, self.Ai, bsz=n_batch)
+            self.G_slices_uu0 = torch.cat([torch.arange(n_ctrl) + (n_ctrl)*i for i in range(T)], dim=0).view(-1)         
         # return self.Qi, self.Gi, self.Ai
 
     def forward(self, x0, cost, dx):
@@ -331,11 +299,6 @@ class MPC(Module):
             G, h = self.compute_Gh_dense(x0)
             # xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
             xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b)
-        else:
-            Qv, q = self.compute_Qq_sparse(cost.C, cost.c)
-            Av, b = self.compute_Ab_sparse(F, f, x0)
-            Gv, h = self.compute_Gh_sparse(x0)
-            xhats_qpf = self.QP(Qv, q, Gv, h, Av, b)
         xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T, -1)
         x = xhats_qpf[:, :, :self.n_state].transpose(0,1)
         u = xhats_qpf[:, :, self.n_state:].transpose(0,1)
@@ -600,36 +563,6 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
     #     G[:, torch.arange(n_ctrl), torch.arange(n_ctrl)+(T-1)*n_tau+n_state] = 1
     #     h[:, :] *= self.u_upper
     #     return G, h
-
-    def compute_Ab_sparse(self, F, f, x0):
-        T, n_batch, n_state, n_tau = F.size()
-        F = torch.cat([F, -torch.ones(T, n_batch, n_state, 1).to(F)], dim=-1)
-        Av = F.transpose(0,1).contiguous().view(n_batch, -1) 
-        Av = torch.cat([Av, torch.ones(n_batch, n_state).to(F)], dim=-1)
-        b = -f.transpose(0,1).contiguous().view(n_batch, -1)
-        b = torch.cat([b, x0], dim=-1)
-        # ipdb.set_trace()
-        return Av, b
-
-    def compute_Qq_sparse(self, C, c):
-        # ipdb.set_trace()
-        T, n_batch, n_tau, n_tau = C.size()
-        Qv = C.transpose(0,1).contiguous().diagonal(dim1=-2, dim2=-1).reshape(n_batch, -1)
-        q = c.transpose(0,1).contiguous().reshape(n_batch, -1)
-        return Qv, q
-
-    def compute_Gh_sparse(self, x0):
-        T, n_batch, n_state, n_ctrl = self.T, self.n_batch, self.n_state, self.n_ctrl
-        n_tau = n_state + n_ctrl
-        if self.u_upper is not None:
-            Gv = torch.ones((n_batch, 2*T*n_ctrl)).to(x0)
-            Gv[:, T*n_ctrl:] *= -1
-            h = torch.ones((n_batch, 2*T*n_ctrl)).to(x0)*self.u_upper
-            h[:, T*n_ctrl:] = -self.u_lower
-        else:
-            Gv = torch.ones((n_batch, n_ctrl)).to(x0)
-            h = torch.ones((n_batch, n_ctrl)).to(x0)
-        return Gv, h
 
     def compute_cost(self, xu, cost):
         C = cost.C.transpose(0,1)
