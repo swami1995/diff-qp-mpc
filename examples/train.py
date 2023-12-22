@@ -48,9 +48,9 @@ def main():
     if args.save is None:
         args.save = os.path.join(args.work, t, str(args.seed))
 
-    if os.path.exists(args.save):
-        shutil.rmtree(args.save)
-    os.makedirs(args.save, exist_ok=True)
+    # if os.path.exists(args.save):
+    #     shutil.rmtree(args.save)
+    # os.makedirs(args.save, exist_ok=True)
 
     device = 'cuda' if args.cuda else 'cpu'
 
@@ -72,9 +72,9 @@ def main():
         A = (torch.eye(n_state) + alpha*torch.randn(n_state, n_state)).to(device),
         B = torch.randn(n_state, n_ctrl).to(device),
     )
-    fname = os.path.join(args.save, 'expert.pkl')
-    with open(fname, 'wb') as f:
-        pkl.dump(expert, f)
+    # fname = os.path.join(args.save, 'expert.pkl')
+    # with open(fname, 'wb') as f:
+    #     pkl.dump(expert, f)
 
     torch.manual_seed(args.seed)
     A = (torch.eye(n_state) + alpha*torch.randn(n_state, n_state))\
@@ -85,14 +85,15 @@ def main():
     u_lower, u_upper = None, None
     delta = u_init = None
 
-    fname = os.path.join(args.save, 'losses.csv')
-    loss_f = open(fname, 'w')
-    loss_f.write('im_loss,mse\n')
-    loss_f.flush()
+    # fname = os.path.join(args.save, 'losses.csv')
+    # loss_f = open(fname, 'w')
+    # loss_f.write('im_loss,mse\n')
+    # loss_f.flush()
 
     def get_loss(x_init, _A, _B):
         F = torch.cat((expert['A'], expert['B']), dim=1) \
             .unsqueeze(0).unsqueeze(0).repeat(args.T, n_batch, 1, 1)
+        
         x_true, u_true = mpc.MPC(
             n_state, n_ctrl, args.T+1,
             u_lower=u_lower, u_upper=u_upper, u_init=u_init,
@@ -102,7 +103,7 @@ def main():
             detach_unconverged=False,
             n_batch=n_batch,
         )(x_init, QuadCost(expert['Q'], expert['p']), LinDx(F))
-
+        
         F = torch.cat((_A, _B), dim=1) \
             .unsqueeze(0).unsqueeze(0).repeat(args.T, n_batch, 1, 1)
         x_pred, u_pred = mpc.MPC(
@@ -114,10 +115,10 @@ def main():
             detach_unconverged=False,
             n_batch=n_batch,
         )(x_init, QuadCost(expert['Q'], expert['p']), LinDx(F))
-
+        
         traj_loss = torch.mean((u_true - u_pred)**2) + \
                     torch.mean((x_true - x_pred)**2)
-        # ipdb.set_trace()
+        
         return traj_loss
 
     opt = optim.RMSprop((A, B), lr=1e-2)
@@ -130,17 +131,17 @@ def main():
         opt.zero_grad()
         traj_loss.backward()
         opt.step()
-        # ipdb.set_trace()
+        
 
         model_loss = torch.mean((A-expert['A'])**2) + \
                      torch.mean((B-expert['B'])**2)
 
-        loss_f.write('{},{}\n'.format(traj_loss.item(), model_loss.item()))
-        loss_f.flush()
+        # loss_f.write('{},{}\n'.format(traj_loss.item(), model_loss.item()))
+        # loss_f.flush()
 
         plot_interval = 100
         if i % plot_interval == 0:
-            os.system('./plot.py "{}" &'.format(args.save))
+            # os.system('./plot.py "{}" &'.format(args.save))
             print(A, expert['A'])
         print('{:04d}: traj_loss: {:.4f} model_loss: {:.4f}'.format(
             i, traj_loss.item(), model_loss.item()))
