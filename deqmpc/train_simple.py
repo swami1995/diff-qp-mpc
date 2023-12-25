@@ -3,34 +3,11 @@ import time
 
 import numpy as np
 import torch
-import torch.autograd
+import torch.autograd as autograd
 import qpth.qp_wrapper as mpc
 import ipdb
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
-
-class PendulumDynamics(torch.nn.Module):
-        def forward(self, state, action):
-            th = state[:, 0].view(-1, 1)
-            thdot = state[:, 1].view(-1, 1)
-
-            g = 10
-            m = 1
-            l = 1
-            dt = 0.05
-
-            u = action
-            u = torch.clamp(u, -2, 2)
-
-            newthdot = thdot + (-3 * g / (2 * l) * torch.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
-            newth = th + newthdot * dt
-            newthdot = torch.clamp(newthdot, -8, 8)
-
-            state = torch.cat((angle_normalize(newth), newthdot), dim=1)
-            return state
-
-def angle_normalize(x):
-    return (((x+np.pi) % (2*np.pi)) - np.pi)
 
 class FFDNetwork(torch.nn.Module):
     def __init__(self, args):
@@ -157,7 +134,7 @@ def main():
     parser.add_argument('--R', type=float, default=None)
     args = parser.parse_args()
 
-    gt_trajs = get_data(args)
+    gt_trajs = get_gt_data(args)
 
     policy = DiffMPCPolicy(args)
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=1e-3)
