@@ -11,7 +11,7 @@ from .envs import PendulumEnv, PendulumDynamics
 
 
 class MPCPendulumController:
-    def __init__(self, nx, nu, T, u_lower, u_upper, max_iter, bsz, u_init, Q, p):
+    def __init__(self,):
         """
         Initialize the MPC controller with the necessary parameters.
         Args:
@@ -26,6 +26,8 @@ class MPCPendulumController:
             Q (np.ndarray): State cost matrix.
             p (np.ndarray): Control cost matrix.
         """
+        nx
+        nu, T, u_lower, u_upper, max_iter, bsz, u_init, Q, p
         self.ctrl = mpc.MPC(
             nx, nu, T, 
             u_lower=u_lower, u_upper=u_upper, 
@@ -42,7 +44,7 @@ class MPCPendulumController:
         nominal_states, nominal_actions = self.ctrl(state, self.cost, PendulumDynamics())
         return nominal_actions[0]  # Return the first action in the optimal sequence
 
-def get_pendulum_expert_traj(env, mpc_controller, num_traj):
+def get_pendulum_expert_traj(env, num_traj):
     """
     Get expert trajectories for pendulum environment using MPC for trajectory optimization.
     Args:
@@ -52,6 +54,7 @@ def get_pendulum_expert_traj(env, mpc_controller, num_traj):
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
+    mpc_controller = MPCPendulumController(env)
     trajectories = []
     for _ in range(num_traj):
         state = env.reset()  # Reset environment to a new initial state
