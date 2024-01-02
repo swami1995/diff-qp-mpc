@@ -262,6 +262,8 @@ class MPC(Module):
 
         if self.x_init is None:
             x = torch.zeros(self.T, n_batch, self.n_state).type_as(x0.data)
+            # x = self.rollout(x0, u, dx)[:-1]
+            # ipdb.set_trace()
         else:
             x = self.x_init
             if x.ndimension() == 2:
@@ -271,7 +273,7 @@ class MPC(Module):
         if self.verbose > 0:
             print('Initial mean(cost): {:.4e}'.format(
                 torch.mean(util.get_cost(
-                    self.T, u, cost, dx, x_init=x_init
+                    self.T, u, cost, dx, x_init=self.x_init
                 )).item()
             ))
 
@@ -308,6 +310,10 @@ class MPC(Module):
     def solve_nonlin(self, x, u, dx, x0, cost):
         best = None
         n_not_improved = 0
+        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        cost_total = self.compute_cost(xhats_qpf, cost)
+        # ipdb.set_trace()
+        print("init", cost_total.mean().item())
         with torch.no_grad():
             for i in range(self.lqr_iter):
                 u_prev = u.clone()

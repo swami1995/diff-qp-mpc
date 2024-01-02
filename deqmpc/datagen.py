@@ -7,11 +7,11 @@ import torch.autograd as autograd
 import qpth.qp_wrapper as mpc
 import ipdb
 import os
-from .envs import PendulumEnv, PendulumDynamics
+from envs import PendulumEnv, PendulumDynamics
 
 
 class MPCPendulumController:
-    def __init__(self,):
+    def __init__(self, env):
         """
         Initialize the MPC controller with the necessary parameters.
         Args:
@@ -26,8 +26,19 @@ class MPCPendulumController:
             Q (np.ndarray): State cost matrix.
             p (np.ndarray): Control cost matrix.
         """
-        nx
-        nu, T, u_lower, u_upper, max_iter, bsz, u_init, Q, p
+        nx = env.observation_space.shape[0]
+        nu = env.action_space.shape[0]
+        T = env.T
+        u_lower = torch.tensor(env.action_space[:, 0], dtype=torch.float32)
+        u_upper = torch.tensor(env.action_space[:, 1], dtype=torch.float32)
+        max_iter = 1
+        bsz = 1
+        u_init = torch.zeros(T, bsz, nu)
+        q,p = env.get_true_obj()
+        Q = torch.diag(q).unsqueeze(0).unsqueeze(0).repeat(
+            T, bsz, 1, 1
+        )
+        p = p.unsqueeze(0).repeat(T, bsz, 1)
         self.ctrl = mpc.MPC(
             nx, nu, T, 
             u_lower=u_lower, u_upper=u_upper, 
@@ -41,6 +52,7 @@ class MPCPendulumController:
 
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
+        # ipdb.set_trace()
         nominal_states, nominal_actions = self.ctrl(state, self.cost, PendulumDynamics())
         return nominal_actions[0]  # Return the first action in the optimal sequence
 
@@ -65,7 +77,9 @@ def get_pendulum_expert_traj(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()))
             state = next_state
-
+            # if len(traj) >= env.T:
+            #     ipdb.set_trace()
+        print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
     return trajectories
 
@@ -78,7 +92,7 @@ def save_expert_traj(env, num_traj):
     """
 
     ## use env name to choose which function to use to get expert trajectories
-    if env.spec.id == 'Pendulum-v0':
+    if env.spec_id == 'Pendulum-v0':
         expert_traj = get_pendulum_expert_traj(env, num_traj)
     else:
         raise NotImplementedError
@@ -86,5 +100,10 @@ def save_expert_traj(env, num_traj):
     ## save expert trajectories to a file in data folder
     if os.path.exists('data') == False:
         os.makedirs('data')
-    np.save(f'data/expert_traj-{env.sped.id}.npy', expert_traj)
+    np.save(f'data/expert_traj-{env.sped_id}.npy', expert_traj)
 
+if __name__ == '__main__':
+    print("Starting!")
+    # ipdb.set_trace()
+    env = PendulumEnv()
+    save_expert_traj(env, 10)

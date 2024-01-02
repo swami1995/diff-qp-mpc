@@ -1,8 +1,11 @@
+import torch
+import numpy as np
+import ipdb
 
 class PendulumDynamics(torch.nn.Module):
         def forward(self, state, action):
-            th = state[:, 0].view(-1, 1)
-            thdot = state[:, 1].view(-1, 1)
+            th = state[..., 0]#.view(-1, 1)
+            thdot = state[..., 1]#.view(-1, 1)
 
             g = 10
             m = 1
@@ -16,7 +19,7 @@ class PendulumDynamics(torch.nn.Module):
             newth = th + newthdot * dt
             newthdot = torch.clamp(newthdot, -8, 8)
 
-            state = torch.cat((angle_normalize(newth), newthdot), dim=1)
+            state = torch.cat((angle_normalize(newth), newthdot), dim=-1)
             return state
 
 def angle_normalize(x):
@@ -25,7 +28,22 @@ def angle_normalize(x):
 class PendulumEnv:
     def __init__(self):
         self.dynamics = PendulumDynamics()
+        self.spec_id = 'Pendulum-v0'
         self.state = None  # Will be initialized in reset
+        self.nx = 2
+        self.nu = 1
+        self.num_successes = 0
+        self.observation_space = np.array([[-np.pi, np.pi], [-8, 8]])
+        self.action_space = np.array([[-2, 2]])
+        self.max_torque = 2
+        self.dt = 0.05
+        self.T = 30
+        self.goal_state = torch.Tensor([0., 0.])
+        self.goal_weights = torch.Tensor([10., 0.1])
+        self.ctrl_penalty = 0.001
+        self.mpc_eps = 1e-3
+        self.linesearch_decay = 0.2
+        self.max_linesearch_iter = 5
 
     def reset(self):
         """
@@ -33,7 +51,7 @@ class PendulumEnv:
         Returns:
             numpy.ndarray: The initial state.
         """
-        high = np.array([np.pi, 1])
+        high = np.array([np.pi/2, 1])
         self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
         return self.state.numpy()
 
@@ -59,8 +77,11 @@ class PendulumEnv:
         """
         # Implement your logic for ending an episode, e.g., a time limit or reaching a goal state
         # For demonstration, let's say an episode ends if the pendulum is upright within a small threshold
-        theta, _ = self.state
-        return abs(angle_normalize(theta)) < 0.1
+        # ipdb.set_trace()
+        theta, _ = self.state.unbind()
+        success = abs(angle_normalize(theta)) < 0.05
+        self.num_successes = 0 if not success else self.num_successes + 1
+        return self.num_successes >= 5
 
     def get_reward(self, action):
         """
@@ -72,14 +93,24 @@ class PendulumEnv:
         """
         # Define your reward function; for simplicity, let's use the negative square of the angle
         # as a reward, so the closer to upright (0 rad), the higher the reward.
-        theta, _ = self.state
+        theta, _ = self.state.unbind()
         return -float(angle_normalize(theta) ** 2)
+
+    def get_true_obj(self):
+        q = torch.cat((
+            self.goal_weights,
+            self.ctrl_penalty*torch.ones(self.nu)
+        ))
+        px = -torch.sqrt(self.goal_weights)*self.goal_state
+        p = torch.cat((px, torch.zeros(self.nu)))
+        return q, p
 
 class BatchPendulumEnv:
     def __init__(self, batch_size=1):
         self.dynamics = PendulumDynamics()
         self.batch_size = batch_size
         self.state = None  # Will be initialized in reset
+        self.num_successes = torch.zeros(batch_size)
 
     def reset(self):
         """
@@ -113,7 +144,11 @@ class BatchPendulumEnv:
             torch.Tensor: A tensor of booleans indicating if the episode is finished for each batch.
         """
         theta = states[:, 0]
-        return torch.abs(angle_normalize(theta)) < 0.1
+
+        success = (torch.abs(angle_normalize(theta)) < 0.05).float()
+        self.num_successes = success*(self.num_successes + 1)
+        return self.num_successes >= 5
+        # return torch.abs(angle_normalize(theta)) < 0.1
 
     def get_reward(self, actions):
         """
