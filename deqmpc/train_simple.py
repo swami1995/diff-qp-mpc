@@ -6,24 +6,27 @@ import torch
 import torch.autograd as autograd
 import qpth.qp_wrapper as mpc
 import ipdb
-
+from envs import PendulumEnv, PendulumDynamics
+from datagen import get_gt_data, merge_gt_data, sample_trajectory
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
 class FFDNetwork(torch.nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, env):
+        super().__init__()
         self.args = args
-        self.nu = args.nu
-        self.nx = args.nx
+        self.nu = env.nu
+        self.nx = env.nx
         self.np = args.np
         self.T = args.T
 
 
         ## define the network layers : 
-        self.fc1 = torch.nn.Linear(self.nx, 64)
-        self.relu = torch.nn.ReLU()
-        self.fc2 = torch.nn.Linear(64, 64)
-        self.fc3 = torch.nn.Linear(64, self.np*self.T)
-        self.net = torch.nn.Sequential(self.fc1, self.relu, self.fc2, self.relu, self.fc3)
+        self.fc1 = torch.nn.Linear(self.nx, 256)
+        self.relu1 = torch.nn.ReLU()
+        self.fc2 = torch.nn.Linear(256, 256)
+        self.relu2 = torch.nn.ReLU()
+        self.fc3 = torch.nn.Linear(256, self.np*self.T)
+        self.net = torch.nn.Sequential(self.fc1, self.relu1, self.fc2, self.relu2, self.fc3)
 
     def forward(self, x):
         """
@@ -31,19 +34,21 @@ class FFDNetwork(torch.nn.Module):
         """
         x_ref = self.net(x)
         x_ref = x_ref.view(-1, self.T, self.np)
+        x_ref = x_ref + x[:,None,:self.np]
         return x_ref
 
 
-class Tracking_MPC:
-    def __init__(self, args):
+class Tracking_MPC(torch.nn.Module):
+    def __init__(self, args, env):
+        super().__init__()
         self.args = args
-        self.nu = args.nu
-        self.nx = args.nx
-        self.dt = args.dt
+        self.nu = env.nu
+        self.nx = env.nx
+        self.dt = env.dt
         self.T = args.T
 
-        self.u_upper = args.u_upper
-        self.u_lower = args.u_lower
+        self.u_upper = env.action_space.high
+        self.u_lower = env.action_space.low
         self.max_iter = args.max_iter
         self.eps = args.eps
         self.warm_start = args.warm_start
@@ -75,7 +80,7 @@ class Tracking_MPC:
         self.compute_p(x_ref)
         cost = mpc.QuadCost(self.Q, self.p)
         self.ctrl.u_init = self.u_init
-        state = x_init.unsqueeze(0).repeat(self.bsz, 1)
+        state = x_init#.unsqueeze(0).repeat(self.bsz, 1)
         nominal_states, nominal_actions = self.ctrl(state, cost, PendulumDynamics())
         return nominal_states, nominal_actions
 
@@ -89,66 +94,74 @@ class Tracking_MPC:
 
 
 
-class DiffMPCPolicy:
-    def __init__(self, args):
+class NNMPCPolicy(torch.nn.Module):
+    def __init__(self, args, env):
+        super().__init__()
         self.args = args
-        self.nu = args.nu
-        self.nx = args.nx
+        self.nu = env.nu
+        self.nx = env.nx
         self.np = args.np
         self.T = args.T
-        self.dt = args.dt
+        self.dt = env.dt
         self.device = args.device
-        self.model = FFDNetwork(args)
+        self.model = FFDNetwork(args, env)
         self.model.to(self.device)
-        self.tracking_mpc = Tracking_MPC(args)
+        self.tracking_mpc = Tracking_MPC(args, env)
     
     def forward(self, x):
         """
         compute the policy output for the given state x
         """
         x_ref = self.model(x)
-        x_ref = x_ref.view(-1, self.np)
-        nom_states, nom_actions = self.tracking_mpc(x, x_ref)
+        # x_ref = x_ref.view(-1, self.np)
+        x_ref = torch.cat([x_ref, torch.zeros(self.np)], dim=-1).transpose(0,1)
+        nominal_states, nominal_actions = self.tracking_mpc(x, x_ref)
         return nominal_states, nominal_actions
-    
+
 # class DEQPolicy:
 
 # class DEQMPCPolicy:
+
+# class NNPolicy:
+
+# class NNMPCPolicy:
     
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--nu', type=int, default=1)
-    parser.add_argument('--nx', type=int, default=2)
-    parser.add_argument('--np', type=int, default=2)
+    parser.add_argument('--np', type=int, default=1)
     parser.add_argument('--T', type=int, default=10)
-    parser.add_argument('--dt', type=float, default=0.05)
-    parser.add_argument('--u_upper', type=float, default=2)
-    parser.add_argument('--u_lower', type=float, default=-2)
+    # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument('--max_iter', type=int, default=100)
     parser.add_argument('--eps', type=float, default=1e-2)
     parser.add_argument('--warm_start', type=bool, default=True)
     parser.add_argument('--bsz', type=int, default=1)
     parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--Q', type=float, default=None)
-    parser.add_argument('--R', type=float, default=None)
     args = parser.parse_args()
 
-    gt_trajs = get_gt_data(args)
+    env = PendulumEnv()
+    gt_trajs = get_gt_data(args, env)
 
-    policy = DiffMPCPolicy(args)
+    gt_trajs = merge_gt_data(gt_trajs)
+    
+    args.Q = torch.Tensor([10., 0.])
+    args.R = torch.Tensor([0.])
+    policy = NNMPCPolicy(args, env)
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=1e-3)
     
 
     # run imitation learning using gt_trajs
     for i in range(100):
         # sample bsz random trajectories from gt_trajs and a random time step for each
-        idxs = np.random.randint(0, len(gt_trajs), args.bsz)
-        t_idxs = np.random.randint(0, len(gt_trajs[0]), args.bsz)
-        x_init = gt_trajs[idxs, t_idxs]
-        x_gt = gt_trajs[idxs, t_idxs:t_idxs+args.T]
-        nominal_states, nominal_actions = policy.forward(x_init)
-        loss = torch.norm(nominal_states - x_gt) + torch.norm(nominal_actions)
+        traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
+        traj_sample["state"] = torch.cat([traj_sample["state"], PendulumDynamics()(traj_sample["state"][:,-1], traj_sample["action"][:,-1])[:,None]], dim=1)
+        # idxs = np.random.randint(0, len(gt_trajs), args.bsz)
+        # t_idxs = np.random.randint(0, len(gt_trajs[0]), args.bsz)
+        # x_init = gt_trajs[idxs, t_idxs]
+        # x_gt = gt_trajs[idxs, t_idxs:t_idxs+args.T]
+
+        nominal_states, nominal_actions = policy(traj_sample["state"][:,0])
+        loss = torch.abs((nominal_states - traj_sample["state"])*traj_sample["mask"][:,:,None]).sum(dim=-1).mean() #+ torch.norm(nominal_actions)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()

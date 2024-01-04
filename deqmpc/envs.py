@@ -25,6 +25,17 @@ class PendulumDynamics(torch.nn.Module):
 def angle_normalize(x):
     return (((x+np.pi) % (2*np.pi)) - np.pi)
 
+class Spaces:
+    def __init__(self, low, high, shape):
+        self.low = low
+        self.high = high
+        self.shape = shape
+    
+    def sample(self):
+        return np.random.uniform(self.low, self.high)
+    
+
+
 class PendulumEnv:
     def __init__(self):
         self.dynamics = PendulumDynamics()
@@ -33,8 +44,8 @@ class PendulumEnv:
         self.nx = 2
         self.nu = 1
         self.num_successes = 0
-        self.observation_space = np.array([[-np.pi, np.pi], [-8, 8]])
-        self.action_space = np.array([[-2, 2]])
+        self.observation_space = Spaces(-np.array([np.pi, 8]), np.array([np.pi, 8]), np.array([[-np.pi, np.pi], [-8, 8]]).shape) # np.array([[-np.pi, np.pi], [-8, 8]])
+        self.action_space = Spaces(np.array([-2]), np.array([2]), np.array([[-2, 2]]).shape) #np.array([[-2, 2]])
         self.max_torque = 2
         self.dt = 0.05
         self.T = 30
@@ -45,14 +56,24 @@ class PendulumEnv:
         self.linesearch_decay = 0.2
         self.max_linesearch_iter = 5
 
+    def seed(self, seed):
+        """
+        Seeds the environment to produce deterministic results.
+        Args:
+            seed (int): The seed to use.
+        """
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+
     def reset(self):
         """
         Resets the environment to an initial state, which is a random angle and angular velocity.
         Returns:
             numpy.ndarray: The initial state.
         """
-        high = np.array([np.pi/2, 1])
+        high = np.array([np.pi, 1])
         self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+        self.num_successes = 0
         return self.state.numpy()
 
     def step(self, action):
@@ -63,7 +84,8 @@ class PendulumEnv:
         Returns:
             tuple: A tuple containing the new state, reward, done flag, and info dict.
         """
-        action = torch.tensor([action], dtype=torch.float32)
+        # action = torch.tensor([action], dtype=torch.float32)
+        action = torch.tensor(action, dtype=torch.float32)
         self.state = self.dynamics(self.state, action)
         done = self.is_done()
         reward = self.get_reward(action)  # Define your reward function based on the state and action
@@ -105,6 +127,12 @@ class PendulumEnv:
         p = torch.cat((px, torch.zeros(self.nu)))
         return q, p
 
+    def close(self):
+        """
+        Closes the environment.
+        """
+        pass
+    
 class BatchPendulumEnv:
     def __init__(self, batch_size=1):
         self.dynamics = PendulumDynamics()
