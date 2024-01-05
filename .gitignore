@@ -8,5 +8,4 @@ gurobi.log
 
 .ipynb_checkpoints
 .vscode
-deqmpc/data/*
 deqmpc/PPO*

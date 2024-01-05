@@ -22,11 +22,13 @@ class FFDNetwork(torch.nn.Module):
 
         ## define the network layers : 
         self.fc1 = torch.nn.Linear(self.nx, 256)
+        self.ln1 = torch.nn.LayerNorm(256)
         self.relu1 = torch.nn.ReLU()
         self.fc2 = torch.nn.Linear(256, 256)
+        self.ln2 = torch.nn.LayerNorm(256)
         self.relu2 = torch.nn.ReLU()
         self.fc3 = torch.nn.Linear(256, self.np*self.T)
-        self.net = torch.nn.Sequential(self.fc1, self.relu1, self.fc2, self.relu2, self.fc3)
+        self.net = torch.nn.Sequential(self.fc1, self.ln1, self.relu1, self.fc2, self.ln2, self.relu2, self.fc3)
 
     def forward(self, x):
         """
@@ -34,7 +36,7 @@ class FFDNetwork(torch.nn.Module):
         """
         x_ref = self.net(x)
         x_ref = x_ref.view(-1, self.T, self.np)
-        x_ref = x_ref + x[:,None,:self.np]
+        x_ref = x_ref + x[:,None,:self.np]*10
         return x_ref
 
 
@@ -152,7 +154,7 @@ def main():
     
 
     # run imitation learning using gt_trajs
-    for i in range(100):
+    for i in range(1000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
@@ -166,7 +168,12 @@ def main():
         # ipdb.set_trace()
         nominal_states, nominal_actions = policy(traj_sample["state"][:,0])
         loss = torch.abs((nominal_states.transpose(0,1) - traj_sample["state"][:, 1:])*traj_sample["mask"][:,:,None]).sum(dim=-1).mean() #+ torch.norm(nominal_actions)
+        # ipdb.set_trace()
+        # loss += (nominal_actions[0] - traj_sample["action"][:, 0]).pow(2).mean()
         loss.backward()
+        # gradient clipping
+        print("grad norm: ", torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 1000))
+        # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
         optimizer.zero_grad()
         print('loss: ', loss)

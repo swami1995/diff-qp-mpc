@@ -198,6 +198,8 @@ def save_expert_traj_sac(env, num_traj):
     ## use env name to choose which function to use to get expert trajectories
     if env.spec_id == 'Pendulum-v0':
         expert_traj = get_pendulum_expert_traj_sac(env, num_traj)
+    elif env.spec_id == 'Pendulum-v0-stabilize':
+        expert_traj = get_pendulum_expert_traj_sac(env, num_traj)
     else:
         raise NotImplementedError
     
@@ -273,5 +275,5 @@ def sample_trajectory(gt_trajs, bsz, T):
 if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
-    env = PendulumEnv()
-    save_expert_traj_sac(env, 50)
+    env = PendulumEnv(stabilization=True)
+    save_expert_traj_sac(env, 200)

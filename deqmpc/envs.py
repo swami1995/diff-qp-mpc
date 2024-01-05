@@ -40,9 +40,9 @@ class Spaces:
 
 
 class PendulumEnv:
-    def __init__(self):
+    def __init__(self, stabilization=False):
         self.dynamics = PendulumDynamics()
-        self.spec_id = 'Pendulum-v0'
+        self.spec_id = 'Pendulum-v0{}'.format('-stabilize' if stabilization else '')
         self.state = None  # Will be initialized in reset
         self.nx = 2
         self.nu = 1
@@ -58,6 +58,7 @@ class PendulumEnv:
         self.mpc_eps = 1e-3
         self.linesearch_decay = 0.2
         self.max_linesearch_iter = 5
+        self.stabilization = stabilization
 
     def seed(self, seed):
         """
@@ -74,7 +75,10 @@ class PendulumEnv:
         Returns:
             numpy.ndarray: The initial state.
         """
-        high = np.array([np.pi, 1])
+        if self.stabilization:
+            high = np.array([0.05, 0.4])
+        else:
+            high = np.array([np.pi, 1])
         self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
@@ -106,7 +110,7 @@ class PendulumEnv:
         theta, _ = self.state.unbind()
         success = abs(angle_normalize(theta)) < 0.05
         self.num_successes = 0 if not success else self.num_successes + 1
-        return self.num_successes >= 5
+        return self.num_successes >= 10
 
     def get_reward(self, action):
         """
