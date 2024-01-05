@@ -236,9 +236,9 @@ def merge_gt_data(gt_trajs):
             merged_gt_traj["action"].append(action)
             merged_gt_traj["mask"].append(1)
         merged_gt_traj["mask"][-1] = 0
-    merged_gt_traj["state"] = torch.tensor(merged_gt_traj["state"], dtype=torch.float32)
-    merged_gt_traj["action"] = torch.tensor(merged_gt_traj["action"], dtype=torch.float32)
-    merged_gt_traj["mask"] = torch.tensor(merged_gt_traj["mask"], dtype=torch.float32)
+    merged_gt_traj["state"] = torch.tensor(np.array(merged_gt_traj["state"]), dtype=torch.float32)
+    merged_gt_traj["action"] = torch.tensor(np.array(merged_gt_traj["action"]), dtype=torch.float32)
+    merged_gt_traj["mask"] = torch.tensor(np.array(merged_gt_traj["mask"]), dtype=torch.float32)
     return merged_gt_traj
 
 def sample_trajectory(gt_trajs, bsz, T):
@@ -254,9 +254,15 @@ def sample_trajectory(gt_trajs, bsz, T):
     idxs = np.random.randint(0, len(gt_trajs["state"]), bsz)
     trajs = {"state": [], "action": [], "mask": []}
     for i in range(bsz):
-        trajs["state"].append(gt_trajs["state"][idxs[i]:idxs[i]+T])
-        trajs["action"].append(gt_trajs["action"][idxs[i]:idxs[i]+T])
-        trajs["mask"].append(gt_trajs["mask"][idxs[i]:idxs[i]+T])
+        if idxs[i] + T < len(gt_trajs["state"]):
+            trajs["state"].append(gt_trajs["state"][idxs[i]:idxs[i]+T])
+            trajs["action"].append(gt_trajs["action"][idxs[i]:idxs[i]+T])
+            trajs["mask"].append(gt_trajs["mask"][idxs[i]:idxs[i]+T])
+        else:
+            padding = idxs[i] + T - len(gt_trajs["state"])
+            trajs["state"].append(torch.cat([gt_trajs["state"][idxs[i]:], gt_trajs["state"][:padding]*0.0], dim=0))
+            trajs["action"].append(torch.cat([gt_trajs["action"][idxs[i]:], gt_trajs["action"][:padding]*0.0], dim=0))
+            trajs["mask"].append(torch.cat([gt_trajs["mask"][idxs[i]:], gt_trajs["mask"][:padding]*0], dim=0))
     trajs["state"] = torch.stack(trajs["state"])
     trajs["action"] = torch.stack(trajs["action"])
     trajs["mask"] = torch.stack(trajs["mask"])

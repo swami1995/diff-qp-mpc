@@ -244,13 +244,14 @@ def DenseQPFunction(bsz = 1,
             # Dsz = torch.Size([nineq, nineq])
             nBatch = Q.size(0)
             nineq, neq = G.size(1), A.size(1)
-
+            # print(" dl_dzhat : ", dl_dzhat.isnan().sum())
             dx, _, dlam, dnu = pdipm_b_LU.solve_kkt(
                 K, K, dl_dzhat,
                 torch.zeros(nBatch, nineq).to(p),
                 torch.zeros(nBatch, nineq).to(p),
                 torch.zeros(nBatch, neq).to(p))
-
+            # print(" dx, dlam, dnu : ", 
+            #     dx.isnan().sum(), dlam.isnan().sum(), dnu.isnan().sum())
             dps = dx
 
             dGs = bger(dlam, zhats) + bger(lams, dx)

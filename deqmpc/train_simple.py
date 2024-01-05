@@ -47,8 +47,8 @@ class Tracking_MPC(torch.nn.Module):
         self.dt = env.dt
         self.T = args.T
 
-        self.u_upper = env.action_space.high
-        self.u_lower = env.action_space.low
+        self.u_upper = None # torch.tensor(env.action_space.high).to(args.device)
+        self.u_lower = None # torch.tensor(env.action_space.low).to(args.device)
         self.max_iter = args.max_iter
         self.eps = args.eps
         self.warm_start = args.warm_start
@@ -114,7 +114,7 @@ class NNMPCPolicy(torch.nn.Module):
         """
         x_ref = self.model(x)
         # x_ref = x_ref.view(-1, self.np)
-        x_ref = torch.cat([x_ref, torch.zeros(self.np)], dim=-1).transpose(0,1)
+        x_ref = torch.cat([x_ref, torch.zeros(list(x_ref.shape[:-1])+[self.np,]).to(self.args.device)], dim=-1).transpose(0,1)
         nominal_states, nominal_actions = self.tracking_mpc(x, x_ref)
         return nominal_states, nominal_actions
 
@@ -130,44 +130,48 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--np', type=int, default=1)
-    parser.add_argument('--T', type=int, default=10)
+    parser.add_argument('--T', type=int, default=5)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument('--max_iter', type=int, default=100)
     parser.add_argument('--eps', type=float, default=1e-2)
     parser.add_argument('--warm_start', type=bool, default=True)
-    parser.add_argument('--bsz', type=int, default=1)
+    parser.add_argument('--bsz', type=int, default=80)
     parser.add_argument('--device', type=str, default='cpu')
     args = parser.parse_args()
+    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     env = PendulumEnv()
     gt_trajs = get_gt_data(args, env)
 
     gt_trajs = merge_gt_data(gt_trajs)
     
-    args.Q = torch.Tensor([10., 0.])
-    args.R = torch.Tensor([0.])
-    policy = NNMPCPolicy(args, env)
-    optimizer = torch.optim.Adam(policy.model.parameters(), lr=1e-3)
+    args.Q = torch.Tensor([10., 0.001]).to(args.device)
+    args.R = torch.Tensor([0.001]).to(args.device)
+    policy = NNMPCPolicy(args, env).to(args.device)
+    optimizer = torch.optim.Adam(policy.model.parameters(), lr=1e-4)
     
 
     # run imitation learning using gt_trajs
     for i in range(100):
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
+        traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
+        # ipdb.set_trace()
         traj_sample["state"] = torch.cat([traj_sample["state"], PendulumDynamics()(traj_sample["state"][:,-1], traj_sample["action"][:,-1])[:,None]], dim=1)
         # idxs = np.random.randint(0, len(gt_trajs), args.bsz)
         # t_idxs = np.random.randint(0, len(gt_trajs[0]), args.bsz)
         # x_init = gt_trajs[idxs, t_idxs]
         # x_gt = gt_trajs[idxs, t_idxs:t_idxs+args.T]
 
+        # ipdb.set_trace()
         nominal_states, nominal_actions = policy(traj_sample["state"][:,0])
-        loss = torch.abs((nominal_states - traj_sample["state"])*traj_sample["mask"][:,:,None]).sum(dim=-1).mean() #+ torch.norm(nominal_actions)
+        loss = torch.abs((nominal_states.transpose(0,1) - traj_sample["state"][:, 1:])*traj_sample["mask"][:,:,None]).sum(dim=-1).mean() #+ torch.norm(nominal_actions)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
         print('loss: ', loss)
-        print('nominal states: ', nominal_states)
-        print('nominal actions: ', nominal_actions)
+        # print('nominal states: ', nominal_states)
+        # print('nominal actions: ', nominal_actions)
 
 
 

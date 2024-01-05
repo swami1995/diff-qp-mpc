@@ -313,7 +313,7 @@ class MPC(Module):
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
         cost_total = self.compute_cost(xhats_qpf, cost)
         # ipdb.set_trace()
-        print("init", cost_total.mean().item())
+        # print("init", cost_total.mean().item())
         with torch.no_grad():
             for i in range(self.lqr_iter):
                 u_prev = u.clone()
@@ -346,7 +346,7 @@ class MPC(Module):
                 #         ('mean(alphas)', mean_alphas.item(), '{:.2e}'),
                 #         ('total_qp_iters', n_total_qp_iter),
                 #     ))
-                print(i, cost_total.mean().item(), full_du_norm)
+                # print(i, cost_total.mean().item(), full_du_norm)
 
                 if full_du_norm < self.eps or \
                 n_not_improved > self.not_improved_lim:
