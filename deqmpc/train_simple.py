@@ -49,8 +49,9 @@ class Tracking_MPC(torch.nn.Module):
         self.dt = env.dt
         self.T = args.T
 
-        self.u_upper = None # torch.tensor(env.action_space.high).to(args.device)
-        self.u_lower = None # torch.tensor(env.action_space.low).to(args.device)
+        # May comment out input constraints for now
+        self.u_upper = torch.tensor(env.action_space.high).to(args.device)  
+        self.u_lower = torch.tensor(env.action_space.low).to(args.device)
         self.max_iter = args.max_iter
         self.eps = args.eps
         self.warm_start = args.warm_start
@@ -142,7 +143,7 @@ def main():
     args = parser.parse_args()
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    env = PendulumEnv()
+    env = PendulumEnv(stabilization=True)
     gt_trajs = get_gt_data(args, env)
 
     gt_trajs = merge_gt_data(gt_trajs)
@@ -170,15 +171,17 @@ def main():
         loss = torch.abs((nominal_states.transpose(0,1) - traj_sample["state"][:, 1:])*traj_sample["mask"][:,:,None]).sum(dim=-1).mean() #+ torch.norm(nominal_actions)
         # ipdb.set_trace()
         # loss += (nominal_actions[0] - traj_sample["action"][:, 0]).pow(2).mean()
+        optimizer.zero_grad()
         loss.backward()
         # gradient clipping
-        print("grad norm: ", torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 1000))
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        optimizer.zero_grad()
-        print('loss: ', loss)
-        # print('nominal states: ', nominal_states)
-        # print('nominal actions: ', nominal_actions)
+        if i % 100 == 0:
+            print('iter: ', i)
+            print("grad norm: ", torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 1000))
+            print('loss: ', loss)
+            # print('nominal states: ', nominal_states)
+            # print('nominal actions: ', nominal_actions)
 
 
 

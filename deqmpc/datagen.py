@@ -15,6 +15,7 @@ class MPCPendulumController:
     def __init__(self, env):
         """
         Initialize the MPC controller with the necessary parameters.
+
         Args:
             nx (int): Number of state dimensions.
             nu (int): Number of control dimensions.
@@ -30,8 +31,8 @@ class MPCPendulumController:
         nx = env.observation_space.shape[0]
         nu = env.action_space.shape[0]
         T = env.T
-        u_lower = torch.tensor(env.action_space[:, 0], dtype=torch.float32)
-        u_upper = torch.tensor(env.action_space[:, 1], dtype=torch.float32)
+        u_lower = torch.tensor(env.action_space.low, dtype=torch.float32)
+        u_upper = torch.tensor(env.action_space.high, dtype=torch.float32)
         max_iter = 1
         bsz = 1
         u_init = torch.zeros(T, bsz, nu)
@@ -78,8 +79,8 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()))
             state = next_state
-            # if len(traj) >= env.T:
-            #     ipdb.set_trace()
+            if len(traj) >= 9:
+                ipdb.set_trace()
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
     return trajectories
@@ -155,6 +156,8 @@ def save_expert_traj_mpc(env, num_traj):
 
     ## use env name to choose which function to use to get expert trajectories
     if env.spec_id == 'Pendulum-v0':
+        expert_traj = get_pendulum_expert_traj_mpc(env, num_traj)
+    elif env.spec_id == 'Pendulum-v0-stabilize':
         expert_traj = get_pendulum_expert_traj_mpc(env, num_traj)
     else:
         raise NotImplementedError
@@ -276,4 +279,4 @@ if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=True)
-    save_expert_traj_sac(env, 200)
+    save_expert_traj_mpc(env, 1)
