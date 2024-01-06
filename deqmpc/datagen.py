@@ -54,6 +54,7 @@ class MPCPendulumController:
             self.T, self.bsz, 1, 1
         )
         self.p = self.p.unsqueeze(0).repeat(self.T, self.bsz, 1)
+
         self.ctrl = mpc.MPC(
             self.nx, self.nu, self.T, 
             u_lower=self.u_lower, u_upper=self.u_upper, 
@@ -292,4 +293,4 @@ if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
-    save_expert_traj_mpc(env, 1)
+    save_expert_traj_mpc(env, 100)

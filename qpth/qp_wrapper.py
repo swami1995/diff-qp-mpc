@@ -250,7 +250,7 @@ class MPC(Module):
                 sys.exit(-1)
             cost = QuadCost(C, c)
 
-        ipdb.set_trace()
+        # ipdb.set_trace()
         assert x0.ndimension() == 2 and x0.size(0) == n_batch
 
         if self.u_init is None:
