@@ -196,7 +196,7 @@ def get_gt_data(args, env, type='mpc'):
     """
     with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
         gt_trajs = pickle.load(f)
-    # ipdb.set_trace()
+    ipdb.set_trace()
     return gt_trajs
 
 def merge_gt_data(gt_trajs):
@@ -253,4 +253,4 @@ if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
-    save_expert_traj(env, 2, 'mpc')
+    save_expert_traj(env, 500, 'mpc')

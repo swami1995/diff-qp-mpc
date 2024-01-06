@@ -83,7 +83,7 @@ class MPC(Module):
             These can either be floats or shaped as [T, n_batch, n_ctrl]
         u_init: The initial control sequence, useful for warm-starting:
             [T, n_batch, n_ctrl]
-        lqr_iter: The number of LQR iterations to perform.
+        qp_iter: The number of QP iterations to perform.
         grad_method: The method to compute the Jacobian of the dynamics.
             GradMethods.ANALYTIC: Use a manually-defined Jacobian.
                 + Fast and accurate, use this if possible
@@ -144,7 +144,6 @@ class MPC(Module):
             not_improved_lim=5,
             best_cost_eps=1e-4,
             solver_type='dense',
-            lqr_iter=10,
     ):
         super().__init__()
 
@@ -184,7 +183,6 @@ class MPC(Module):
         self.slew_rate_penalty = slew_rate_penalty
         self.prev_ctrl = prev_ctrl
         self.solver_type = solver_type
-        self.lqr_iter = lqr_iter
 
         if solver_type == 'dense':
             idxs_1 = torch.arange(n_state + n_ctrl)
@@ -291,6 +289,7 @@ class MPC(Module):
             if f is None:
                 f = torch.zeros((self.T-1, self.n_batch, self.n_state)).to(x0)
         else:
+            # Linearize the dynamics around the current state and action.
             F, f = self.linearize_dynamics(
                 x, util.detach_maybe(u), dx, diff=False)
         
@@ -316,7 +315,7 @@ class MPC(Module):
         # ipdb.set_trace()
         # print("init", cost_total.mean().item())
         with torch.no_grad():
-            for i in range(self.lqr_iter):
+            for i in range(self.qp_iter):
                 u_prev = u.clone()
                 x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
                 full_du_norm = (u - u_prev).norm()
