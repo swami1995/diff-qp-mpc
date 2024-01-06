@@ -47,11 +47,11 @@ class PendulumEnv:
         self.nx = 2
         self.nu = 1
         self.num_successes = 0
-        self.observation_space = Spaces(-np.array([np.pi, np.inf]), np.array([np.pi, np.inf]), (self.nx, self.nx)) # np.array([[-np.pi, np.pi], [-8, 8]])
-        self.action_space = Spaces(np.array([-11.0]), np.array([11.0]), np.array([[-2, 2]]).shape) #np.array([[-2, 2]])
+        self.observation_space = Spaces(-np.array([np.pi, np.inf]), np.array([np.pi, np.inf]), (self.nx, 2)) # np.array([[-np.pi, np.pi], [-8, 8]])
         self.max_torque = 11.0
+        self.action_space = Spaces(-np.array([self.max_torque]), np.array([self.max_torque]), (self.nu, 2)) #np.array([[-2, 2]])        
         self.dt = 0.05
-        self.T = 30
+        self.T = 15
         self.goal_state = torch.Tensor([0., 0.])
         self.goal_weights = torch.Tensor([10., 0.1])
         self.ctrl_penalty = 0.001
@@ -76,7 +76,7 @@ class PendulumEnv:
             numpy.ndarray: The initial state.
         """
         if self.stabilization:
-            high = np.array([np.pi-0.1, 0.4])
+            high = np.array([np.pi, 1.1])
         else:
             high = np.array([np.pi, 1])
         self.state = torch.tensor(np.random.uniform(low=high, high=high), dtype=torch.float32)

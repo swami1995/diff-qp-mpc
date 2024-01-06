@@ -79,7 +79,7 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()))
             state = next_state
-            if len(traj) >= 9:
+            if len(traj) > 20:
                 ipdb.set_trace()
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
