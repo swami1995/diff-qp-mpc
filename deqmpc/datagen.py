@@ -28,29 +28,42 @@ class MPCPendulumController:
             Q (np.ndarray): State cost matrix.
             p (np.ndarray): Control cost matrix.
         """
-        nx = env.observation_space.shape[0]
-        nu = env.action_space.shape[0]
-        T = env.T
-        u_lower = torch.tensor(env.action_space.low, dtype=torch.float32)
-        u_upper = torch.tensor(env.action_space.high, dtype=torch.float32)
-        max_iter = 1
-        bsz = 1
-        u_init = torch.zeros(T, bsz, nu)
-        q,p = env.get_true_obj()
-        Q = torch.diag(q).unsqueeze(0).unsqueeze(0).repeat(
-            T, bsz, 1, 1
+        self.T = 10
+        self.goal_state = torch.Tensor([0., 0.])
+        self.goal_weights = torch.Tensor([10., 0.1])
+        self.ctrl_penalty = 0.001
+        self.mpc_eps = 1e-3
+        self.linesearch_decay = 0.2
+        self.max_linesearch_iter = 5
+        self.nx = env.observation_space.shape[0]
+        self.nu = env.action_space.shape[0]
+        self.bsz = 1
+
+        self.u_lower = torch.tensor(env.action_space.low, dtype=torch.float32)
+        self.u_upper = torch.tensor(env.action_space.high, dtype=torch.float32)
+
+        self.max_iter = 1
+        self.u_init = torch.zeros(self.T, self.bsz, self.nu)
+        self.q = torch.cat((
+            self.goal_weights,
+            self.ctrl_penalty*torch.ones(self.nu)
+        ))
+        self.px = -torch.sqrt(self.goal_weights)*self.goal_state
+        self.p = torch.cat((self.px, torch.zeros(self.nu)))
+        self.Q = torch.diag(self.q).unsqueeze(0).unsqueeze(0).repeat(
+            self.T, self.bsz, 1, 1
         )
-        p = p.unsqueeze(0).repeat(T, bsz, 1)
+        self.p = self.p.unsqueeze(0).repeat(self.T, self.bsz, 1)
         self.ctrl = mpc.MPC(
-            nx, nu, T, 
-            u_lower=u_lower, u_upper=u_upper, 
-            qp_iter=max_iter, exit_unconverged=False, 
-            eps=1e-2, n_batch=bsz, backprop=False, 
-            verbose=0, u_init=u_init, 
+            self.nx, self.nu, self.T, 
+            u_lower=self.u_lower, u_upper=self.u_upper, 
+            qp_iter=self.max_iter, exit_unconverged=False, 
+            eps=1e-2, n_batch=self.bsz, backprop=False, 
+            verbose=0, u_init=self.u_init, 
             grad_method=mpc.GradMethods.AUTO_DIFF, 
             solver_type='dense'
         )
-        self.cost = mpc.QuadCost(Q, p)
+        self.cost = mpc.QuadCost(self.Q, self.p)
 
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
@@ -79,8 +92,8 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()))
             state = next_state
-            if len(traj) > 20:
-                ipdb.set_trace()
+            # if len(traj) > 20:
+            #     ipdb.set_trace()
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
     return trajectories
@@ -278,5 +291,5 @@ def sample_trajectory(gt_trajs, bsz, T):
 if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
-    env = PendulumEnv(stabilization=True)
+    env = PendulumEnv(stabilization=False)
     save_expert_traj_mpc(env, 1)

@@ -51,13 +51,6 @@ class PendulumEnv:
         self.max_torque = 11.0
         self.action_space = Spaces(-np.array([self.max_torque]), np.array([self.max_torque]), (self.nu, 2)) #np.array([[-2, 2]])        
         self.dt = 0.05
-        self.T = 15
-        self.goal_state = torch.Tensor([0., 0.])
-        self.goal_weights = torch.Tensor([10., 0.1])
-        self.ctrl_penalty = 0.001
-        self.mpc_eps = 1e-3
-        self.linesearch_decay = 0.2
-        self.max_linesearch_iter = 5
         self.stabilization = stabilization
 
     def seed(self, seed):
@@ -76,7 +69,7 @@ class PendulumEnv:
             numpy.ndarray: The initial state.
         """
         if self.stabilization:
-            high = np.array([np.pi, 1.1])
+            high = np.array([0.05, 0.5])
         else:
             high = np.array([np.pi, 1])
         self.state = torch.tensor(np.random.uniform(low=high, high=high), dtype=torch.float32)
@@ -126,15 +119,6 @@ class PendulumEnv:
         # theta, _ = self.state.unbind()
         theta, _ = self.state[0][0], self.state[0][1]
         return -float(angle_normalize(theta) ** 2)
-
-    def get_true_obj(self):
-        q = torch.cat((
-            self.goal_weights,
-            self.ctrl_penalty*torch.ones(self.nu)
-        ))
-        px = -torch.sqrt(self.goal_weights)*self.goal_state
-        p = torch.cat((px, torch.zeros(self.nu)))
-        return q, p
 
     def close(self):
         """
