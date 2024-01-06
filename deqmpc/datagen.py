@@ -62,11 +62,11 @@ class PendulumExpert:
             )
             self.cost = mpc.QuadCost(self.Q, self.p)
 
-            def optimize_action(self, state):
-                """Solve the MPC problem for the given state."""
-                # ipdb.set_trace()
-                nominal_states, nominal_actions = self.ctrl(state, self.cost, PendulumDynamics())
-                return nominal_actions[0]  # Return the first action in the optimal sequence
+    def optimize_action(self, state):
+        """Solve the MPC problem for the given state."""
+        # ipdb.set_trace()
+        nominal_states, nominal_actions = self.ctrl(state, self.cost, PendulumDynamics())
+        return nominal_actions[0]  # Return the first action in the optimal sequence
 
 def get_pendulum_expert_traj_mpc(env, num_traj):
     """
@@ -86,9 +86,10 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
         done = False
         while not done:
             action = mpc_controller.optimize_action(torch.tensor(state, dtype=torch.float32).view(1, -1))
+            # ipdb.set_trace()
             next_state, _, done, _ = env.step(action)
-            traj.append((state, action.numpy()))
-            state = next_state
+            traj.append((state, action.numpy()[0]))
+            state = next_state[0]
             # if len(traj) > 20:
             #     ipdb.set_trace()
         print(f"Trajectory length: {len(traj)}")
@@ -152,7 +153,7 @@ def get_pendulum_expert_traj_sac(env, num_traj):
         trajectories.append(traj)
         reward_trajs.append(reward_traj)
     print(f"Average reward: {np.mean(reward_trajs)}, Avg traj length: {np.mean([len(traj) for traj in trajectories])}")
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return trajectories
 
 
@@ -189,11 +190,13 @@ def get_gt_data(args, env, type='mpc'):
     Args:
         args: The arguments for the training script.
         env: The environment.
+        type: The type of controller to use. Can be 'mpc' or 'ppo' or 'sac'.
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
         gt_trajs = pickle.load(f)
+    # ipdb.set_trace()
     return gt_trajs
 
 def merge_gt_data(gt_trajs):
@@ -211,7 +214,7 @@ def merge_gt_data(gt_trajs):
             merged_gt_traj["action"].append(action)
             merged_gt_traj["mask"].append(1)
         merged_gt_traj["mask"][-1] = 0  # mask = 0 at the end of each trajectory
-    ipdb.set_trace()
+    # ipdb.set_trace()
     merged_gt_traj["state"] = torch.tensor(np.array(merged_gt_traj["state"]), dtype=torch.float32)
     merged_gt_traj["action"] = torch.tensor(np.array(merged_gt_traj["action"]), dtype=torch.float32)
     merged_gt_traj["mask"] = torch.tensor(np.array(merged_gt_traj["mask"]), dtype=torch.float32)

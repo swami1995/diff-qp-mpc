@@ -143,11 +143,11 @@ def main():
     args = parser.parse_args()
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    env = PendulumEnv(stabilization=True)
-    gt_trajs = get_gt_data(args, env)
+    env = PendulumEnv(stabilization=False)
+    gt_trajs = get_gt_data(args, env, 'mpc')
 
     gt_trajs = merge_gt_data(gt_trajs)
-    
+    ipdb.set_trace()
     args.Q = torch.Tensor([10., 0.001]).to(args.device)
     args.R = torch.Tensor([0.001]).to(args.device)
     policy = NNMPCPolicy(args, env).to(args.device)
