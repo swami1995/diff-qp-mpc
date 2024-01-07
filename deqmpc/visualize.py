@@ -48,9 +48,10 @@ def main():
     # ground truth trajectory
     else:
         gt_trajs = get_gt_data(args, env, "mpc")
-        theta = [item[0][0] for item in gt_trajs[0]]
-        theta_dot = [item[0][1] for item in gt_trajs[0]]
-        torque = [item[1][0] for item in gt_trajs[0]]
+        idx = 0
+        theta = [item[0][0] for item in gt_trajs[idx]]
+        theta_dot = [item[0][1] for item in gt_trajs[idx]]
+        torque = [item[1][0] for item in gt_trajs[idx]]
         plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
         plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')

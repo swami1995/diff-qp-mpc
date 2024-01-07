@@ -356,7 +356,9 @@ class MPC(Module):
                     break
         
         x, u = torch.cat(best['x'], dim=1), torch.cat(best['u'], dim=1)
-        x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
+        delta_x, delta_u, cost_total = self.single_qp(x, u, dx, x0, cost)
+        x = x + delta_x * alpha
+        u = u + delta_u * alpha        
         return x, u, cost_total
 
 

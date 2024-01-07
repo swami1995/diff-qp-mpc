@@ -171,21 +171,21 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--T", type=int, default=5)
+    parser.add_argument("--T", type=int, default=10)
     # parser.add_argument('--dt', type=float, default=0.05)
-    parser.add_argument("--qp_iter", type=int, default=10)
+    parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=80)
+    parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     env = PendulumEnv(stabilization=False)
-    gt_trajs = get_gt_data(args, env, "sac")
+    gt_trajs = get_gt_data(args, env, "mpc")
     gt_trajs = merge_gt_data(gt_trajs)
-    args.Q = torch.Tensor([10.0, 0.001]).to(args.device)
-    args.R = torch.Tensor([0.001]).to(args.device)
+    args.Q = torch.Tensor([10.0, 1]).to(args.device)
+    args.R = torch.Tensor([1.0]).to(args.device)
     policy = NNMPCPolicy(args, env).to(args.device)
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=1e-4)
 
