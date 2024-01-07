@@ -7,24 +7,40 @@ class PendulumDynamics(torch.nn.Module):
         super().__init__()
         
     def forward(self, state, action):
-        th = state[..., 0]#.view(-1, 1)
-        thdot = state[..., 1]#.view(-1, 1)
-
-        g = 10
-        m = 1
-        l = 1
+        """
+        Computes the next state given the current state and action
+        """
         dt = 0.05
+        # semi-implicit euler
 
-        u = action.squeeze(-1)
-        u = torch.clamp(u, -11, 11)
-
-        newthdot = thdot + (-3 * g / (2 * l) * torch.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
-        newth = th + newthdot * dt
-        # newthdot = torch.clamp(newthdot, -8, 8)
+        thdot, thdotdot = self.dynamics(state, action)
+        newthdot = thdot + thdotdot * dt
+        newth = state[..., 0] + newthdot * dt
 
         state = torch.stack((angle_normalize(newth), newthdot), dim=-1)
         return state
+    
+    def dynamics(self, state, action):
+        """
+        Computes pendulum cont. dynamics with external torque input
+        theta is the angle from upright, anti-clockwise is positive
+        """
+        th = state[..., 0]
+        thdot = state[..., 1]
 
+        g = 10.
+        m = 1.
+        l = 1.
+
+        u = action.squeeze(-1)
+        max_torque = 5.0
+        u = torch.clamp(u, -max_torque, max_torque)
+
+        newthdotdot = (u + m * g * l * torch.sin(th)) / (m * l ** 2)
+        newthdot = thdot
+
+        return newthdot, newthdotdot
+    
 def angle_normalize(x):
     return (((x+np.pi) % (2*np.pi)) - np.pi)
 
@@ -48,7 +64,7 @@ class PendulumEnv:
         self.nu = 1
         self.num_successes = 0
         self.observation_space = Spaces(-np.array([np.pi, np.inf]), np.array([np.pi, np.inf]), (self.nx, 2)) # np.array([[-np.pi, np.pi], [-8, 8]])
-        self.max_torque = 11.0
+        self.max_torque = 5.0
         self.action_space = Spaces(-np.array([self.max_torque]), np.array([self.max_torque]), (self.nu, 2)) #np.array([[-2, 2]])        
         self.dt = 0.05
         self.stabilization = stabilization
@@ -71,8 +87,8 @@ class PendulumEnv:
         if self.stabilization:
             high = np.array([0.05, 0.5])
         else:
-            high = np.array([np.pi, 1])
-        self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+            high = np.array([np.pi, 0.01])
+        self.state = torch.tensor(np.random.uniform(low=high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
 

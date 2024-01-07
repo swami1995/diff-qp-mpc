@@ -90,7 +90,7 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()[0]))
             state = next_state[0]
-            # if len(traj) > 20:
+            # if len(traj) > 100:
             #     ipdb.set_trace()
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
@@ -253,4 +253,4 @@ if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
-    save_expert_traj(env, 500, 'mpc')
+    save_expert_traj(env, 1, 'mpc')

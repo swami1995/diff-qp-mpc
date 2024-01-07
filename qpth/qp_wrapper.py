@@ -292,7 +292,6 @@ class MPC(Module):
             # Linearize the dynamics around the current state and action.
             F, f = self.linearize_dynamics(
                 x, util.detach_maybe(u), dx, diff=False)
-        
 
         # ipdb.set_trace()
         if self.solver_type == 'dense':
@@ -308,6 +307,7 @@ class MPC(Module):
         return x, u, cost_total
 
     def solve_nonlin(self, x, u, dx, x0, cost):
+        alpha = 1.0
         best = None
         n_not_improved = 0
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
@@ -317,7 +317,10 @@ class MPC(Module):
         with torch.no_grad():
             for i in range(self.qp_iter):
                 u_prev = u.clone()
-                x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
+                delta_x, delta_u, cost_total = self.single_qp(x, u, dx, x0, cost)
+                # ipdb.set_trace()
+                x = x + delta_x * alpha
+                u = u + delta_u * alpha
                 full_du_norm = (u - u_prev).norm()
 
 

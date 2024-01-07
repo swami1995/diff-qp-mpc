@@ -182,7 +182,7 @@ def main():
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     env = PendulumEnv(stabilization=False)
-    gt_trajs = get_gt_data(args, env, "mpc")
+    gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 0.001]).to(args.device)
     args.R = torch.Tensor([0.001]).to(args.device)
