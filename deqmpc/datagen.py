@@ -11,50 +11,61 @@ from envs import PendulumEnv, PendulumDynamics
 from ppo_train import PPO, GaussianPolicy
 import pickle
 
-class MPCPendulumController:
-    def __init__(self, env):
+class PendulumExpert:
+    def __init__(self, env, type='mpc'):
         """
         Initialize the MPC controller with the necessary parameters.
+
         Args:
-            nx (int): Number of state dimensions.
-            nu (int): Number of control dimensions.
-            T (int): Time horizon for the MPC.
-            u_lower (float): Lower bound for control signal.
-            u_upper (float): Upper bound for control signal.
-            max_iter (int): Maximum iterations for the QP solver.
-            bsz (int): Batch size for MPC optimization.
-            u_init (float): Initial guess for control signal.
-            Q (np.ndarray): State cost matrix.
-            p (np.ndarray): Control cost matrix.
+            env: The PendulumEnv environment.
+            type: The type of controller to use. Can be 'mpc' or 'ppo' or 'sac'.        
         """
-        nx = env.observation_space.shape[0]
-        nu = env.action_space.shape[0]
-        T = env.T
-        u_lower = torch.tensor(env.action_space[:, 0], dtype=torch.float32)
-        u_upper = torch.tensor(env.action_space[:, 1], dtype=torch.float32)
-        max_iter = 1
-        bsz = 1
-        u_init = torch.zeros(T, bsz, nu)
-        q,p = env.get_true_obj()
-        Q = torch.diag(q).unsqueeze(0).unsqueeze(0).repeat(
-            T, bsz, 1, 1
-        )
-        p = p.unsqueeze(0).repeat(T, bsz, 1)
-        self.ctrl = mpc.MPC(
-            nx, nu, T, 
-            u_lower=u_lower, u_upper=u_upper, 
-            qp_iter=max_iter, exit_unconverged=False, 
-            eps=1e-2, n_batch=bsz, backprop=False, 
-            verbose=0, u_init=u_init, 
-            grad_method=mpc.GradMethods.AUTO_DIFF, 
-            solver_type='dense'
-        )
-        self.cost = mpc.QuadCost(Q, p)
+
+        self.type = type
+
+        if self.type == 'mpc':
+            self.T = 30
+            self.goal_state = torch.Tensor([0., 0.])
+            self.goal_weights = torch.Tensor([10., 0.1])
+            self.ctrl_penalty = 0.001
+            self.mpc_eps = 1e-3
+            self.linesearch_decay = 0.2
+            self.max_linesearch_iter = 5
+            self.nx = env.observation_space.shape[0]
+            self.nu = env.action_space.shape[0]
+            self.bsz = 1
+
+            self.u_lower = torch.tensor(env.action_space.low, dtype=torch.float32)
+            self.u_upper = torch.tensor(env.action_space.high, dtype=torch.float32)
+
+            self.qp_iter = 1
+            self.u_init = torch.zeros(self.T, self.bsz, self.nu)
+            self.q = torch.cat((
+                self.goal_weights,
+                self.ctrl_penalty*torch.ones(self.nu)
+            ))
+            self.px = -torch.sqrt(self.goal_weights)*self.goal_state
+            self.p = torch.cat((self.px, torch.zeros(self.nu)))
+            self.Q = torch.diag(self.q).unsqueeze(0).unsqueeze(0).repeat(
+                self.T, self.bsz, 1, 1
+            )
+            self.p = self.p.unsqueeze(0).repeat(self.T, self.bsz, 1)
+
+            self.ctrl = mpc.MPC(
+                self.nx, self.nu, self.T, 
+                u_lower=self.u_lower, u_upper=self.u_upper, 
+                qp_iter=self.qp_iter, exit_unconverged=False, 
+                eps=1e-2, n_batch=self.bsz, backprop=False, 
+                verbose=0, u_init=self.u_init, 
+                grad_method=mpc.GradMethods.AUTO_DIFF, 
+                solver_type='dense'
+            )
+            self.cost = mpc.QuadCost(self.Q, self.p)
 
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
         # ipdb.set_trace()
-        nominal_states, nominal_actions = self.ctrl(state, self.cost, PendulumDynamics())
+        nominal_states, nominal_actions = self.ctrl(state, self.cost, env.dynamics)
         return nominal_actions[0]  # Return the first action in the optimal sequence
 
 def get_pendulum_expert_traj_mpc(env, num_traj):
@@ -62,12 +73,12 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
     Get expert trajectories for pendulum environment using MPC for trajectory optimization.
     Args:
         env: The PendulumEnv environment.
-        mpc_controller: The MPCPendulumController.
+        mpc_controller: The PendulumExpert.
         num_traj: Number of trajectories to save.
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
-    mpc_controller = MPCPendulumController(env)
+    mpc_controller = PendulumExpert(env)
     trajectories = []
     for _ in range(num_traj):
         state = env.reset()  # Reset environment to a new initial state
@@ -75,10 +86,11 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
         done = False
         while not done:
             action = mpc_controller.optimize_action(torch.tensor(state, dtype=torch.float32).view(1, -1))
+            # ipdb.set_trace()
             next_state, _, done, _ = env.step(action)
-            traj.append((state, action.numpy()))
-            state = next_state
-            # if len(traj) >= env.T:
+            traj.append((state, action.numpy()[0]))
+            state = next_state[0]
+            # if len(traj) > 100:
             #     ipdb.set_trace()
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
@@ -141,21 +153,27 @@ def get_pendulum_expert_traj_sac(env, num_traj):
         trajectories.append(traj)
         reward_trajs.append(reward_traj)
     print(f"Average reward: {np.mean(reward_trajs)}, Avg traj length: {np.mean([len(traj) for traj in trajectories])}")
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return trajectories
 
 
-def save_expert_traj_mpc(env, num_traj):
+def save_expert_traj(env, num_traj, type='mpc'):
     """Save expert trajectories to a file.
 
     Args:
         env: gym environment
         num_traj: number of trajectories to save
+        type: type of expert to use
     """
 
     ## use env name to choose which function to use to get expert trajectories
-    if env.spec_id == 'Pendulum-v0':
-        expert_traj = get_pendulum_expert_traj_mpc(env, num_traj)
+    if env.spec_id == 'Pendulum-v0' or env.spec_id == 'Pendulum-v0-stabilize':
+        if (type == 'mpc'):
+            expert_traj = get_pendulum_expert_traj_mpc(env, num_traj)
+        elif (type == 'ppo'):
+            expert_traj = get_pendulum_expert_traj_ppo(env, num_traj)
+        elif (type == 'sac'):
+            expert_traj = get_pendulum_expert_traj_sac(env, num_traj)
     else:
         raise NotImplementedError
     
@@ -163,64 +181,22 @@ def save_expert_traj_mpc(env, num_traj):
     if os.path.exists('data') == False:
         os.makedirs('data')
         
-    with open(f'data/expert_traj-{env.spec_id}.pkl', 'wb') as f:
+    with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'wb') as f:
         pickle.dump(expert_traj, f)
 
-def save_expert_traj_ppo(env, num_traj):
-    """Save expert trajectories to a file.
-
-    Args:
-        env: gym environment
-        num_traj: number of trajectories to save
-    """
-
-    ## use env name to choose which function to use to get expert trajectories
-    if env.spec_id == 'Pendulum-v0':
-        expert_traj = get_pendulum_expert_traj_ppo(env, num_traj)
-    else:
-        raise NotImplementedError
-    
-    ## save expert trajectories to a file in data folder
-    if os.path.exists('data') == False:
-        os.makedirs('data')
-    
-    with open(f'data/expert_traj_ppo-{env.spec_id}.pkl', 'wb') as f:
-        pickle.dump(expert_traj, f)
-
-def save_expert_traj_sac(env, num_traj):
-    """Save expert trajectories to a file.
-
-    Args:
-        env: gym environment
-        num_traj: number of trajectories to save
-    """
-
-    ## use env name to choose which function to use to get expert trajectories
-    if env.spec_id == 'Pendulum-v0':
-        expert_traj = get_pendulum_expert_traj_sac(env, num_traj)
-    elif env.spec_id == 'Pendulum-v0-stabilize':
-        expert_traj = get_pendulum_expert_traj_sac(env, num_traj)
-    else:
-        raise NotImplementedError
-    
-    ## save expert trajectories to a file in data folder
-    if os.path.exists('data') == False:
-        os.makedirs('data')
-    
-    with open(f'data/expert_traj_sac-{env.spec_id}.pkl', 'wb') as f:
-        pickle.dump(expert_traj, f)
-
-def get_gt_data(args, env):
+def get_gt_data(args, env, type='mpc'):
     """
     Get ground truth data for imitation learning.
     Args:
         args: The arguments for the training script.
         env: The environment.
+        type: The type of controller to use. Can be 'mpc' or 'ppo' or 'sac'.
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
-    with open(f'data/expert_traj_sac-{env.spec_id}.pkl', 'rb') as f:
+    with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
         gt_trajs = pickle.load(f)
+    # ipdb.set_trace()
     return gt_trajs
 
 def merge_gt_data(gt_trajs):
@@ -237,7 +213,8 @@ def merge_gt_data(gt_trajs):
             merged_gt_traj["state"].append(state)
             merged_gt_traj["action"].append(action)
             merged_gt_traj["mask"].append(1)
-        merged_gt_traj["mask"][-1] = 0
+        merged_gt_traj["mask"][-1] = 0  # mask = 0 at the end of each trajectory
+    # ipdb.set_trace()
     merged_gt_traj["state"] = torch.tensor(np.array(merged_gt_traj["state"]), dtype=torch.float32)
     merged_gt_traj["action"] = torch.tensor(np.array(merged_gt_traj["action"]), dtype=torch.float32)
     merged_gt_traj["mask"] = torch.tensor(np.array(merged_gt_traj["mask"]), dtype=torch.float32)
@@ -275,5 +252,5 @@ def sample_trajectory(gt_trajs, bsz, T):
 if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
-    env = PendulumEnv(stabilization=True)
-    save_expert_traj_sac(env, 200)
+    env = PendulumEnv(stabilization=False)
+    save_expert_traj(env, 2, 'mpc')

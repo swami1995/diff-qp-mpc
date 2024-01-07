@@ -83,7 +83,7 @@ class MPC(Module):
             These can either be floats or shaped as [T, n_batch, n_ctrl]
         u_init: The initial control sequence, useful for warm-starting:
             [T, n_batch, n_ctrl]
-        lqr_iter: The number of LQR iterations to perform.
+        qp_iter: The number of QP iterations to perform.
         grad_method: The method to compute the Jacobian of the dynamics.
             GradMethods.ANALYTIC: Use a manually-defined Jacobian.
                 + Fast and accurate, use this if possible
@@ -144,7 +144,6 @@ class MPC(Module):
             not_improved_lim=5,
             best_cost_eps=1e-4,
             solver_type='dense',
-            lqr_iter=10,
     ):
         super().__init__()
 
@@ -184,7 +183,6 @@ class MPC(Module):
         self.slew_rate_penalty = slew_rate_penalty
         self.prev_ctrl = prev_ctrl
         self.solver_type = solver_type
-        self.lqr_iter = lqr_iter
 
         if solver_type == 'dense':
             idxs_1 = torch.arange(n_state + n_ctrl)
@@ -250,6 +248,7 @@ class MPC(Module):
                 sys.exit(-1)
             cost = QuadCost(C, c)
 
+        # ipdb.set_trace()
         assert x0.ndimension() == 2 and x0.size(0) == n_batch
 
         if self.u_init is None:
@@ -290,9 +289,9 @@ class MPC(Module):
             if f is None:
                 f = torch.zeros((self.T-1, self.n_batch, self.n_state)).to(x0)
         else:
+            # Linearize the dynamics around the current state and action.
             F, f = self.linearize_dynamics(
                 x, util.detach_maybe(u), dx, diff=False)
-        
 
         # ipdb.set_trace()
         if self.solver_type == 'dense':
@@ -308,6 +307,7 @@ class MPC(Module):
         return x, u, cost_total
 
     def solve_nonlin(self, x, u, dx, x0, cost):
+        alpha = 1.0
         best = None
         n_not_improved = 0
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
@@ -315,9 +315,12 @@ class MPC(Module):
         # ipdb.set_trace()
         # print("init", cost_total.mean().item())
         with torch.no_grad():
-            for i in range(self.lqr_iter):
+            for i in range(self.qp_iter):
                 u_prev = u.clone()
-                x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
+                delta_x, delta_u, cost_total = self.single_qp(x, u, dx, x0, cost)
+                # ipdb.set_trace()
+                x = x + delta_x * alpha
+                u = u + delta_u * alpha
                 full_du_norm = (u - u_prev).norm()
 
 
@@ -353,7 +356,9 @@ class MPC(Module):
                     break
         
         x, u = torch.cat(best['x'], dim=1), torch.cat(best['u'], dim=1)
-        x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
+        delta_x, delta_u, cost_total = self.single_qp(x, u, dx, x0, cost)
+        x = x + delta_x * alpha
+        u = u + delta_u * alpha        
         return x, u, cost_total
 
 
