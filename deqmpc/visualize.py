@@ -31,32 +31,30 @@ def main():
     state = torch.Tensor([[0.5, 5]])
     state_hist = state
 
-    for i in range(200):        
-        state = env.dynamics(state, torch.Tensor([0.0]))
-        state_hist = torch.cat((state_hist, state), dim=0)
-        # print(state)
+    # test uncontrolled dynamics
+    if False:
+        for i in range(200):        
+            state = env.dynamics(state, torch.Tensor([0.0]))
+            state_hist = torch.cat((state_hist, state), dim=0)
+            # print(state)
 
-    # draw a trajectory of theta and theta dot
-    theta = state_hist[:, 0]
-    theta_dot = state_hist[:, 1]
+        theta = state_hist[:, 0]
+        theta_dot = state_hist[:, 1]
 
-    # plt.figure()
-    # print(state_hist.shape)
-    # plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-    # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-    # plt.legend()
+        plt.figure()
+        print(state_hist.shape)
+        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
+        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        plt.legend()
 
-    # gt_trajs = get_gt_data(args, env, "mpc")
-
-    # # draw a trajectory of theta and theta dot
-    # plt.figure()
-    # theta = [item[0][0] for item in gt_trajs[0]]
-    # theta_dot = [item[0][1] for item in gt_trajs[0]]
-    # # ipdb.set_trace()
-    # plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-    # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-    # plt.legend()
-    # plt.show()
+    # ground truth trajectory
+    if True:
+        gt_trajs = get_gt_data(args, env, "mpc")
+        theta = [item[0][0] for item in gt_trajs[0]]
+        theta_dot = [item[0][1] for item in gt_trajs[0]]
+        # plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
+        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        # plt.legend()
 
     from matplotlib.animation import FuncAnimation
     # Animation function

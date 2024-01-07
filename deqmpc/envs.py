@@ -52,7 +52,6 @@ class Spaces:
     
     def sample(self):
         return np.random.uniform(self.low, self.high)
-    
 
 
 class PendulumEnv:
