@@ -253,4 +253,4 @@ if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
-    save_expert_traj(env, 1, 'mpc')
+    save_expert_traj(env, 200, 'mpc')

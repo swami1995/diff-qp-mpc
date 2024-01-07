@@ -55,6 +55,7 @@ def main():
         plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
+        plt.show()
 
     from matplotlib.animation import FuncAnimation
     # Animation function
@@ -71,6 +72,7 @@ def main():
         x = [0, -length * np.sin(angle)]
         y = [0, length * np.cos(angle)]
         ax.plot(x, y, marker='o', markersize=10, color='blue', linewidth=4)
+        ax.arrow(0, -1, torque[frame]/env.max_torque, 0, color='green', width=0.05)
         
         # Set plot limits
         ax.set_xlim(-length*1.5, length*1.5)
@@ -81,7 +83,7 @@ def main():
 
     # Set up the plot
     fig, ax = plt.subplots()
-    ani = FuncAnimation(fig, update, frames=200, interval=30, repeat=False)
+    ani = FuncAnimation(fig, update, frames=len(theta), interval=30, repeat=True)
 
     plt.title('Simple Pendulum Animation')
     plt.xlabel('X Position (m)')
