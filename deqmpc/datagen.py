@@ -24,7 +24,7 @@ class PendulumExpert:
         self.type = type
 
         if self.type == 'mpc':
-            self.T = 10
+            self.T = 30
             self.goal_state = torch.Tensor([0., 0.])
             self.goal_weights = torch.Tensor([10., 0.1])
             self.ctrl_penalty = 0.001
@@ -38,7 +38,7 @@ class PendulumExpert:
             self.u_lower = torch.tensor(env.action_space.low, dtype=torch.float32)
             self.u_upper = torch.tensor(env.action_space.high, dtype=torch.float32)
 
-            self.max_iter = 1
+            self.qp_iter = 1
             self.u_init = torch.zeros(self.T, self.bsz, self.nu)
             self.q = torch.cat((
                 self.goal_weights,
@@ -54,7 +54,7 @@ class PendulumExpert:
             self.ctrl = mpc.MPC(
                 self.nx, self.nu, self.T, 
                 u_lower=self.u_lower, u_upper=self.u_upper, 
-                qp_iter=self.max_iter, exit_unconverged=False, 
+                qp_iter=self.qp_iter, exit_unconverged=False, 
                 eps=1e-2, n_batch=self.bsz, backprop=False, 
                 verbose=0, u_init=self.u_init, 
                 grad_method=mpc.GradMethods.AUTO_DIFF, 
@@ -65,7 +65,7 @@ class PendulumExpert:
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
         # ipdb.set_trace()
-        nominal_states, nominal_actions = self.ctrl(state, self.cost, PendulumDynamics())
+        nominal_states, nominal_actions = self.ctrl(state, self.cost, env.dynamics)
         return nominal_actions[0]  # Return the first action in the optimal sequence
 
 def get_pendulum_expert_traj_mpc(env, num_traj):
@@ -196,7 +196,7 @@ def get_gt_data(args, env, type='mpc'):
     """
     with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
         gt_trajs = pickle.load(f)
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return gt_trajs
 
 def merge_gt_data(gt_trajs):

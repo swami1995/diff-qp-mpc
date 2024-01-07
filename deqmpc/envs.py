@@ -11,8 +11,7 @@ class PendulumDynamics(torch.nn.Module):
         Computes the next state given the current state and action
         """
         dt = 0.05
-        # semi-implicit euler
-
+        # semi-implicit euler integration
         thdot, thdotdot = self.dynamics(state, action)
         newthdot = thdot + thdotdot * dt
         newth = state[..., 0] + newthdot * dt
@@ -86,7 +85,7 @@ class PendulumEnv:
         if self.stabilization:
             high = np.array([0.05, 0.5])
         else:
-            high = np.array([np.pi, 0.01])
+            high = np.array([np.pi/2, -0.01])
         self.state = torch.tensor(np.random.uniform(low=high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()

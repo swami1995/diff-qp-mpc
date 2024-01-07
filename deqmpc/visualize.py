@@ -30,8 +30,8 @@ def main():
     env = PendulumEnv(stabilization=False)
 
     # test uncontrolled dynamics
-    if True:
-        state = torch.Tensor([[1.0, 0]])
+    if 0:
+        state = torch.Tensor([[1.5, 0]])
         state_hist = state
         for i in range(200):        
             state = env.dynamics(state, torch.Tensor([0.0]))
@@ -46,13 +46,15 @@ def main():
         # plt.legend()
 
     # ground truth trajectory
-    if False:
+    else:
         gt_trajs = get_gt_data(args, env, "mpc")
         theta = [item[0][0] for item in gt_trajs[0]]
         theta_dot = [item[0][1] for item in gt_trajs[0]]
-        # plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-        # plt.legend()
+        torque = [item[1][0] for item in gt_trajs[0]]
+        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
+        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
+        plt.legend()
 
     from matplotlib.animation import FuncAnimation
     # Animation function
