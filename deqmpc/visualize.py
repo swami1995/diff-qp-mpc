@@ -28,27 +28,25 @@ def main():
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     env = PendulumEnv(stabilization=False)
-    state = torch.Tensor([[0.5, 5]])
-    state_hist = state
 
     # test uncontrolled dynamics
-    if False:
+    if True:
+        state = torch.Tensor([[1.0, 0]])
+        state_hist = state
         for i in range(200):        
             state = env.dynamics(state, torch.Tensor([0.0]))
             state_hist = torch.cat((state_hist, state), dim=0)
-            # print(state)
-
         theta = state_hist[:, 0]
         theta_dot = state_hist[:, 1]
 
-        plt.figure()
-        print(state_hist.shape)
-        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-        plt.legend()
+        # plt.figure()
+        # print(state_hist.shape)
+        # plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
+        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        # plt.legend()
 
     # ground truth trajectory
-    if True:
+    if False:
         gt_trajs = get_gt_data(args, env, "mpc")
         theta = [item[0][0] for item in gt_trajs[0]]
         theta_dot = [item[0][1] for item in gt_trajs[0]]
