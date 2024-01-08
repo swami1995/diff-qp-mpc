@@ -144,6 +144,7 @@ class MPC(Module):
             not_improved_lim=5,
             best_cost_eps=1e-4,
             solver_type='dense',
+            single_qp_solve=False,
     ):
         super().__init__()
 
@@ -183,6 +184,7 @@ class MPC(Module):
         self.slew_rate_penalty = slew_rate_penalty
         self.prev_ctrl = prev_ctrl
         self.solver_type = solver_type
+        self.single_qp_solve = single_qp_solve
 
         if solver_type == 'dense':
             idxs_1 = torch.arange(n_state + n_ctrl)
@@ -278,8 +280,10 @@ class MPC(Module):
 
         best = None
         # ipdb.set_trace()
-        # x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
-        x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
+        if self.single_qp_solve:
+            x, u, cost_total = self.single_qp_ls(x, u, dx, x0, cost)
+        else:
+            x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
         
         return (x, u)
     
@@ -307,7 +311,6 @@ class MPC(Module):
         return x, u, cost_total
 
     def solve_nonlin(self, x, u, dx, x0, cost):
-        alpha = 1.0
         best = None
         n_not_improved = 0
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
@@ -317,10 +320,10 @@ class MPC(Module):
         with torch.no_grad():
             for i in range(self.qp_iter):
                 u_prev = u.clone()
-                delta_x, delta_u, cost_total = self.single_qp(x, u, dx, x0, cost)
+                delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
                 # ipdb.set_trace()
-                x = x + delta_x * alpha
-                u = u + delta_u * alpha
+
+                x, u, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
                 full_du_norm = (u - u_prev).norm()
 
 
@@ -356,11 +359,48 @@ class MPC(Module):
                     break
         
         x, u = torch.cat(best['x'], dim=1), torch.cat(best['u'], dim=1)
-        delta_x, delta_u, cost_total = self.single_qp(x, u, dx, x0, cost)
+        delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
+        with torch.no_grad():
+            _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
         x = x + delta_x * alpha
         u = u + delta_u * alpha        
         return x, u, cost_total
 
+    def single_qp_ls(self, x, u, dx, x0, cost):
+        best = None
+        n_not_improved = 0
+        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        cost_total = self.compute_cost(xhats_qpf, cost)
+
+        delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
+        with torch.no_grad():
+            _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
+        x = x + delta_x * alpha
+        u = u + delta_u * alpha
+        return x, u, cost_total
+
+
+    def line_search(self, x, u, delta_x, delta_u, dx, x0, cost):
+        # ipdb.set_trace()
+        alpha_shape = [1, self.n_batch, 1]
+        alpha = torch.ones(alpha_shape).to(x0)
+        cost_total = self.compute_cost(torch.cat((x, u), dim=2).transpose(0,1), cost)
+        for j in range(self.max_linesearch_iter):
+            # x_new = x + delta_x * alpha
+            u_new = u + delta_u * alpha
+            x_new = self.rollout(x0, u_new, dx)[:-1]
+            xhats_qpf = torch.cat((x_new, u_new), dim=2).transpose(0,1)
+            cost_total_new = self.compute_cost(xhats_qpf, cost)
+            # ipdb.set_trace()
+            if (cost_total_new < cost_total).all():
+                break
+            else:
+                mask = (cost_total_new >= cost_total).float()
+                alpha = alpha * self.linesearch_decay * mask + (1-mask) * alpha
+            if j > self.max_linesearch_iter:
+                print("line search failed")
+                ipdb.set_trace()
+        return x_new, u_new, alpha, cost_total_new
 
     def approximate_cost(self, x, u, Cf, diff=True):
         with torch.enable_grad():

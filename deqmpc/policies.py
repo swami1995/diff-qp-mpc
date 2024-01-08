@@ -97,12 +97,17 @@ class DEQPolicy(torch.nn.Module):
         return X[:,k%m].view_as(x0), res
 
 # Questions:
-# 1. What is a good input : As in a 'good' qualitative estimate of the error. - error between the trajectory spit out and the optimized trajectory
-# 2. What type of recurrence to add? beyond just the fixed point iterate. 
-# 3. How many QP solves to perform? 
-# 4. How to do the backward pass? - implicit differentiation of the fixed point network fixed point?
-# 5. Unclear if deltas naively are the best output - regression is a hard problem especially at that precision. 
-# 6. Architecture - need to probably do some sort of GNN type thing. Using FFN to chunch entire trajectory seems suboptimal.
+    # 1. What is a good input : As in a 'good' qualitative estimate of the error. 
+        # - error between the trajectory spit out and the optimized trajectory
+        # - just xref - x0 - maybe also give velocities as input?
+        # - also should be compatible with recurrence on the latent z
+    # 2. What type of recurrence to add? beyond just the fixed point iterate. 
+    # 3. How many QP solves to perform? 
+    # 4. How to do the backward pass? - implicit differentiation of the fp network's fixed point? or just regular backprop? don't have any jacobians to compute fixed points, could compute the jacobians though
+    # 5. Unclear if deltas naively are the best output - regression is a hard problem especially at that precision. 
+    # 6. Architecture - need to probably do some sort of GNN type thing. Using FFN to crunch entire trajectory seems suboptimal.
+    # 7. Also need to spit out weights corresponding to the steps the network is not confident about. 
+# More important questions are probably still 1, 5, 6
 class DEQLayer(torch.nn.Module):
     def __init__(self, args, env):
         super().__init__()
@@ -126,19 +131,26 @@ class DEQLayer(torch.nn.Module):
 
         self.fc_out = torch.nn.Linear(self.hdim, self.np*self.T)
 
-    def forward(self, x):
+    def forward(self, x, z):
         """
         compute the policy output for the given state x
         """
         xinp = self.fc_inp(x)
         xinp = self.ln_inp(xinp)
-        z_shape = list(xinp.shape[:-1]) + [self.hdim,]
-        z = torch.zeros(z_shape).to(xinp)
+        # z_shape = list(xinp.shape[:-1]) + [self.hdim,]
+        # z = torch.zeros(z_shape).to(xinp)
         z_out = self.deq_layer(xinp, z)
         dx_ref = self.fc_out(z_out)
         dx_ref = dx_ref.view(-1, self.T, self.np)
         # x_ref = dx_ref + x[:,None,:self.np]*10
-        return dx_ref
+        return dx_ref, z_out
+
+    def deq_layer(self, x, z):
+        z = self.fcdeq1(z)
+        z = self.reludeq1(z)
+        z = self.lndeq1(z)
+        out = self.lndeq3(self.reludeq2(z + self.lndeq2(x + self.fcdeq2(z))))
+        return out
 
 class DEQMPCPolicy(torch.nn.Module):
     def __init__(self, args, env):
