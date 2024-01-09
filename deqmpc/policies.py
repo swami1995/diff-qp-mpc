@@ -99,15 +99,47 @@ class DEQPolicy(torch.nn.Module):
 # Questions:
     # 1. What is a good input : As in a 'good' qualitative estimate of the error. 
         # - error between the trajectory spit out and the optimized trajectory
-        # - just xref - x0 - maybe also give velocities as input?
+        # - just x - x0 
+        # - maybe also give velocities as input?
+        # - maybe also give the previous xref or (xref - x0) prediction as input? - especially important if we want to correct xref instead of just x (which is probably useful when there are other regularizers in the cost)
         # - also should be compatible with recurrence on the latent z
+        # - ideally would like to merge it with the features or state (perhaps 3D) we extract from the image - to get a better sense of the error as input
     # 2. What type of recurrence to add? beyond just the fixed point iterate. 
     # 3. How many QP solves to perform? 
     # 4. How to do the backward pass? - implicit differentiation of the fp network's fixed point? or just regular backprop? don't have any jacobians to compute fixed points, could compute the jacobians though
     # 5. Unclear if deltas naively are the best output - regression is a hard problem especially at that precision. 
     # 6. Architecture - need to probably do some sort of GNN type thing. Using FFN to crunch entire trajectory seems suboptimal.
     # 7. Also need to spit out weights corresponding to the steps the network is not confident about. 
-# More important questions are probably still 1, 5, 6
+    # 8. Diffusion gives a nice way to represent course signals when the network isn't confident about the output. To prevent overpenalizing the network for being uncertain.
+    #    Question is how to do that without explicitly introducing diffusion/stochasticity into the network. 
+    #    (i) Perhaps just use the weights as a way to do that? This would imply we have to use the weights on the output loss as well. 
+    #    (ii) This is however a broadly interesting question - If the weights or other mechanisms can be used to represent uncertainty well, then maybe diffusion is redundant?
+    #           - Question is what are those other mechanisms? 
+    #           - CVAE type thing represents it in the latent space? (for the network to represent uncertainty aleotorically)
+    #           - Dropout type thing represents it in the network parameters? (for the network to represent uncertainty epistemically)
+    #           - Predicting explicit weights represents it for the optimization problem? (for the optimization problem to represent uncertainty aleotorically)
+    #           - Using the weights in the loss as well - does something similar to CVAE? - but CVAE is probably more robust to overfitting and more principled
+    #           - Using the weights however is more interpretable and probably nicer optimization wise.
+    #           - Plus, the weights also aid the decoder training more explicitly - CVAE needs to be implicit thanks to the averaging over samples. - robustness v/s precision
+    #           - But come to think of it, CVAE and diffusion probably have quite a bit in common and there should be some obvious middle ground if we think harder.
+    #                 - In fact, feels like DEQ + CVAE is the natural way to go! - CVAE is a natural way to represent uncertainty in the latent space and DEQ is a natural way to 
+    #    (iii) Diffusion v/s CVAE
+    #           - Diffusion is iterative and CVAE is not - makes diffusion representationally more powerful
+    #           - Diffusion reasons about uncertainy/noise more explicitly - CVAE is more implicit : Both have pros and cons
+    #                 - The explicitness makes each iteration more stable but also less powerful. Hence diffusion models are also huge in size and slow to train.
+    #           - The decoder objective in CVAE doesn't account for the uncertainty - diffusion does. This can sometimes lead to the CVAE decoder confidently spitting out blurry outputs.
+    #    (iv) Diffusion as a way to represent uncertainty in the optimization problem - can we use the normalized error in the estimates through the iterations as a way to represent uncertainty?
+    #    (v) In the diffusion case, should we just look at the overall setup as a way to add dynamics within diffusion models?
+    #           - or should we still look at it as an optimization problem with stochasticity added to aid with exploration. 
+    #           - or instead the noise as just a means of incorporating uncertainty in the optimization steps at each iteration. 
+    #           - The specific philosophy maybe doesn't matter too much - but it will probably guide the thinking. Some clarity on this would be nice!
+# More important questions are probably still 1, 5, 6, 7
+## TODOs:
+    # 1. Make input flexible - x, xref, xref - x0, xref - xref_prev, xref - xref_prev - x0, xref - xref_prev - x0 + v, etc.
+    # 2. Make outputs flexible - deltas, xref, xref - x0, etc. and also weights corresponding to the steps the network is not confident about.
+    # 3. Make architecture flexible - GNN or FFN or whatever
+    # 4. Make recurrence flexible - fixed point or whatever
+
 class DEQLayer(torch.nn.Module):
     def __init__(self, args, env):
         super().__init__()
@@ -117,28 +149,19 @@ class DEQLayer(torch.nn.Module):
         self.np = args.np
         self.T = args.T
         self.hdim = args.hdim
+        self.layer_type = 'mlp'#args.layer_type
+        self.inp_type = ''#args.inp_type
+        self.out_type = ''#args.out_type
 
-        self.fc_inp = torch.nn.Linear(self.nx + self.np*self.T, self.hdim)
-        self.ln_inp = torch.nn.LayerNorm(self.hdim)
-
-        self.fcdeq1 = torch.nn.Linear(self.hdim, self.hdim)
-        self.lndeq1 = torch.nn.LayerNorm(self.hdim)
-        self.reludeq1 = torch.nn.ReLU()
-        self.fcdeq2 = torch.nn.Linear(self.hdim, self.hdim)
-        self.lndeq2 = torch.nn.LayerNorm(self.hdim)
-        self.reludeq2 = torch.nn.ReLU()
-        self.lndeq3 = torch.nn.LayerNorm(self.hdim)
-
-        self.fc_out = torch.nn.Linear(self.hdim, self.np*self.T)
+        self.inp_layer = self.get_input_layer()
+        self.setup_deq_layer()
+        self.out_layer = self.get_output_layer()
 
     def forward(self, x, z):
         """
         compute the policy output for the given state x
         """
-        xinp = self.fc_inp(x)
-        xinp = self.ln_inp(xinp)
-        # z_shape = list(xinp.shape[:-1]) + [self.hdim,]
-        # z = torch.zeros(z_shape).to(xinp)
+        xinp = self.inp_layer(x)
         z_out = self.deq_layer(xinp, z)
         dx_ref = self.fc_out(z_out)
         dx_ref = dx_ref.view(-1, self.T, self.np)
@@ -146,12 +169,50 @@ class DEQLayer(torch.nn.Module):
         return dx_ref, z_out
 
     def deq_layer(self, x, z):
-        z = self.fcdeq1(z)
-        z = self.reludeq1(z)
-        z = self.lndeq1(z)
-        out = self.lndeq3(self.reludeq2(z + self.lndeq2(x + self.fcdeq2(z))))
+        if self.layer_type == 'mlp':
+            z = self.fcdeq1(z)
+            z = self.reludeq1(z)
+            z = self.lndeq1(z)
+            out = self.lndeq3(self.reludeq2(z + self.lndeq2(x + self.fcdeq2(z))))
+        elif self.layer_type == 'gcn':
+            raise NotImplementedError
         return out
 
+    def init_z(self, bsz):
+        return torch.zeros(bsz, self.hdim, dtype=torch.float32, device=self.args.device)
+
+    def get_input_layer(self):
+        if self.layer_type == 'mlp':
+            return torch.nn.Sequential(
+                torch.nn.Linear(self.nx + self.np*self.T, self.hdim),
+                torch.nn.LayerNorm(self.hdim),
+                # torch.nn.ReLU()
+            )
+            # self.fc_inp = torch.nn.Linear(self.nx + self.np*self.T, self.hdim)
+            # self.ln_inp = torch.nn.LayerNorm(self.hdim)
+        elif self.layer_type == 'gcn':
+            raise NotImplementedError
+        
+    def setup_deq_layer(self,):
+        if self.layer_type == 'mlp':
+            self.fcdeq1 = torch.nn.Linear(self.hdim, self.hdim)
+            self.lndeq1 = torch.nn.LayerNorm(self.hdim)
+            self.reludeq1 = torch.nn.ReLU()
+            self.fcdeq2 = torch.nn.Linear(self.hdim, self.hdim)
+            self.lndeq2 = torch.nn.LayerNorm(self.hdim)
+            self.reludeq2 = torch.nn.ReLU()
+            self.lndeq3 = torch.nn.LayerNorm(self.hdim)
+        elif self.layer_type == 'gcn':
+            raise NotImplementedError
+    
+    def get_output_layer(self):
+        if self.layer_type == 'mlp':
+            return torch.nn.Sequential(
+                torch.nn.Linear(self.hdim, self.np*self.T))
+        elif self.layer_type == 'gcn':
+            raise NotImplementedError
+        
+        
 class DEQMPCPolicy(torch.nn.Module):
     def __init__(self, args, env):
         super().__init__()
@@ -172,6 +233,7 @@ class DEQMPCPolicy(torch.nn.Module):
         """
         # initialize trajectory with zeros
         dx_ref = torch.zeros(x.shape[0], self.T, self.np).to(self.device)
+        z = self.model.init_z(x.shape[0]).to(self.device)
 
         # initialize trajs list
         trajs = []
