@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--single_qp_solve", action='store_true')
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 

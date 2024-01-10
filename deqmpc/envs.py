@@ -6,7 +6,7 @@ class PendulumDynamics(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.dt = 0.05
-        self.max_torque = 5.0        
+        self.max_torque = 3.0        
         self.g = 10.
         self.m = 1.
         self.l = 1.
@@ -23,7 +23,8 @@ class PendulumDynamics(torch.nn.Module):
         newthdot = thdot + thdotdot * self.dt
         newth = state[..., 0] + newthdot * self.dt
 
-        state = torch.stack((angle_normalize(newth), newthdot), dim=-1)
+        # state = torch.stack((angle_normalize(newth), newthdot), dim=-1)
+        state = torch.stack((newth, newthdot), dim=-1)
         return state
     
     def dynamics(self, state, action):
@@ -35,7 +36,7 @@ class PendulumDynamics(torch.nn.Module):
         thdot = state[..., 1]
 
         u = action.squeeze(-1)
-        u = torch.clamp(u, -self.max_torque, self.max_torque)
+        # u = torch.clamp(u, -self.max_torque, self.max_torque)
 
         newthdotdot = (u + self.m * self.g * self.l * torch.sin(th)) / (self.m * self.l ** 2)
         newthdot = thdot
@@ -88,7 +89,7 @@ class PendulumEnv:
             high = np.array([0.05, 0.5])
         else:
             high = np.array([np.pi, 1])
-        self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+        self.state = torch.tensor(np.array([np.pi, 1]), dtype=torch.float32)#np.random.uniform(low=-high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
 

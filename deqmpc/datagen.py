@@ -4,6 +4,8 @@ import time
 import numpy as np
 import torch
 import torch.autograd as autograd
+import sys
+sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
 import os
@@ -24,7 +26,7 @@ class PendulumExpert:
         self.type = type
 
         if self.type == 'mpc':
-            self.T = 30
+            self.T = 200
             self.goal_state = torch.Tensor([0., 0.])
             self.goal_weights = torch.Tensor([10., 0.1])
             self.ctrl_penalty = 0.001
@@ -35,11 +37,11 @@ class PendulumExpert:
             self.nu = env.action_space.shape[0]
             self.bsz = 1
 
-            self.u_lower = torch.tensor(env.action_space.low, dtype=torch.float32)
-            self.u_upper = torch.tensor(env.action_space.high, dtype=torch.float32)
+            self.u_lower = torch.tensor(env.action_space.low, dtype=torch.float32).double()
+            self.u_upper = torch.tensor(env.action_space.high, dtype=torch.float32).double()
 
             self.qp_iter = 1
-            self.u_init = torch.zeros(self.T, self.bsz, self.nu)
+            self.u_init = torch.zeros(self.T, self.bsz, self.nu).double()
             self.q = torch.cat((
                 self.goal_weights,
                 self.ctrl_penalty*torch.ones(self.nu)
@@ -48,15 +50,15 @@ class PendulumExpert:
             self.p = torch.cat((self.px, torch.zeros(self.nu)))
             self.Q = torch.diag(self.q).unsqueeze(0).unsqueeze(0).repeat(
                 self.T, self.bsz, 1, 1
-            )
-            self.p = self.p.unsqueeze(0).repeat(self.T, self.bsz, 1)
+            ).double()
+            self.p = self.p.unsqueeze(0).repeat(self.T, self.bsz, 1).double()
 
             self.ctrl = mpc.MPC(
                 self.nx, self.nu, self.T, 
-                u_lower=self.u_lower, u_upper=self.u_upper, 
+                u_lower=self.u_lower, u_upper=self.u_upper,#.double(), 
                 qp_iter=self.qp_iter, exit_unconverged=False, 
                 eps=1e-2, n_batch=self.bsz, backprop=False, 
-                verbose=0, u_init=self.u_init, 
+                verbose=0, u_init=self.u_init,#.double(), 
                 grad_method=mpc.GradMethods.AUTO_DIFF, 
                 solver_type='dense'
             )
@@ -65,8 +67,9 @@ class PendulumExpert:
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
         # ipdb.set_trace()
-        nominal_states, nominal_actions = self.ctrl(state, self.cost, env.dynamics)
-        return nominal_actions[0]  # Return the first action in the optimal sequence
+        nominal_states, nominal_actions = self.ctrl(state.double(), 
+                                                    self.cost, env.dynamics)
+        return nominal_actions, nominal_states  # Return the first action in the optimal sequence
 
 def get_pendulum_expert_traj_mpc(env, num_traj):
     """
@@ -90,8 +93,10 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()[0]))
             state = next_state[0]
+            ipdb.set_trace()
             # if len(traj) > 100:
             #     ipdb.set_trace()
+            print(len(traj))
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
     return trajectories
@@ -194,7 +199,7 @@ def get_gt_data(args, env, type='mpc'):
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
-    with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
+    with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     return gt_trajs
@@ -249,8 +254,31 @@ def sample_trajectory(gt_trajs, bsz, T):
         trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i], dim=1)
     return trajs
 
+def test_qp_mpc(env):
+    mpc_controller = PendulumExpert(env)
+    trajectories = []
+    state = env.reset()  # Reset environment to a new initial state
+    traj = []
+    done = False
+    actions, states = mpc_controller.optimize_action(torch.tensor(state, dtype=torch.float32).view(1, -1))
+    # ipdb.set_trace()
+    states = states.squeeze().detach().numpy()
+    actions = actions.detach().numpy()
+    traj = []
+    trajectories = []
+    ipdb.set_trace()
+    for i in range(len(states)):
+        traj.append((states[i], actions[i][0]))
+    trajectories.append(traj)
+    with open(f'data/expert_traj_mpc-{env.spec_id}.pkl', 'wb') as f:
+        pickle.dump(trajectories, f)
+    
+
+    
+
 if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
-    save_expert_traj(env, 2, 'mpc')
+    # save_expert_traj(env, 1, 'mpc')
+    test_qp_mpc(env)

@@ -218,7 +218,7 @@ def DenseQPFunction(bsz = 1,
         
     class Solver(Function):
         @staticmethod
-        def forward(ctx, Q, p, G, h, A, b):
+        def forward(ctx, Q, p, G, h, A, b, dyn_res):
             nBatch = Q.size(0)
             # Q = Q.double()#.cuda()
             # G = G.double()#.cuda()
@@ -229,7 +229,7 @@ def DenseQPFunction(bsz = 1,
             K, GT, AT, Didx = preprocess(Q, G, A)
 
             zhats, nus, lams, slacks, K = pdipm_b_LU.forward(
-                K, Didx, Q, p, G, GT, h, A, AT, b, eps, verbose,
+                K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res, eps, verbose,
                 notImprovedLim, maxIter)
 
             ctx.save_for_backward(zhats, nus, lams, K, Q, p, G, A)

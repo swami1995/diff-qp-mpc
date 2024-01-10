@@ -262,8 +262,8 @@ class MPC(Module):
         u = u.type_as(x0.data)
 
         if self.x_init is None:
-            x = torch.zeros(self.T, n_batch, self.n_state).type_as(x0.data)
-            # x = self.rollout(x0, u, dx)[:-1]
+            # x = torch.zeros(self.T, n_batch, self.n_state).type_as(x0.data)
+            x = self.rollout(x0, u, dx)[:-1]
             # ipdb.set_trace()
         else:
             x = self.x_init
@@ -298,17 +298,35 @@ class MPC(Module):
                 x, util.detach_maybe(u), dx, diff=False)
 
         # ipdb.set_trace()
+        dyn_res_lam = lambda x: self.dyn_res(x, dx, x0)
         if self.solver_type == 'dense':
             Q, q = self.compute_Qq_dense(cost.C, cost.c)
             A, b = self.compute_Ab_dense(F, f, x0)
             G, h = self.compute_Gh_dense(x0)
             # xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
-            xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b)
+            xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b, dyn_res_lam)
         xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T, -1)
-        x = xhats_qpf[:, :, :self.n_state].transpose(0,1)
-        u = xhats_qpf[:, :, self.n_state:].transpose(0,1)
+        x_hat = xhats_qpf[:, :, :self.n_state].transpose(0,1)
+        u_hat = xhats_qpf[:, :, self.n_state:].transpose(0,1)
         cost_total = self.compute_cost(xhats_qpf, cost)
-        return x, u, cost_total
+        delta_x = x_hat - x
+        delta_u = u_hat - u
+        # ipdb.set_trace()
+        return delta_x, delta_u, cost_total
+
+    def dyn_res(self, x, dx, x0):
+        " split x into state and control and compute dynamics residual using dx"
+        # ipdb.set_trace()
+        x = x.reshape(self.n_batch, self.T, self.n_state+self.n_ctrl)
+        x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
+        # ipdb.set_trace()
+        x_next = dx(x, u)[:,:-1]
+        res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
+        res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
+        res_goal = (x[:,-1,:]).reshape(self.n_batch, -1)
+        res = torch.cat((res, res_init, res_goal), dim=1)
+        return res
+
 
     def solve_nonlin(self, x, u, dx, x0, cost):
         best = None
@@ -570,16 +588,43 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             new_x = dynamics(xt, ut)
             x.append(new_x)
         return torch.stack(x, 0)
-    
+
+
+    def rollout_lin(self, x, actions, F, f):
+        n_batch = x.size(0)
+        x = [x]
+        for t in range(self.T-1):
+            xt = x[t]
+            ut = actions[t]
+            Ft = F[t]
+            ft = f[t]
+            new_x = util.bmv(Ft, torch.cat([xt, ut], dim=-1)) + ft
+            x.append(new_x)
+        return torch.stack(x, 0)
+
+
+    # def compute_Ab_dense(self, F, f, x0):
+    #     T, n_batch, n_state, n_tau = F.size()
+    #     A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
+    #     b = torch.zeros(n_batch, (T+1)*n_state).to(F)
+    #     A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
+    #     A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
+    #     A[:, T*n_state:, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+    #     b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
+    #     b[:, T*n_state:] = x0
+    #     return A, b
+
     def compute_Ab_dense(self, F, f, x0):
         T, n_batch, n_state, n_tau = F.size()
-        A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
-        b = torch.zeros(n_batch, (T+1)*n_state).to(F)
+        n_control = n_tau - n_state
+        A = torch.zeros(n_batch, (T+2)*n_state, (T+1)*n_tau).to(F)
+        b = torch.zeros(n_batch, (T+2)*n_state).to(F)
         A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
         A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
-        A[:, T*n_state:, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+        A[:, T*n_state:(T+1)*n_state, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+        A[:, (T+1)*n_state:, -(n_tau):-(n_control)] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
         b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
-        b[:, T*n_state:] = x0
+        b[:, T*n_state:(T+1)*n_state] = x0
         return A, b
 
     def compute_Qq_dense(self, C, c):
@@ -603,7 +648,7 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             G[:, self.G_slices_uu0, self.G_slices_uu1] = 1.0
             G[:, self.G_slices_uu0+T*n_ctrl, self.G_slices_uu1] = -1.0
             h[:, :T*n_ctrl] *= self.u_upper
-            h[:, T*n_ctrl:] = -self.u_lower
+            h[:, T*n_ctrl:] *= -self.u_lower
         return G, h
 
     # def compute_Gh_dense(self):

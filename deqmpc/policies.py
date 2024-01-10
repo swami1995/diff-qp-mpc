@@ -184,7 +184,7 @@ class DEQLayer(torch.nn.Module):
     def get_input_layer(self):
         if self.layer_type == 'mlp':
             return torch.nn.Sequential(
-                torch.nn.Linear(self.nx + self.np*self.T, self.hdim),
+                torch.nn.Linear(self.nx + self.np*(self.T-1), self.hdim),
                 torch.nn.LayerNorm(self.hdim),
                 # torch.nn.ReLU()
             )
@@ -208,7 +208,7 @@ class DEQLayer(torch.nn.Module):
     def get_output_layer(self):
         if self.layer_type == 'mlp':
             return torch.nn.Sequential(
-                torch.nn.Linear(self.hdim, self.np*self.T))
+                torch.nn.Linear(self.hdim, self.np*(self.T-1)))
         elif self.layer_type == 'gcn':
             raise NotImplementedError
         
@@ -232,7 +232,7 @@ class DEQMPCPolicy(torch.nn.Module):
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
         """
         # initialize trajectory with zeros
-        dx_ref = torch.zeros(x.shape[0], self.T, self.np).to(self.device)
+        dx_ref = torch.zeros(x.shape[0], self.T-1, self.np).to(self.device)
         z = self.model.init_z(x.shape[0]).to(self.device)
 
         # initialize trajs list
@@ -240,19 +240,18 @@ class DEQMPCPolicy(torch.nn.Module):
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
-            x_ref = torch.cat([x[:,None,:self.np], x[:,None,:self.np] + dx_ref], dim=1)
+            x_ref = torch.cat([x[:,None,:], x[:,None,:self.np] + dx_ref], dim=1)
             dx_ref = self.model(x_ref)
-            dx_ref = dx_ref.view(-1, self.T, self.np)
+            dx_ref = dx_ref.view(-1, self.T-1, self.np)
 
             dx_ref = torch.cat(
-                [
-                    dx_ref,
-                    torch.zeros(
+                [   torch.zeros(
                         list(dx_ref.shape[:-1])
                         + [
                             self.np,
                         ]
                     ).to(self.args.device),
+                    dx_ref
                 ],
                 dim=-1,
             ).transpose(0, 1)
@@ -330,6 +329,8 @@ class Tracking_MPC(torch.nn.Module):
             self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
         )
 
+        self.single_qp_solve = args.single_qp_solve
+
         self.ctrl = mpc.MPC(
             self.nx,
             self.nu,
@@ -345,6 +346,7 @@ class Tracking_MPC(torch.nn.Module):
             u_init=self.u_init,
             grad_method=mpc.GradMethods.AUTO_DIFF,
             solver_type="dense",
+            single_qp_solve=self.single_qp_solve,
         )
 
     def forward(self, x_init, x_ref):

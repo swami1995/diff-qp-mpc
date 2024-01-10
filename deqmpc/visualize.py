@@ -4,6 +4,9 @@ import time
 import numpy as np
 import torch
 import torch.autograd as autograd
+
+import sys
+sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics
