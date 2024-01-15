@@ -326,7 +326,10 @@ class MPC(Module):
         res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
         res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
         res_goal = (x[:,-1,:]).reshape(self.n_batch, -1)
-        res = torch.cat((res, res_init, res_goal), dim=1)
+        if self.add_goal_constraint:
+            res = torch.cat((res, res_init, res_goal), dim=1)
+        else:
+            res = torch.cat((res, res_init), dim=1)
         return res
 
 
@@ -630,6 +633,7 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
         A[:, T*n_state:(T+1)*n_state, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
         if self.add_goal_constraint:
             A[:, (T+1)*n_state:, -(n_tau):-(n_control)] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+            b[:, (T+1)*n_state:] = x0*0 # set to goal
         b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
         b[:, T*n_state:(T+1)*n_state] = x0
         return A, b
