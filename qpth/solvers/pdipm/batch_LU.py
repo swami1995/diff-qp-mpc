@@ -31,7 +31,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res,
     '''
     A primal dual interior point method to solve the sparse QP given by the kkt system in Ki
     '''
-    verbose = 1
+    # verbose = 1
     nineq, nz = G.shape[1], G.shape[2]
     neq = A.shape[1]
     nBatch = Q.shape[0]
@@ -124,7 +124,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res,
                 nNotImproved = 0
             else:
                 nNotImproved += 1
-                KKTeps /= 1000
+                # KKTeps /= 1000
             I_nz = I.repeat(nz, 1).t()
             I_nineq = I.repeat(nineq, 1).t()
             I_K = I.repeat(K.shape[2], K.shape[1], 1).transpose(0,2)
@@ -216,7 +216,7 @@ def solve_kkt(K, Ktilde,
     l = r.clone().detach()#torch.zeros_like(r) + r#torch.spbqrfactsolve(*([r] + Ktilde))
     # solver_ctx.factor(K) # need to check matrix type
     # ipdb.set_trace()
-    K_LU = torch.linalg.lu_factor(K)
+    K_LU = torch.linalg.lu_factor(Ktilde)
     l = torch.linalg.lu_solve(*K_LU, l.unsqueeze(-1)).squeeze(-1)
     res = r - K.bmm(l.unsqueeze(-1)).squeeze(-1)
     for k in range(niter):

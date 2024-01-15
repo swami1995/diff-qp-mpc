@@ -137,7 +137,9 @@ class DEQPolicy(torch.nn.Module):
 ## TODOs:
     # 1. Make input flexible - x, xref, xref - x0, xref - xref_prev, xref - xref_prev - x0, xref - xref_prev - x0 + v, etc.
     # 2. Make outputs flexible - deltas, xref, xref - x0, etc. and also weights corresponding to the steps the network is not confident about.
-    # 3. Make architecture flexible - GNN or FFN or whatever
+    # 3. Make architecture flexible - GNN or FFN or whatever 
+    #       - Note : don't do parameter sharing between the nodes in gnn - the sequential order is important and maybe keeping the parameters somewhat separate is a good idea.
+    #       - but with limited data - parameter sharing might be a good idea - so maybe some sort of hybrid?
     # 4. Make recurrence flexible - fixed point or whatever
 
 class DEQLayer(torch.nn.Module):
@@ -163,8 +165,8 @@ class DEQLayer(torch.nn.Module):
         """
         xinp = self.inp_layer(x)
         z_out = self.deq_layer(xinp, z)
-        dx_ref = self.fc_out(z_out)
-        dx_ref = dx_ref.view(-1, self.T, self.np)
+        dx_ref = self.out_layer(z_out)
+        dx_ref = dx_ref.view(-1, self.T-1, self.np)
         # x_ref = dx_ref + x[:,None,:self.np]*10
         return dx_ref, z_out
 
@@ -223,8 +225,9 @@ class DEQMPCPolicy(torch.nn.Module):
         self.T = args.T
         self.dt = env.dt
         self.device = args.device
-        self.model_layer = DEQLayer(args, env)
-        self.model_layer.to(self.device)
+        self.deq_iter = args.deq_iter
+        self.model = DEQLayer(args, env)
+        self.model.to(self.device)
         self.tracking_mpc = Tracking_MPC(args, env)
     
     def forward(self, x):
@@ -237,26 +240,21 @@ class DEQMPCPolicy(torch.nn.Module):
 
         # initialize trajs list
         trajs = []
+        bsz = x.shape[0]
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
-            x_ref = torch.cat([x[:,None,:], x[:,None,:self.np] + dx_ref], dim=1)
-            dx_ref = self.model(x_ref)
+            x_ref = torch.cat([x[:,:], (x[:,None,:self.np] + dx_ref).reshape(bsz, -1)], dim=1)
+            dx_ref, z = self.model(x_ref, z)
             dx_ref = dx_ref.view(-1, self.T-1, self.np)
-
-            dx_ref = torch.cat(
-                [   torch.zeros(
-                        list(dx_ref.shape[:-1])
-                        + [
-                            self.np,
-                        ]
-                    ).to(self.args.device),
-                    dx_ref
-                ],
-                dim=-1,
-            ).transpose(0, 1)
-            nominal_states, nominal_actions = self.tracking_mpc(x, dx_ref)
-            dx_ref = nominal_states.transpose(0, 1) - x[:,None,:self.np]
+            x_ref = dx_ref + x[:,None,:self.np]
+            x_ref_vel = (x_ref[:,1:] - x_ref[:,:-1])/self.dt
+            x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:,-1:]], dim=1)
+            x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
+            x_ref = torch.cat([x[:,None,:], x_ref], dim=1)
+            xu_ref = torch.cat([x_ref, torch.zeros_like(x_ref[...,:1])], dim=-1).transpose(0, 1)
+            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
+            dx_ref = nominal_states[1:, :, :self.np].transpose(0, 1) - x[:,None,:self.np]
             trajs.append((nominal_states, nominal_actions))
 
         return trajs
@@ -307,8 +305,8 @@ class Tracking_MPC(torch.nn.Module):
         self.T = args.T
 
         # May comment out input constraints for now
-        self.u_upper = None  # torch.tensor(env.action_space.high).to(args.device)
-        self.u_lower = None  # torch.tensor(env.action_space.low).to(args.device)
+        self.u_upper = torch.tensor(env.action_space.high).to(args.device)
+        self.u_lower = torch.tensor(env.action_space.low).to(args.device)
         self.qp_iter = args.qp_iter
         self.eps = args.eps
         self.warm_start = args.warm_start
@@ -329,7 +327,7 @@ class Tracking_MPC(torch.nn.Module):
             self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
         )
 
-        self.single_qp_solve = args.single_qp_solve
+        self.single_qp_solve = True if self.qp_iter == 1 else False
 
         self.ctrl = mpc.MPC(
             self.nx,
@@ -349,28 +347,31 @@ class Tracking_MPC(torch.nn.Module):
             single_qp_solve=self.single_qp_solve,
         )
 
-    def forward(self, x_init, x_ref):
+    def forward(self, x_init, xu_ref):
         """
         compute the mpc output for the given state x and reference x_ref
         """
 
-        self.compute_p(x_ref)
+        self.compute_p(xu_ref)
         cost = mpc.QuadCost(self.Q, self.p)
         self.ctrl.u_init = self.u_init
         state = x_init  # .unsqueeze(0).repeat(self.bsz, 1)
         nominal_states, nominal_actions = self.ctrl(state, cost, PendulumDynamics())
+        # ipdb.set_trace()
+        # self.u_init = nominal_actions.clone().detach()
         return nominal_states, nominal_actions
 
     def compute_p(self, x_ref):
         """
         compute the p for the quadratic objective using self.Q as the diagonal matrix and the reference x_ref at each time without a for loop
         """
-        self.p = torch.zeros(
-            self.T, self.bsz, self.nx + self.nu, dtype=torch.float32, device=self.device
-        )
-        self.p[:, :, : self.nx] = -(
-            self.Q[:, :, : self.nx, : self.nx] * x_ref.unsqueeze(-2)
-        ).sum(dim=-1)
+        # self.p = torch.zeros(
+        #     self.T, self.bsz, self.nx + self.nu, dtype=torch.float32, device=self.device
+        # )
+        # self.p[:, :, : self.nx] = -(
+        #     self.Q[:, :, : self.nx, : self.nx] * x_ref.unsqueeze(-2)
+        # ).sum(dim=-1)
+        self.p = -( self.Q * x_ref.unsqueeze(-2) ).sum(dim=-1)
         return self.p
 
 

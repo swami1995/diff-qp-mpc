@@ -4,6 +4,8 @@ import time
 import numpy as np
 import torch
 import torch.autograd as autograd
+import sys
+sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics
@@ -24,7 +26,9 @@ def main():
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--single_qp_solve", action='store_true')
+    parser.add_argument("--deq", action='store_true')
+    parser.add_argument("--hdim", type=int, default=256)
+    parser.add_argument("--deq_iter", type=int, default=6)
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -33,8 +37,13 @@ def main():
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 1]).to(args.device)
     args.R = torch.Tensor([1.0]).to(args.device)
-    policy = NNMPCPolicy(args, env).to(args.device)
+    if args.deq:
+        policy = DEQMPCPolicy(args, env).to(args.device)
+    else:
+        policy = NNMPCPolicy(args, env).to(args.device)
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=1e-4)
+    losses = []
+    losses_end = []
 
     # run imitation learning using gt_trajs
     for i in range(10000):
@@ -42,44 +51,59 @@ def main():
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
         # ipdb.set_trace()
-        traj_sample["state"] = torch.cat(
-            [
-                traj_sample["state"],
-                PendulumDynamics()(
-                    traj_sample["state"][:, -1], traj_sample["action"][:, -1]
-                )[:, None],
-            ],
-            dim=1,
-        )
+        # traj_sample["state"] = torch.cat(
+        #     [
+        #         traj_sample["state"],
+        #         PendulumDynamics()(
+        #             traj_sample["state"][:, -1], traj_sample["action"][:, -1]
+        #         )[:, None],
+        #     ],
+        #     dim=1,
+        # )
         # idxs = np.random.randint(0, len(gt_trajs), args.bsz)
         # t_idxs = np.random.randint(0, len(gt_trajs[0]), args.bsz)
         # x_init = gt_trajs[idxs, t_idxs]
         # x_gt = gt_trajs[idxs, t_idxs:t_idxs+args.T]
 
         # ipdb.set_trace()
-        nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
-        loss = (
-            torch.abs(
-                (nominal_states.transpose(0, 1) - traj_sample["state"][:, 1:])
-                * traj_sample["mask"][:, :, None]
-            )
-            .sum(dim=-1)
-            .mean()
-        )  # + torch.norm(nominal_actions)
+        if args.deq:
+            loss = 0.0
+            trajs = policy(traj_sample["state"][:, 0])
+            for j, (nominal_states, nominal_actions) in enumerate(trajs):
+                loss_j = torch.abs(
+                            (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])
+                            * traj_sample["mask"][:, :, None]
+                        ).sum(dim=-1).mean()
+                loss += loss_j
+            loss_end = torch.abs(
+                        (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])
+                        * traj_sample["mask"][:, :, None]
+                    ).sum(dim=-1).mean()
+        else:
+            nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
+            loss = (
+                torch.abs(
+                    (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])
+                    * traj_sample["mask"][:, :, None]
+                ).sum(dim=-1).mean()
+            )  # + torch.norm(nominal_actions)
         # ipdb.set_trace()
         # loss += (nominal_actions[0] - traj_sample["action"][:, 0]).pow(2).mean()
         optimizer.zero_grad()
         loss.backward()
+        losses.append(loss.item())
+        losses_end.append(loss_end.item())
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 100 == 0:
+        if i % 10 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",
                 torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 1000),
             )
-            print("loss: ", loss)
+            print("loss: ", np.mean(losses)/6, "loss_end: ", np.mean(losses_end))
+            losses = []
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 

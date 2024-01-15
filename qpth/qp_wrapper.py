@@ -145,6 +145,7 @@ class MPC(Module):
             best_cost_eps=1e-4,
             solver_type='dense',
             single_qp_solve=False,
+            add_goal_constraint=False,
     ):
         super().__init__()
 
@@ -185,6 +186,7 @@ class MPC(Module):
         self.prev_ctrl = prev_ctrl
         self.solver_type = solver_type
         self.single_qp_solve = single_qp_solve
+        self.add_goal_constraint = add_goal_constraint
 
         if solver_type == 'dense':
             idxs_1 = torch.arange(n_state + n_ctrl)
@@ -324,7 +326,10 @@ class MPC(Module):
         res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
         res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
         res_goal = (x[:,-1,:]).reshape(self.n_batch, -1)
-        res = torch.cat((res, res_init, res_goal), dim=1)
+        if self.add_goal_constraint:
+            res = torch.cat((res, res_init, res_goal), dim=1)
+        else:
+            res = torch.cat((res, res_init), dim=1)
         return res
 
 
@@ -617,12 +622,18 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
     def compute_Ab_dense(self, F, f, x0):
         T, n_batch, n_state, n_tau = F.size()
         n_control = n_tau - n_state
-        A = torch.zeros(n_batch, (T+2)*n_state, (T+1)*n_tau).to(F)
-        b = torch.zeros(n_batch, (T+2)*n_state).to(F)
+        if self.add_goal_constraint:
+            A = torch.zeros(n_batch, (T+2)*n_state, (T+1)*n_tau).to(F)
+            b = torch.zeros(n_batch, (T+2)*n_state).to(F)
+        else:
+            A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
+            b = torch.zeros(n_batch, (T+1)*n_state).to(F)
         A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
         A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
         A[:, T*n_state:(T+1)*n_state, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
-        A[:, (T+1)*n_state:, -(n_tau):-(n_control)] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+        if self.add_goal_constraint:
+            A[:, (T+1)*n_state:, -(n_tau):-(n_control)] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+            b[:, (T+1)*n_state:] = x0*0 # set to goal
         b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
         b[:, T*n_state:(T+1)*n_state] = x0
         return A, b

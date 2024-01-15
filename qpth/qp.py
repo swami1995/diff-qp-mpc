@@ -265,7 +265,7 @@ def DenseQPFunction(bsz = 1,
             dQs = 0.5 * (bger(dx, zhats) + bger(zhats, dx))
             # ipdb.set_trace()
 
-            grads = (dQs, dps, dGs, dhs, dAs, dbs)
+            grads = (dQs, dps, dGs, dhs, dAs, dbs, None)
 
             return grads
     return Solver.apply
