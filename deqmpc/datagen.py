@@ -137,9 +137,10 @@ def get_pendulum_expert_traj_ppo(env, num_traj):
 def get_pendulum_expert_traj_sac(env, num_traj):
     """
     Get expert trajectories for pendulum environment using the saved PPO checkpoint."""
-    device = torch.device("cuda" if True else "cpu")
+    device = torch.device("cuda" if False else "cpu")
     policy = GaussianPolicy(env.observation_space.shape[0], env.action_space.shape[0], 256, env.action_space).to(device)
-    checkpoint = torch.load("/home/sgurumur/locuslab/pytorch-soft-actor-critic/checkpoints/sac_checkpoint_Pendulum-v0_bestT200")
+    # checkpoint = torch.load("/home/sgurumur/locuslab/pytorch-soft-actor-critic/checkpoints/sac_checkpoint_Pendulum-v0_bestT200")
+    checkpoint = torch.load("ckpts/sac/sac_checkpoint_Pendulum-v0_bestT200")
     policy.load_state_dict(checkpoint['policy_state_dict'])
     trajectories = []
     reward_trajs = []
@@ -186,7 +187,7 @@ def save_expert_traj(env, num_traj, type='mpc'):
     if os.path.exists('data') == False:
         os.makedirs('data')
         
-    with open(f'data/expert_traj_{type}-{env.spec_id}.pkl', 'wb') as f:
+    with open(f'data/expert_traj_{type}-{env.spec_id}_new.pkl', 'wb') as f:
         pickle.dump(expert_traj, f)
 
 def get_gt_data(args, env, type='mpc'):
@@ -199,7 +200,8 @@ def get_gt_data(args, env, type='mpc'):
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
-    with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
+    # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
+    with open(f'data/expert_traj_{type}-{env.spec_id}_new.pkl', 'rb') as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     return gt_trajs
@@ -280,5 +282,5 @@ if __name__ == '__main__':
     print("Starting!")
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
-    # save_expert_traj(env, 1, 'mpc')
-    test_qp_mpc(env)
+    save_expert_traj(env, 200, 'sac')
+    # test_qp_mpc(env)

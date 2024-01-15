@@ -43,6 +43,13 @@ class PendulumDynamics(torch.nn.Module):
 
         return newthdot, newthdotdot
     
+    def action_clip(self, action):
+        return torch.clamp(action, -self.max_torque, self.max_torque)
+    
+    def state_clip(self, state):
+        state[..., 0] = angle_normalize(state[..., 0])
+        return state
+    
 def angle_normalize(x):
     return (((x+np.pi) % (2*np.pi)) - np.pi)
 
@@ -89,7 +96,8 @@ class PendulumEnv:
             high = np.array([0.05, 0.5])
         else:
             high = np.array([np.pi, 1])
-        self.state = torch.tensor(np.array([np.pi, 1]), dtype=torch.float32)#np.random.uniform(low=-high, high=high), dtype=torch.float32)
+        self.state = torch.tensor(np.array([np.pi, 1]), dtype=torch.float32)#
+        self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
 
@@ -103,7 +111,9 @@ class PendulumEnv:
         """
         # action = torch.tensor([action], dtype=torch.float32)
         action = torch.tensor(action, dtype=torch.float32)
+        action = self.dynamics.action_clip(action)
         self.state = self.dynamics(self.state, action)
+        self.state = self.dynamics.state_clip(self.state)
         done = self.is_done()
         reward = self.get_reward(action)  # Define your reward function based on the state and action
         return self.state.numpy(), reward, done, {}
@@ -118,7 +128,8 @@ class PendulumEnv:
         # For demonstration, let's say an episode ends if the pendulum is upright within a small threshold
         # ipdb.set_trace()
         # theta, _ = self.state.unbind()
-        theta, _ = self.state[0][0], self.state[0][1]
+        # theta, _ = self.state[0][0], self.state[0][1]
+        theta, _ = self.state[0], self.state[1]
         success = abs(angle_normalize(theta)) < 0.05
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
@@ -134,7 +145,8 @@ class PendulumEnv:
         # Define your reward function; for simplicity, let's use the negative square of the angle
         # as a reward, so the closer to upright (0 rad), the higher the reward.
         # theta, _ = self.state.unbind()
-        theta, _ = self.state[0][0], self.state[0][1]
+        # theta, _ = self.state[0][0], self.state[0][1]
+        theta, _ = self.state[0], self.state[1]
         return -float(angle_normalize(theta) ** 2)
 
     def close(self):

@@ -33,7 +33,7 @@ def main():
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     env = PendulumEnv(stabilization=False)
-    gt_trajs = get_gt_data(args, env, "mpc")
+    gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 1]).to(args.device)
     args.R = torch.Tensor([1.0]).to(args.device)
@@ -66,6 +66,7 @@ def main():
         # x_gt = gt_trajs[idxs, t_idxs:t_idxs+args.T]
 
         # ipdb.set_trace()
+        traj_sample["state"] = unnormalize_states(traj_sample["state"])
         if args.deq:
             loss = 0.0
             trajs = policy(traj_sample["state"][:, 0])
@@ -102,11 +103,24 @@ def main():
                 "grad norm: ",
                 torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 1000),
             )
-            print("loss: ", np.mean(losses)/6, "loss_end: ", np.mean(losses_end))
+            print("loss: ", np.mean(losses)/args.deq_iter, "loss_end: ", np.mean(losses_end))
             losses = []
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 
+def unnormalize_states(nominal_states):
+    # ipdb.set_trace()
+    # check theta of the first state in nominal_states[:, 0][0] and make sure all the nominal_states are in the same phase (i.e in terms of angle normalization)
+    angle_0 = nominal_states[:, 0, 0]
+    prev_angle = angle_0
+    # ipdb.set_trace()
+    for i in range(nominal_states.shape[1]):
+        mask = torch.abs(nominal_states[:, i, 0] - prev_angle) > np.pi/2
+        mask_sign = torch.sign(nominal_states[:, i, 0])
+        if mask.any():
+            nominal_states[mask, i, 0] = nominal_states[mask, i, 0] - mask_sign[mask]*2*np.pi 
+        prev_angle = nominal_states[:, i, 0]
+    return nominal_states
 
 if __name__ == "__main__":
     main()
