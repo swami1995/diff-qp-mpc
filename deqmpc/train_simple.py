@@ -69,6 +69,7 @@ def main():
         if args.deq:
             loss = 0.0
             trajs = policy(traj_sample["state"][:, 0])
+            # ipdb.set_trace()
             for j, (nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = torch.abs(
                             (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])
@@ -102,7 +103,7 @@ def main():
                 "grad norm: ",
                 torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 1000),
             )
-            print("loss: ", np.mean(losses)/6, "loss_end: ", np.mean(losses_end))
+            print("loss: ", np.mean(losses)/args.deq_iter, "loss_end: ", np.mean(losses_end))
             losses = []
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)

@@ -233,6 +233,12 @@ class DEQMPCPolicy(torch.nn.Module):
     def forward(self, x):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
+        Args:
+            x (tensor 0 x bsz x nx): input state
+        Returns:
+            trajs (list of tuples): list of tuples of nominal states and actions for each deq iteration
+            trajs[k][0] (tensor T x bsz x nx): nominal states for the kth deq iteration
+            trajs[k][1] (tensor T x bsz x nu): nominal actions for the kth deq iteration
         """
         # initialize trajectory with zeros
         dx_ref = torch.zeros(x.shape[0], self.T-1, self.np).to(self.device)
@@ -376,6 +382,9 @@ class Tracking_MPC(torch.nn.Module):
 
 
 class NNMPCPolicy(torch.nn.Module):
+    """
+    Feedforward Neural network based MPC policy
+    """
     def __init__(self, args, env):
         super().__init__()
         self.args = args
