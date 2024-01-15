@@ -137,7 +137,9 @@ class DEQPolicy(torch.nn.Module):
 ## TODOs:
     # 1. Make input flexible - x, xref, xref - x0, xref - xref_prev, xref - xref_prev - x0, xref - xref_prev - x0 + v, etc.
     # 2. Make outputs flexible - deltas, xref, xref - x0, etc. and also weights corresponding to the steps the network is not confident about.
-    # 3. Make architecture flexible - GNN or FFN or whatever
+    # 3. Make architecture flexible - GNN or FFN or whatever 
+    #       - Note : don't do parameter sharing between the nodes in gnn - the sequential order is important and maybe keeping the parameters somewhat separate is a good idea.
+    #       - but with limited data - parameter sharing might be a good idea - so maybe some sort of hybrid?
     # 4. Make recurrence flexible - fixed point or whatever
 
 class DEQLayer(torch.nn.Module):
