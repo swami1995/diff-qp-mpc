@@ -70,6 +70,7 @@ def main():
         if args.deq:
             loss = 0.0
             trajs = policy(traj_sample["state"][:, 0])
+            # ipdb.set_trace()
             for j, (nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = torch.abs(
                             (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])

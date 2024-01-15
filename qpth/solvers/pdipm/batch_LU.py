@@ -218,6 +218,8 @@ def solve_kkt(K, Ktilde,
     # ipdb.set_trace()
     K_LU = torch.linalg.lu_factor(Ktilde)
     l = torch.linalg.lu_solve(*K_LU, l.unsqueeze(-1)).squeeze(-1)
+
+    # Iterative refinement
     res = r - K.bmm(l.unsqueeze(-1)).squeeze(-1)
     for k in range(niter):
         # d = torch.spbqrfactsolve(*([res] + Ktilde))

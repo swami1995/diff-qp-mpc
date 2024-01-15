@@ -69,7 +69,19 @@ class PendulumExpert:
         # ipdb.set_trace()
         nominal_states, nominal_actions = self.ctrl(state.double(), 
                                                     self.cost, env.dynamics)
-        return nominal_actions, nominal_states  # Return the first action in the optimal sequence
+        u = torch.clamp(nominal_actions[0], self.u_lower, self.u_upper)
+        return u  # Return the first action in the optimal sequence
+    
+    def energy_shaping_action(self, state):
+        """Compute the energy shaping action for the given state."""
+        th = state[:, 0]
+        # th = angle_normalize(th)
+        thdot = state[:, 1]
+        # ipdb.set_trace()
+        E_tilde = 0.5 * thdot ** 2 - 10 * (1 + torch.cos(th+np.pi))
+        u = -0.5 * thdot * E_tilde
+        u = torch.clamp(u, self.u_lower, self.u_upper)
+        return u.unsqueeze(1)
 
 def get_pendulum_expert_traj_mpc(env, num_traj):
     """
