@@ -470,17 +470,7 @@ class NNPolicy(torch.nn.Module):
         self.device = args.device
         self.hdim = args.hdim
 
-        # ## define the network layers :
-        # self.model = torch.nn.Sequential(
-        #     torch.nn.Linear(self.nx, self.hdim),
-        #     torch.nn.LayerNorm(self.hdim),
-        #     torch.nn.ReLU(),
-        #     torch.nn.Linear(self.hdim, self.hdim),
-        #     torch.nn.LayerNorm(self.hdim),
-        #     torch.nn.ReLU(),
-        #     torch.nn.Linear(self.hdim, (self.nx + self.nu) * self.T),
-        # )
-        # define the network layers :
+        ## define the network layers :
         self.model = torch.nn.Sequential(
             torch.nn.Linear(self.nx, self.hdim),
             torch.nn.LayerNorm(self.hdim),
@@ -488,24 +478,19 @@ class NNPolicy(torch.nn.Module):
             torch.nn.Linear(self.hdim, self.hdim),
             torch.nn.LayerNorm(self.hdim),
             torch.nn.ReLU(),
-            torch.nn.Linear(self.hdim, self.nu * self.T),
+            torch.nn.Linear(self.hdim, (self.nx + self.nu) * self.T),
         )
-        self.model.to(self.device)
-
-    # def forward(self, x):
-    #     """
-    #     compute the trajectory given state x
-    #     Args:
-    #         x (tensor bsz x nx): input state
-    #     Returns:
-    #         states (tensor bsz x T x nx): nominal states
-    #         actions (tensor bsz x T x nu): nominal actions
-    #     """
-    #     states = self.model(x)[:, : self.nx * self.T]
-    #     states = states.view(-1, self.T, self.nx)
-    #     actions = self.model(x)[:, self.nx * self.T :]
-    #     actions = actions.view(-1, self.T, self.nu)
-    #     return states, actions
+        # # define the network layers :
+        # self.model = torch.nn.Sequential(
+        #     torch.nn.Linear(self.nx, self.hdim),
+        #     torch.nn.LayerNorm(self.hdim),
+        #     torch.nn.ReLU(),
+        #     torch.nn.Linear(self.hdim, self.hdim),
+        #     torch.nn.LayerNorm(self.hdim),
+        #     torch.nn.ReLU(),
+        #     torch.nn.Linear(self.hdim, self.nu * self.T),
+        # )
+        # self.model.to(self.device)
 
     def forward(self, x):
         """
@@ -513,10 +498,25 @@ class NNPolicy(torch.nn.Module):
         Args:
             x (tensor bsz x nx): input state
         Returns:
+            states (tensor bsz x T x nx): nominal states
             actions (tensor bsz x T x nu): nominal actions
         """
-        actions = self.model(x)
+        states = self.model(x)[:, : self.nx * self.T]
+        states = states.view(-1, self.T, self.nx)
+        actions = self.model(x)[:, self.nx * self.T :]
         actions = actions.view(-1, self.T, self.nu)
-        return 0, actions
+        return states, actions
+
+    # def forward(self, x):
+    #     """
+    #     compute the trajectory given state x
+    #     Args:
+    #         x (tensor bsz x nx): input state
+    #     Returns:
+    #         actions (tensor bsz x T x nu): nominal actions
+    #     """
+    #     actions = self.model(x)
+    #     actions = actions.view(-1, self.T, self.nu)
+    #     return 0, actions
 
 # class NNMPCPolicy:

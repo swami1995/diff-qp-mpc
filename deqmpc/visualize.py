@@ -37,7 +37,7 @@ def main():
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 1
+    mode = 2
 
     # test uncontrolled dynamics
     if mode == 0:
@@ -75,16 +75,19 @@ def main():
         policy.load_state_dict(torch.load("./model/bc_sac"))
         policy.eval()
         # test controlled dynamics
-        state = torch.Tensor([[1.5, 0]])
+        state = torch.Tensor([[2.5, 0.1]])
+        # high = np.array([np.pi, 1])
+        # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
+
         state_hist = state
-        torque_hist = []
+        torque_hist = [0.0]
         for i in range(200):        
             _, action = policy(state)
             state = env.dynamics(state, action[:, 0, 0])
             state_hist = torch.cat((state_hist, state), dim=0)
             # ipdb.set_trace()
             torque_hist.append(action[:, 0, 0].detach().numpy()[0])
-            print(state, action)
+            # print(state, action)
         theta = state_hist[:, 0].detach().numpy()
         theta_dot = state_hist[:, 1].detach().numpy()
         # ipdb.set_trace()
