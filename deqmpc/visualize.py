@@ -50,7 +50,7 @@ def main():
 
     # ground truth trajectory
     else:
-        gt_trajs = get_gt_data(args, env, "mpc")
+        gt_trajs = get_gt_data(args, env, "sac")
         idx = 100
         theta = [item[0][0] for item in gt_trajs[idx]]
         theta_dot = [item[0][1] for item in gt_trajs[idx]]

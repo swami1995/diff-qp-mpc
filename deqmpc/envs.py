@@ -96,8 +96,8 @@ class PendulumEnv:
             high = np.array([0.05, 0.5])
         else:
             high = np.array([np.pi, 1])
-        self.state = torch.tensor(np.array([np.pi, 1]), dtype=torch.float32)#
-        self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+        self.state = torch.tensor(np.array([np.pi, 0]), dtype=torch.float32)
+        #self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
 
