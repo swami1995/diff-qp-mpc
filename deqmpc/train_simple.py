@@ -43,7 +43,9 @@ def main():
     else:
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
-
+        # save arguments
+        torch.save(args, "./model/bc_sac_args")
+    # ipdb.set_trace()
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
     losses_end = []
@@ -73,13 +75,13 @@ def main():
         else:
             nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
             # ipdb.set_trace()
-            loss = (
-                torch.abs(
-                    (nominal_states - traj_sample["state"])#[:, 1:])
-                    * traj_sample["mask"][:, :, None]
-                ).sum(dim=-1).mean()
-            )  
-            loss += torch.abs((nominal_actions[0] - traj_sample["action"]) * traj_sample["mask"][:, :, None]).sum(dim=-1).mean()
+            # loss = (
+            #     torch.abs(
+            #         (nominal_states - traj_sample["state"])#[:, 1:])
+            #         * traj_sample["mask"][:, :, None]
+            #     ).sum(dim=-1).mean()
+            # )  
+            loss = torch.abs((nominal_actions - traj_sample["action"]) * traj_sample["mask"][:, :, None]).sum(dim=-1).mean()
             loss_end = torch.Tensor([0.0])
 
         optimizer.zero_grad()
@@ -89,7 +91,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 10 == 0:
+        if i % 1000 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",

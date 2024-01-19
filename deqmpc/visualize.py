@@ -12,6 +12,7 @@ import ipdb
 from envs import PendulumEnv, PendulumDynamics
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
+from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
@@ -32,8 +33,14 @@ def main():
 
     env = PendulumEnv(stabilization=False)
 
+    # enum of mode of operation
+    # 0: test uncontrolled dynamics
+    # 1: test ground truth trajectory
+    # 2: test controlled dynamics
+    mode = 1
+
     # test uncontrolled dynamics
-    if 0:
+    if mode == 0:
         state = torch.Tensor([[1.5, 0]])
         state_hist = state
         for i in range(200):        
@@ -49,9 +56,9 @@ def main():
         # plt.legend()
 
     # ground truth trajectory
-    else:
+    if mode == 1:
         gt_trajs = get_gt_data(args, env, "sac")
-        idx = 100
+        idx = 111
         theta = [item[0][0] for item in gt_trajs[idx]]
         theta_dot = [item[0][1] for item in gt_trajs[idx]]
         torque = [item[1][0] for item in gt_trajs[idx]]
@@ -60,6 +67,34 @@ def main():
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
         plt.show()
+
+    # test controlled dynamics
+    if mode == 2:
+        args = torch.load("./model/bc_sac_args")
+        policy = NNPolicy(args, env).to("cpu")
+        policy.load_state_dict(torch.load("./model/bc_sac"))
+        policy.eval()
+        # test controlled dynamics
+        state = torch.Tensor([[1.5, 0]])
+        state_hist = state
+        torque_hist = []
+        for i in range(200):        
+            _, action = policy(state)
+            state = env.dynamics(state, action[:, 0, 0])
+            state_hist = torch.cat((state_hist, state), dim=0)
+            # ipdb.set_trace()
+            torque_hist.append(action[:, 0, 0].detach().numpy()[0])
+            print(state, action)
+        theta = state_hist[:, 0].detach().numpy()
+        theta_dot = state_hist[:, 1].detach().numpy()
+        # ipdb.set_trace()
+        torque = torque_hist
+
+        plt.figure()
+        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
+        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
+        plt.legend()
 
     from matplotlib.animation import FuncAnimation
     # Animation function
