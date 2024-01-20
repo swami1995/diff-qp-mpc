@@ -96,8 +96,8 @@ class PendulumEnv:
             high = np.array([0.05, 0.5])
         else:
             high = np.array([np.pi, 1])
-        self.state = torch.tensor(np.array([np.pi, 1]), dtype=torch.float32)#
-        self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+        self.state = torch.tensor(np.array([np.pi, 0]), dtype=torch.float32)
+        #self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
 
@@ -154,7 +154,144 @@ class PendulumEnv:
         Closes the environment.
         """
         pass
+
+class IntegratorDynamics(torch.nn.Module):
+    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
+        super().__init__()
+        self.dt = dt
+        self.max_acc = max_acc     
+        self.max_vel = max_vel
+        self.nx = nx
+        self.nu = nu
+        self.np = int(self.nx / 2)
+
+    def forward(self, state, action):
+        """
+        Computes the next state given the current state and action
+        Args:
+            state (torch.Tensor bsz x nx): The current state.
+            action (torch.Tensor bsz x nu): The action to apply.
+        Returns:
+            torch.Tensor bsz x nx: The next state.
+        """
+        # semi-implicit euler integration
+        this_shape = state.shape
+        pos = state[..., :self.np]
+        vel = state[..., self.np:]
+        # ipdb.set_trace()
+        vel_n = vel + action * self.dt
+        pos_n = pos + vel_n * self.dt
+        state = torch.stack((pos_n, vel_n), dim=-1)
+        return state.reshape(this_shape)
     
+    def action_clip(self, action):
+        return torch.clamp(action, -self.max_acc, self.max_acc)
+
+
+class Spaces:
+    def __init__(self, low, high, shape):
+        self.low = low
+        self.high = high
+        self.shape = shape
+    
+    def sample(self):
+        return np.random.uniform(self.low, self.high)
+
+
+class IntegratorEnv:
+    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
+        self.dynamics = IntegratorDynamics(nx, nu, dt, max_acc, max_vel)
+        self.spec_id = 'Integrator-v0'
+        self.state = None  # Will be initialized in reset
+        self.nx = self.dynamics.nx
+        self.nu = self.dynamics.nu
+        self.np = self.dynamics.np  
+        self.max_acc = self.dynamics.max_acc
+        self.max_vel = self.dynamics.max_vel
+        self.dt = self.dynamics.dt
+        self.num_successes = 0
+
+        # create observation space based on nx
+        low = np.concatenate((np.full(self.np, -np.inf), np.full(self.np, -self.max_vel)))
+        self.observation_space = Spaces(low, -low, (self.nx, 2))
+        self.action_space = Spaces(-np.full(self.nu, self.max_acc), np.full(self.nu, self.max_acc), (self.nu, 2))
+
+    def seed(self, seed):
+        """
+        Seeds the environment to produce deterministic results.
+        Args:
+            seed (int): The seed to use.
+        """
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+
+    def reset(self):
+        """
+        Resets the environment to an initial state, which is a random angle and angular velocity.
+        Returns:
+            numpy.ndarray: The initial state.
+        """
+        low = np.concatenate((np.full(self.np, -2.0), np.full(self.np, -self.max_vel)))
+        # self.state = torch.tensor(np.array([2.0, 0]), dtype=torch.float32)
+        self.state = torch.tensor(np.random.uniform(low=low, high=-low), dtype=torch.float32)
+        self.num_successes = 0
+        return self.state.numpy()
+
+    def step(self, action):
+        """
+        Applies an action to the environment and steps it forward by one timestep.
+        Args:
+            action (float): The action to apply.
+        Returns:
+            tuple: A tuple containing the new state, reward, done flag, and info dict.
+        """
+        # action = torch.tensor([action], dtype=torch.float32)
+        action = torch.tensor(action, dtype=torch.float32)
+        action = self.dynamics.action_clip(action)
+        self.state = self.dynamics(self.state, action)
+        # self.state = self.dynamics.state_clip(self.state)
+        done = self.is_done()
+        reward = self.get_reward(action)  # Define your reward function based on the state and action
+        return self.state.numpy(), reward, done, {}
+
+    def is_done(self):
+        """
+        Determines whether the episode is done (e.g., if the pendulum is upright).
+        Returns:
+            bool: True if the episode is finished, otherwise False.
+        """
+        # Implement your logic for ending an episode, e.g., a time limit or reaching a goal state
+        # For demonstration, let's say an episode ends if the pendulum is upright within a small threshold
+        # ipdb.set_trace()
+        # theta, _ = self.state.unbind()
+        # theta, _ = self.state[0][0], self.state[0][1]
+        pos = self.state[..., : self.np]
+        success = torch.norm(pos) < 0.01
+        self.num_successes = 0 if not success else self.num_successes + 1
+        return self.num_successes >= 10
+
+    def get_reward(self, action):
+        """
+        Calculates the reward for the current state and action.
+        Args:
+            action (float): The action taken.
+        Returns:
+            float: The calculated reward.
+        """
+        # Define your reward function; for simplicity, let's use the negative square of the angle
+        # as a reward, so the closer to upright (0 rad), the higher the reward.
+        # theta, _ = self.state.unbind()
+        # theta, _ = self.state[0][0], self.state[0][1]
+        pos, vel = self.state[..., : self.np], self.state[..., self.np:]
+        reward = -torch.norm(pos) - torch.norm(vel) - torch.norm(action)
+        return reward
+
+    def close(self):
+        """
+        Closes the environment.
+        """
+        pass
+
 class BatchPendulumEnv:
     def __init__(self, batch_size=1):
         self.dynamics = PendulumDynamics()
