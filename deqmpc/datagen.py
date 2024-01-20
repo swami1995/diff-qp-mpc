@@ -5,7 +5,8 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys
-sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
+# sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
+sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 import os

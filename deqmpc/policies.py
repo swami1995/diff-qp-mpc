@@ -230,7 +230,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.model.to(self.device)
         self.tracking_mpc = Tracking_MPC(args, env)
     
-    def forward(self, x):
+    def forward(self, x, x_gt):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
         Args:
@@ -250,18 +250,27 @@ class DEQMPCPolicy(torch.nn.Module):
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
-            x_ref = torch.cat([x[:,:], (x[:,None,:self.np] + dx_ref).reshape(bsz, -1)], dim=1)
+            x_ref = torch.cat([x[:,:], (x[:,None,:self.np] + dx_ref).reshape(bsz, -1)], dim=1).detach().clone()
             dx_ref, z = self.model(x_ref, z)
             dx_ref = dx_ref.view(-1, self.T-1, self.np)
             x_ref = dx_ref + x[:,None,:self.np]
-            x_ref_vel = (x_ref[:,1:] - x_ref[:,:-1])/self.dt
-            x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:,-1:]], dim=1)
+            # ipdb.set_trace()
+            if x_ref.shape[1] > 1:
+                x_ref_vel = (x_ref[:,1:] - x_ref[:,:-1])/self.dt
+                x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:,-1:]], dim=1)
+            else:
+                x_ref_vel = x[:,None,self.np:]
+                # ipdb.set_trace()
             x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
             x_ref = torch.cat([x[:,None,:], x_ref], dim=1)
+            # ipdb.set_trace()
+            x_ref = x_gt + x_ref - x_ref.detach().clone()
             xu_ref = torch.cat([x_ref, torch.zeros_like(x_ref[...,:1])], dim=-1).transpose(0, 1)
             nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
             dx_ref = nominal_states[1:, :, :self.np].transpose(0, 1) - x[:,None,:self.np]
+            nominal_states_net = x_ref.transpose(0, 1)
             trajs.append((nominal_states, nominal_actions))
+            # trajs.append((nominal_states_net, nominal_actions))
 
         return trajs
 

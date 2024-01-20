@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys
-sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
+sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics
@@ -19,7 +19,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--T", type=int, default=10)
+    parser.add_argument("--T", type=int, default=2)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
@@ -30,13 +30,13 @@ def main():
     parser.add_argument("--hdim", type=int, default=256)
     parser.add_argument("--deq_iter", type=int, default=6)
     args = parser.parse_args()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    args.device = "cpu"#"cuda" if torch.cuda.is_available() else "cpu"
 
     env = PendulumEnv(stabilization=False)
     gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
-    args.Q = torch.Tensor([10.0, 1]).to(args.device)
-    args.R = torch.Tensor([1.0]).to(args.device)
+    args.Q = torch.Tensor([10.0, 0.001]).to(args.device)
+    args.R = torch.Tensor([0.001]).to(args.device)
     if args.deq:
         policy = DEQMPCPolicy(args, env).to(args.device)
     else:
@@ -69,18 +69,19 @@ def main():
         traj_sample["state"] = unnormalize_states(traj_sample["state"])
         if args.deq:
             loss = 0.0
-            trajs = policy(traj_sample["state"][:, 0])
+            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"])
             # ipdb.set_trace()
             for j, (nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = torch.abs(
-                            (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])
-                            * traj_sample["mask"][:, :, None]
-                        ).sum(dim=-1).mean()
+                            (nominal_states.transpose(0, 1) - traj_sample["state"])[...,0]#[:, 1:])
+                            * traj_sample["mask"]#[:, :, None]
+                        ).sum(dim=1).mean()
                 loss += loss_j
+            # ipdb.set_trace()
             loss_end = torch.abs(
-                        (nominal_states.transpose(0, 1) - traj_sample["state"])#[:, 1:])
-                        * traj_sample["mask"][:, :, None]
-                    ).sum(dim=-1).mean()
+                        (nominal_states.transpose(0, 1) - traj_sample["state"])[...,0]#[:, 1:])
+                        * traj_sample["mask"]#[:, :, None]
+                    ).sum(dim=1).mean()
         else:
             nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
             loss = (
@@ -99,6 +100,7 @@ def main():
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
         if i % 10 == 0:
+            # ipdb.set_trace()
             print("iter: ", i)
             print(
                 "grad norm: ",
@@ -106,6 +108,7 @@ def main():
             )
             print("loss: ", np.mean(losses)/args.deq_iter, "loss_end: ", np.mean(losses_end))
             losses = []
+            losses_end = []
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 
