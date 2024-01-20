@@ -384,7 +384,7 @@ class IntegratorExpert:
         self.type = type
 
         if self.type == "mpc":
-            self.T = 50
+            self.T = 20
             self.goal_state = torch.Tensor([0.0, 0.0])
             self.goal_weights = torch.Tensor([10.0, 1])
             self.ctrl_penalty = 0.001
@@ -433,6 +433,7 @@ class IntegratorExpert:
                 u_init=self.u_init,  # .double(),
                 grad_method=mpc.GradMethods.AUTO_DIFF,
                 solver_type="dense",
+                single_qp_solve=True,  # linear system
             )
             self.cost = mpc.QuadCost(self.Q, self.p)
 
@@ -469,10 +470,10 @@ def get_int_expert_traj_mpc(env, num_traj):
             # ipdb.set_trace()
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()[0]))
-            state = next_state[0]
-            ipdb.set_trace()
-            # if len(traj) > 100:
-            #     ipdb.set_trace()
+            state = next_state
+            # ipdb.set_trace()
+            if len(traj) > 100:
+                ipdb.set_trace()
             print(len(traj))
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)

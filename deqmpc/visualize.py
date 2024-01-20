@@ -39,7 +39,7 @@ def main():
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 0
+    mode = 1
 
     # test uncontrolled dynamics
     if mode == 0:
@@ -61,8 +61,8 @@ def main():
 
     # ground truth trajectory
     if mode == 1:
-        gt_trajs = get_gt_data(args, env, "sac")
-        idx = 111
+        gt_trajs = get_gt_data(args, env, "mpc")
+        idx = 0
         theta = [item[0][0] for item in gt_trajs[idx]]
         theta_dot = [item[0][1] for item in gt_trajs[idx]]
         torque = [item[1][0] for item in gt_trajs[idx]]

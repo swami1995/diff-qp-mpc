@@ -322,7 +322,7 @@ class MPC(Module):
         x = x.reshape(self.n_batch, self.T, self.n_state+self.n_ctrl)
         x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
         x_next = dx(x, u)[:,:-1]
-        ipdb.set_trace()
+        # ipdb.set_trace()
         res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
         res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
         res_goal = (x[:,-1,:]).reshape(self.n_batch, -1)

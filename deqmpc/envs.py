@@ -156,7 +156,7 @@ class PendulumEnv:
         pass
 
 class IntegratorDynamics(torch.nn.Module):
-    def __init__(self, nx=2, nu=1, dt=0.05, max_acc=1, max_vel=1):
+    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
         super().__init__()
         self.dt = dt
         self.max_acc = max_acc     
@@ -175,13 +175,14 @@ class IntegratorDynamics(torch.nn.Module):
             torch.Tensor bsz x nx: The next state.
         """
         # semi-implicit euler integration
+        this_shape = state.shape
         pos = state[..., :self.np]
         vel = state[..., self.np:]
         # ipdb.set_trace()
         vel_n = vel + action * self.dt
         pos_n = pos + vel_n * self.dt
         state = torch.stack((pos_n, vel_n), dim=-1)
-        return state.reshape(-1, self.nx)
+        return state.reshape(this_shape)
     
     def action_clip(self, action):
         return torch.clamp(action, -self.max_acc, self.max_acc)
@@ -198,7 +199,7 @@ class Spaces:
 
 
 class IntegratorEnv:
-    def __init__(self, nx=2, nu=1, dt=0.05, max_acc=1, max_vel=1):
+    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
         self.dynamics = IntegratorDynamics(nx, nu, dt, max_acc, max_vel)
         self.spec_id = 'Integrator-v0'
         self.state = None  # Will be initialized in reset
@@ -230,9 +231,9 @@ class IntegratorEnv:
         Returns:
             numpy.ndarray: The initial state.
         """
-        low = np.concatenate((np.full(self.np, -10.0), np.full(self.np, -self.max_vel)))
-        self.state = torch.tensor(np.array([10.0, 0]), dtype=torch.float32)
-        # self.state = torch.tensor(np.random.uniform(low=low, high=-low), dtype=torch.float32)
+        low = np.concatenate((np.full(self.np, -2.0), np.full(self.np, -self.max_vel)))
+        # self.state = torch.tensor(np.array([2.0, 0]), dtype=torch.float32)
+        self.state = torch.tensor(np.random.uniform(low=low, high=-low), dtype=torch.float32)
         self.num_successes = 0
         return self.state.numpy()
 
@@ -264,7 +265,7 @@ class IntegratorEnv:
         # ipdb.set_trace()
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        pos = self.state[:, : self.np]
+        pos = self.state[..., : self.np]
         success = torch.norm(pos) < 0.01
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
@@ -281,7 +282,7 @@ class IntegratorEnv:
         # as a reward, so the closer to upright (0 rad), the higher the reward.
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        pos, vel = self.state[:, : self.np], self.state[:, self.np:]
+        pos, vel = self.state[..., : self.np], self.state[..., self.np:]
         reward = -torch.norm(pos) - torch.norm(vel) - torch.norm(action)
         return reward
 
