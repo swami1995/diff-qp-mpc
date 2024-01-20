@@ -339,25 +339,26 @@ class Tracking_MPC(torch.nn.Module):
         self.T = args.T
 
         # May comment out input constraints for now
-        self.u_upper = torch.tensor(env.action_space.high).to(args.device)
-        self.u_lower = torch.tensor(env.action_space.low).to(args.device)
+        self.device = args.device
+        self.u_upper = torch.tensor(env.action_space.high).to(self.device)
+        self.u_lower = torch.tensor(env.action_space.low).to(self.device)
         self.qp_iter = args.qp_iter
         self.eps = args.eps
         self.warm_start = args.warm_start
         self.bsz = args.bsz
-        self.device = args.device
+        
 
-        self.Q = args.Q
-        self.R = args.R
+        self.Q = args.Q.to(self.device)
+        self.R = args.R.to(self.device)
         # self.Qf = args.Qf
         if args.Q is None:
-            self.Q = torch.ones(self.nx, dtype=torch.float32, device=args.device)
-            # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=args.device)
-            self.R = torch.ones(self.nu, dtype=torch.float32, device=args.device)
+            self.Q = torch.ones(self.nx, dtype=torch.float32, device=self.device)
+            # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
+            self.R = torch.ones(self.nu, dtype=torch.float32, device=self.device)  
         self.Q = torch.cat([self.Q, self.R], dim=0)
         self.Q = torch.diag(self.Q).repeat(self.T, self.bsz, 1, 1)
 
-        self.u_init = torch.zeros(
+        self.u_init = torch.ones(
             self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
         )
 
@@ -448,15 +449,9 @@ class NNMPCPolicy(torch.nn.Module):
         nominal_states, nominal_actions = self.tracking_mpc(x, x_ref)
         return nominal_states, nominal_actions
 
-
-# class DEQPolicy:
-
-# class DEQMPCPolicy:
-
-
 class NNPolicy(torch.nn.Module):
     """
-    Some NN-based policy trained with behavioral cloning, outputting a trajectory (state and input) of horizon T
+    Some NN-based policy trained with behavioral cloning, outputting a trajectory (state or input) of horizon T
     """
 
     def __init__(self, args, env):
@@ -469,8 +464,12 @@ class NNPolicy(torch.nn.Module):
         self.dt = env.dt
         self.device = args.device
         self.hdim = args.hdim
+        self.output_type = 1
+        # output_type = 0 : output only actions
+        # output_type = 1 : output only states
+        # output_type = 2 : output states and actions
 
-        ## define the network layers :
+        # define the network layers :
         self.model = torch.nn.Sequential(
             torch.nn.Linear(self.nx, self.hdim),
             torch.nn.LayerNorm(self.hdim),
@@ -478,19 +477,16 @@ class NNPolicy(torch.nn.Module):
             torch.nn.Linear(self.hdim, self.hdim),
             torch.nn.LayerNorm(self.hdim),
             torch.nn.ReLU(),
-            torch.nn.Linear(self.hdim, (self.nx + self.nu) * self.T),
         )
-        # # define the network layers :
-        # self.model = torch.nn.Sequential(
-        #     torch.nn.Linear(self.nx, self.hdim),
-        #     torch.nn.LayerNorm(self.hdim),
-        #     torch.nn.ReLU(),
-        #     torch.nn.Linear(self.hdim, self.hdim),
-        #     torch.nn.LayerNorm(self.hdim),
-        #     torch.nn.ReLU(),
-        #     torch.nn.Linear(self.hdim, self.nu * self.T),
-        # )
-        # self.model.to(self.device)
+        if self.output_type == 0:
+            self.model.add_module("out", torch.nn.Linear(self.hdim, self.nu * self.T))
+        elif self.output_type == 1:
+            self.model.add_module("out", torch.nn.Linear(self.hdim, self.nx * self.T))
+        elif self.output_type == 2:
+            self.model.add_module(
+                "out",
+                torch.nn.Linear(self.hdim, (self.nx + self.nu) * self.T),
+            )
 
     def forward(self, x):
         """
@@ -498,25 +494,20 @@ class NNPolicy(torch.nn.Module):
         Args:
             x (tensor bsz x nx): input state
         Returns:
-            states (tensor bsz x T x nx): nominal states
-            actions (tensor bsz x T x nu): nominal actions
+            states (tensor bsz x T x nx): nominal states or None
+            actions (tensor bsz x T x nu): nominal actions or None
         """
-        states = self.model(x)[:, : self.nx * self.T]
-        states = states.view(-1, self.T, self.nx)
-        actions = self.model(x)[:, self.nx * self.T :]
-        actions = actions.view(-1, self.T, self.nu)
+        if self.output_type == 0:
+            actions = self.model(x)
+            actions = actions.view(-1, self.T, self.nu)
+            states = None
+        elif self.output_type == 1:
+            states = self.model(x)
+            states = states.view(-1, self.T, self.nx)
+            actions = None
+        elif self.output_type == 2:
+            states = self.model(x)[:, : self.nx * self.T]
+            states = states.view(-1, self.T, self.nx)
+            actions = self.model(x)[:, self.nx * self.T :]
+            actions = actions.view(-1, self.T, self.nu)
         return states, actions
-
-    # def forward(self, x):
-    #     """
-    #     compute the trajectory given state x
-    #     Args:
-    #         x (tensor bsz x nx): input state
-    #     Returns:
-    #         actions (tensor bsz x T x nu): nominal actions
-    #     """
-    #     actions = self.model(x)
-    #     actions = actions.view(-1, self.T, self.nu)
-    #     return 0, actions
-
-# class NNMPCPolicy:

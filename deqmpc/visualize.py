@@ -9,10 +9,11 @@ import sys
 sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
-from envs import PendulumEnv, PendulumDynamics
+from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
-from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
+from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
+import utils
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
@@ -31,29 +32,32 @@ def main():
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    env = PendulumEnv(stabilization=False)
+    # env = PendulumEnv(stabilization=False)
+    env = IntegratorEnv()
 
     # enum of mode of operation
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 2
+    mode = 0
 
     # test uncontrolled dynamics
     if mode == 0:
         state = torch.Tensor([[1.5, 0]])
         state_hist = state
+        torque = torch.Tensor([[2.]])
         for i in range(200):        
-            state = env.dynamics(state, torch.Tensor([0.0]))
+            state = env.dynamics(state, torque)
             state_hist = torch.cat((state_hist, state), dim=0)
         theta = state_hist[:, 0]
         theta_dot = state_hist[:, 1]
 
-        # plt.figure()
-        # print(state_hist.shape)
-        # plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-        # plt.legend()
+        plt.figure()
+        print(state_hist.shape)
+        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
+        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        plt.legend()
+        plt.show()
 
     # ground truth trajectory
     if mode == 1:
@@ -71,23 +75,43 @@ def main():
     # test controlled dynamics
     if mode == 2:
         args = torch.load("./model/bc_sac_args")
-        policy = NNPolicy(args, env).to("cpu")
+        args.device = "cpu"
+        args.bsz = 1
+        policy = NNPolicy(args, env)
         policy.load_state_dict(torch.load("./model/bc_sac"))
         policy.eval()
         # test controlled dynamics
-        state = torch.Tensor([[2.5, 0.1]])
+        state = torch.Tensor([[0.1, -0.4]])
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
         state_hist = state
         torque_hist = [0.0]
+        # for i in range(200):        
+        #     _, action = policy(state)
+        #     state = env.dynamics(state, action[:, 0, 0])
+        #     state_hist = torch.cat((state_hist, state), dim=0)
+        #     torque_hist.append(action[:, 0, 0].detach().numpy()[0])
+
+        tracking_mpc = Tracking_MPC(args, env)
+        
+        torch.no_grad()
         for i in range(200):        
-            _, action = policy(state)
-            state = env.dynamics(state, action[:, 0, 0])
+            x_ref, _ = policy(state)
+            xu_ref = torch.cat(
+                [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
+            ).transpose(0, 1)
+            # ipdb.set_trace()
+            nominal_states, nominal_action = tracking_mpc(state, xu_ref)
+            print("nominal states\n", nominal_states)
+            print("reference states\n", x_ref)
+            u = nominal_action[0, :, 0]
+
+            state = env.dynamics(state, u)
             state_hist = torch.cat((state_hist, state), dim=0)
             # ipdb.set_trace()
-            torque_hist.append(action[:, 0, 0].detach().numpy()[0])
-            # print(state, action)
+            torque_hist.append(u.detach().numpy()[0])
+            # print(x_ref)
         theta = state_hist[:, 0].detach().numpy()
         theta_dot = state_hist[:, 1].detach().numpy()
         # ipdb.set_trace()
@@ -99,40 +123,8 @@ def main():
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
 
-    from matplotlib.animation import FuncAnimation
-    # Animation function
-    def update(frame):
-        ax.clear()
-        
-        # Set up pendulum parameters
-        length = 1.0  # Length of the pendulum (meters)
-        
-        # Calculate pendulum position
-        angle = theta[frame] 
-        
-        # Plot pendulum
-        x = [0, -length * np.sin(angle)]
-        y = [0, length * np.cos(angle)]
-        ax.plot(x, y, marker='o', markersize=10, color='blue', linewidth=4)
-        ax.arrow(0, -1, torque[frame]/env.max_torque, 0, color='green', width=0.05)
-        
-        # Set plot limits
-        ax.set_xlim(-length*1.5, length*1.5)
-        ax.set_ylim(-length*1.5, length*1.5)
-        
-        # Set plot aspect ratio to be equal
-        ax.set_aspect('equal')
-
-    # Set up the plot
-    fig, ax = plt.subplots()
-    ani = FuncAnimation(fig, update, frames=len(theta), interval=30, repeat=True)
-
-    plt.title('Simple Pendulum Animation')
-    plt.xlabel('X Position (m)')
-    plt.ylabel('Y Position (m)')
-
-    # Display the animation
-    plt.show()
+    # utils.animate_pendulum(env, theta, torque)
+    # utils.animate_integrator(env, theta, torque)
 
 if __name__ == "__main__":
     main()

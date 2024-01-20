@@ -75,13 +75,13 @@ def main():
         else:
             nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
             # ipdb.set_trace()
-            # loss = (
-            #     torch.abs(
-            #         (nominal_states - traj_sample["state"])#[:, 1:])
-            #         * traj_sample["mask"][:, :, None]
-            #     ).sum(dim=-1).mean()
-            # )  
-            loss = torch.abs((nominal_actions - traj_sample["action"]) * traj_sample["mask"][:, :, None]).sum(dim=-1).mean()
+            loss = (
+                torch.abs(
+                    (nominal_states - traj_sample["state"])#[:, 1:])
+                    * traj_sample["mask"][:, :, None]
+                ).sum(dim=-1).mean()
+            )  
+            # loss = torch.abs((nominal_actions - traj_sample["action"]) * traj_sample["mask"][:, :, None]).sum(dim=-1).mean()
             loss_end = torch.Tensor([0.0])
 
         optimizer.zero_grad()
