@@ -39,7 +39,7 @@ def main():
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 1
+    mode = 2
 
     # test uncontrolled dynamics
     if mode == 0:
@@ -74,14 +74,14 @@ def main():
 
     # test controlled dynamics
     if mode == 2:
-        args = torch.load("./model/bc_sac_args")
+        args = torch.load("./model/bc_mpc_int_args")
         args.device = "cpu"
         args.bsz = 1
         policy = NNPolicy(args, env)
-        policy.load_state_dict(torch.load("./model/bc_sac"))
+        policy.load_state_dict(torch.load("./model/bc_mpc_int"))
         policy.eval()
         # test controlled dynamics
-        state = torch.Tensor([[0.1, -0.4]])
+        state = torch.Tensor([[0.5, -0.4]])
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -96,15 +96,15 @@ def main():
         tracking_mpc = Tracking_MPC(args, env)
         
         torch.no_grad()
-        for i in range(200):        
+        for i in range(70):        
             x_ref, _ = policy(state)
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
             ).transpose(0, 1)
             # ipdb.set_trace()
             nominal_states, nominal_action = tracking_mpc(state, xu_ref)
-            print("nominal states\n", nominal_states)
             print("reference states\n", x_ref)
+            print("nominal states\n", nominal_states)            
             u = nominal_action[0, :, 0]
 
             state = env.dynamics(state, u)
@@ -122,6 +122,7 @@ def main():
         plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
+        plt.show()
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)

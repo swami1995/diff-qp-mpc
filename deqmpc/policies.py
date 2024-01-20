@@ -337,6 +337,7 @@ class Tracking_MPC(torch.nn.Module):
         self.nx = env.nx
         self.dt = env.dt
         self.T = args.T
+        self.dyn = env.dynamics
 
         # May comment out input constraints for now
         self.device = args.device
@@ -391,7 +392,7 @@ class Tracking_MPC(torch.nn.Module):
         cost = mpc.QuadCost(self.Q, self.p)
         self.ctrl.u_init = self.u_init
         state = x_init  # .unsqueeze(0).repeat(self.bsz, 1)
-        nominal_states, nominal_actions = self.ctrl(state, cost, PendulumDynamics())
+        nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn)
         # ipdb.set_trace()
         # self.u_init = nominal_actions.clone().detach()
         return nominal_states, nominal_actions

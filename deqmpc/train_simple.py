@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
-from envs import PendulumEnv, PendulumDynamics
+from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
 
@@ -33,8 +33,10 @@ def main():
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    env = PendulumEnv(stabilization=False)
-    gt_trajs = get_gt_data(args, env, "sac")
+    # env = PendulumEnv(stabilization=False)
+    env = IntegratorEnv()
+
+    gt_trajs = get_gt_data(args, env, "mpc")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 1]).to(args.device)
     args.R = torch.Tensor([1.0]).to(args.device)
@@ -44,7 +46,7 @@ def main():
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
         # save arguments
-        torch.save(args, "./model/bc_sac_args")
+        torch.save(args, "./model/bc_mpc_int_args")
     # ipdb.set_trace()
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
@@ -102,7 +104,7 @@ def main():
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 
-    torch.save(policy.state_dict(), "./model/bc_sac")
+    torch.save(policy.state_dict(), "./model/bc_mpc_int")
 
 def unnormalize_states(nominal_states):
     # ipdb.set_trace()

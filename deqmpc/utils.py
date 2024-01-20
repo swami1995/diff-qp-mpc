@@ -45,3 +45,20 @@ def animate_pendulum(env, theta, torque):
 
     # Display the animation
     plt.show()
+
+def animate_integrator(env, pos, acc):
+    # animate 2d position and acceleration as arrow
+    def update(frame):
+        ax.clear()
+        ax.set_xlim(-1.5, 1.5)
+        ax.set_ylim(-1.5, 1.5)
+        ax.set_aspect('equal')
+        ax.arrow(0, 0, pos[frame, 0], pos[frame, 1], color='blue', width=0.05)
+        ax.arrow(pos[frame, 0], pos[frame, 1], acc[frame, 0], acc[frame, 1], color='green', width=0.05)
+    fig, ax = plt.subplots()
+    ani = FuncAnimation(fig, update, frames=len(pos), interval=30, repeat=True)
+    plt.title('Integrator Animation')
+    plt.xlabel('X Position (m)')
+    plt.ylabel('Y Position (m)')
+    plt.show()
+    
