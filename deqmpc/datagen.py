@@ -483,7 +483,7 @@ def get_int_expert_traj_mpc(env, num_traj):
 if __name__ == "__main__":
     print("Starting!")
     # ipdb.set_trace()
-    # env = PendulumEnv(stabilization=False)
-    env = IntegratorEnv()
-    save_expert_traj(env, 100, "mpc")
+    env = PendulumEnv(stabilization=False)
+    # env = IntegratorEnv()
+    save_expert_traj(env, 300, "sac")
     # test_qp_mpc(env)

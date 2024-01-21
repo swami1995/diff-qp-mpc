@@ -61,8 +61,8 @@ def main():
 
     # ground truth trajectory
     if mode == 1:
-        gt_trajs = get_gt_data(args, env, "mpc")
-        idx = 2
+        gt_trajs = get_gt_data(args, env, "sac")
+        idx = 10
         theta = [item[0][0] for item in gt_trajs[idx]]
         theta_dot = [item[0][1] for item in gt_trajs[idx]]
         torque = [item[1][0] for item in gt_trajs[idx]]
@@ -73,21 +73,24 @@ def main():
         plt.show()
 
     # test controlled dynamics
+    torch.no_grad()
     if mode == 2:
-        args = torch.load("./model/bc_sac_int_args")
+        args = torch.load("./model/bc_sac_pen_args")
         args.device = "cpu"
         args.bsz = 1
+        args.Q = torch.Tensor([1000.0, 1000.0])
+        args.R = torch.Tensor([1.0])
         policy = NNPolicy(args, env)
         policy.load_state_dict(torch.load("./model/bc_sac_pen"))
         policy.eval()
         # test controlled dynamics
-        state = torch.Tensor([[0.5, -0.4]])
+        state = torch.Tensor([[1.9, 0.1]])
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
         state_hist = state
         torque_hist = [0.0]
-        # for i in range(200):        
+        # for i in range(170):        
         #     _, action = policy(state)
         #     state = env.dynamics(state, action[:, 0, 0])
         #     state_hist = torch.cat((state_hist, state), dim=0)
@@ -96,7 +99,7 @@ def main():
         tracking_mpc = Tracking_MPC(args, env)
         
         torch.no_grad()
-        for i in range(200):        
+        for i in range(170):        
             x_ref, _ = policy(state)
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
@@ -122,7 +125,8 @@ def main():
         plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
-        plt.show()
+        # plt.ylim(-env.max_acc*1.5, env.max_acc*1.5)
+        plt.show()        
 
     utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)

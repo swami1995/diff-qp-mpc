@@ -346,7 +346,6 @@ class Tracking_MPC(torch.nn.Module):
         self.eps = args.eps
         self.warm_start = args.warm_start
         self.bsz = args.bsz
-        
 
         self.Q = args.Q.to(self.device)
         self.R = args.R.to(self.device)
@@ -354,7 +353,7 @@ class Tracking_MPC(torch.nn.Module):
         if args.Q is None:
             self.Q = torch.ones(self.nx, dtype=torch.float32, device=self.device)
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
-            self.R = torch.ones(self.nu, dtype=torch.float32, device=self.device)  
+            self.R = torch.ones(self.nu, dtype=torch.float32, device=self.device)
         self.Q = torch.cat([self.Q, self.R], dim=0)
         self.Q = torch.diag(self.Q).repeat(self.T, self.bsz, 1, 1)
 
@@ -449,6 +448,7 @@ class NNMPCPolicy(torch.nn.Module):
         nominal_states, nominal_actions = self.tracking_mpc(x, x_ref)
         return nominal_states, nominal_actions
 
+
 class NNPolicy(torch.nn.Module):
     """
     Some NN-based policy trained with behavioral cloning, outputting a trajectory (state or input) of horizon T
@@ -468,6 +468,7 @@ class NNPolicy(torch.nn.Module):
         # output_type = 0 : output only actions
         # output_type = 1 : output only states
         # output_type = 2 : output states and actions
+        # output_type = 3 : output only positions
 
         # define the network layers :
         self.model = torch.nn.Sequential(
@@ -479,14 +480,15 @@ class NNPolicy(torch.nn.Module):
             torch.nn.ReLU(),
         )
         if self.output_type == 0:
-            self.model.add_module("out", torch.nn.Linear(self.hdim, self.nu * self.T))
+            self.out_dim = self.nu * self.T
         elif self.output_type == 1:
-            self.model.add_module("out", torch.nn.Linear(self.hdim, self.nx * self.T))
+            self.out_dim = self.nx * self.T
         elif self.output_type == 2:
-            self.model.add_module(
-                "out",
-                torch.nn.Linear(self.hdim, (self.nx + self.nu) * self.T),
-            )
+            self.out_dim = (self.nx + self.nu) * self.T
+        elif self.output_type == 3:
+            self.out_dim = (self.np) * self.T
+
+        self.model.add_module("out", torch.nn.Linear(self.hdim, self.out_dim))
 
     def forward(self, x):
         """
@@ -510,4 +512,10 @@ class NNPolicy(torch.nn.Module):
             states = states.view(-1, self.T, self.nx)
             actions = self.model(x)[:, self.nx * self.T :]
             actions = actions.view(-1, self.T, self.nu)
+        elif self.output_type == 3:
+            pos = self.model(x)
+            vel = (pos[:, 1:] - pos[:, :-1]) / self.dt
+            vel = torch.cat([vel, vel[:, -1:]], dim=1)
+            states = torch.cat([pos, vel], dim=-1).view(-1, self.T, self.nx)
+            actions = None
         return states, actions
