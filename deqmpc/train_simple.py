@@ -99,10 +99,10 @@ def main():
                     .sum(dim=-1)
                     .mean()
                 )
-            if policy.output_type == 1 or policy.output_type == 2:
+            if policy.output_type == 1 or policy.output_type == 2 or policy.output_type == 3:
                 loss += (
                     torch.abs(
-                        (nominal_states - traj_sample["state"])  # [:, 1:])
+                        (nominal_states - traj_sample["state"])#[:, :, : policy.np]
                         * traj_sample["mask"][:, :, None]
                     )
                     .sum(dim=-1)
