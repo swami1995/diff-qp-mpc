@@ -78,13 +78,13 @@ def main():
         args = torch.load("./model/bc_sac_pen_args")
         args.device = "cpu"
         args.bsz = 1
-        args.Q = torch.Tensor([10000.0, 10000.0])
+        args.Q = torch.Tensor([1000.0, 1000.0])
         args.R = torch.Tensor([1.0])
         policy = NNPolicy(args, env)
         policy.load_state_dict(torch.load("./model/bc_sac_pen"))
         policy.eval()
         # test controlled dynamics
-        state = torch.Tensor([[2.5, 0.9]])
+        state = torch.Tensor([[1.9, 0.1]])
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -97,7 +97,7 @@ def main():
         #     torque_hist.append(action[:, 0, 0].detach().numpy()[0])
 
         tracking_mpc = Tracking_MPC(args, env)        
-        for i in range(70):        
+        for i in range(170):        
             x_ref, _ = policy(state)
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
