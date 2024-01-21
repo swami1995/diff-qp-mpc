@@ -134,7 +134,10 @@ def main():
             # print('nominal actions: ', nominal_actions)
 
     torch.save(policy.state_dict(), "./model/bc_sac_pen")
+<<<<<<< HEAD
 
+=======
+>>>>>>> deqmpc
 
 def unnormalize_states(nominal_states):
     # ipdb.set_trace()

@@ -96,7 +96,9 @@ def main():
         #     state_hist = torch.cat((state_hist, state), dim=0)
         #     torque_hist.append(action[:, 0, 0].detach().numpy()[0])
 
-        tracking_mpc = Tracking_MPC(args, env)        
+        tracking_mpc = Tracking_MPC(args, env)
+        
+        torch.no_grad()
         for i in range(170):        
             x_ref, _ = policy(state)
             xu_ref = torch.cat(
