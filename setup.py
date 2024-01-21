@@ -55,7 +55,7 @@ cuda_detection_info = (
 )
 print(f"CUDA support: {compile_cuda_support} ({cuda_detection_info})")
 
-if False:#compile_cuda_support:
+if compile_cuda_support:
     ext_modules = [
         # reference: https://docs.python.org/3/distutils/apiref.html#distutils.core.Extension
         # torch_cpp_ext.CUDAExtension(
