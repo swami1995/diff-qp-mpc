@@ -32,8 +32,8 @@ def main():
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # env = PendulumEnv(stabilization=False)
-    env = IntegratorEnv()
+    env = PendulumEnv(stabilization=False)
+    # env = IntegratorEnv()
 
     # enum of mode of operation
     # 0: test uncontrolled dynamics
@@ -74,11 +74,11 @@ def main():
 
     # test controlled dynamics
     if mode == 2:
-        args = torch.load("./model/bc_mpc_int_args")
+        args = torch.load("./model/bc_sac_int_args")
         args.device = "cpu"
         args.bsz = 1
         policy = NNPolicy(args, env)
-        policy.load_state_dict(torch.load("./model/bc_mpc_int"))
+        policy.load_state_dict(torch.load("./model/bc_sac_pen"))
         policy.eval()
         # test controlled dynamics
         state = torch.Tensor([[0.5, -0.4]])
@@ -96,7 +96,7 @@ def main():
         tracking_mpc = Tracking_MPC(args, env)
         
         torch.no_grad()
-        for i in range(70):        
+        for i in range(200):        
             x_ref, _ = policy(state)
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
@@ -124,7 +124,7 @@ def main():
         plt.legend()
         plt.show()
 
-    # utils.animate_pendulum(env, theta, torque)
+    utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
 
 if __name__ == "__main__":

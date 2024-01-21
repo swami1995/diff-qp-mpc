@@ -33,10 +33,10 @@ def main():
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # env = PendulumEnv(stabilization=False)
-    env = IntegratorEnv()
+    env = PendulumEnv(stabilization=False)
+    # env = IntegratorEnv()
 
-    gt_trajs = get_gt_data(args, env, "mpc")
+    gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 1]).to(args.device)
     args.R = torch.Tensor([1.0]).to(args.device)
@@ -46,7 +46,7 @@ def main():
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
         # save arguments
-        torch.save(args, "./model/bc_mpc_int_args")
+        torch.save(args, "./model/bc_sac_pen_args")
     # ipdb.set_trace()
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
@@ -104,7 +104,7 @@ def main():
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 
-    torch.save(policy.state_dict(), "./model/bc_mpc_int")
+    torch.save(policy.state_dict(), "./model/bc_sac_pen")
 
 def unnormalize_states(nominal_states):
     # ipdb.set_trace()
