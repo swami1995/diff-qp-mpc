@@ -3,7 +3,6 @@ import torch
 import torch.autograd as autograd
 import qpth.qp_wrapper as mpc
 import ipdb
-from envs import PendulumEnv, PendulumDynamics
 
 
 class DEQPolicy(torch.nn.Module):
