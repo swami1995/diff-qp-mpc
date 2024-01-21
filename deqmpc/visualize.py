@@ -77,6 +77,8 @@ def main():
         args = torch.load("./model/bc_mpc_int_args")
         args.device = "cpu"
         args.bsz = 1
+        args.Q = torch.Tensor([10000.0, 10000.0])
+        args.R = torch.Tensor([1.0])
         policy = NNPolicy(args, env)
         policy.load_state_dict(torch.load("./model/bc_mpc_int"))
         policy.eval()
@@ -87,7 +89,7 @@ def main():
 
         state_hist = state
         torque_hist = [0.0]
-        # for i in range(200):        
+        # for i in range(70):        
         #     _, action = policy(state)
         #     state = env.dynamics(state, action[:, 0, 0])
         #     state_hist = torch.cat((state_hist, state), dim=0)
@@ -122,7 +124,8 @@ def main():
         plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
-        plt.show()
+        plt.ylim(-env.max_acc*1.5, env.max_acc*1.5)
+        plt.show()        
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
