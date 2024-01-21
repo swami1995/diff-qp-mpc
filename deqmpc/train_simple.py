@@ -25,7 +25,7 @@ def main():
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default="cpu")
@@ -35,10 +35,10 @@ def main():
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # env = PendulumEnv(stabilization=False)
-    env = IntegratorEnv()
+    env = PendulumEnv(stabilization=False)
+    # env = IntegratorEnv()
 
-    gt_trajs = get_gt_data(args, env, "mpc")
+    gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 1]).to(args.device)
     args.R = torch.Tensor([1.0]).to(args.device)
@@ -48,14 +48,14 @@ def main():
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
         # save arguments
-        torch.save(args, "./model/bc_mpc_int_args")
+        torch.save(args, "./model/bc_sac_pen_args")
     # ipdb.set_trace()
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
     losses_end = []
 
     # run imitation learning using gt_trajs
-    for i in range(5000):
+    for i in range(10000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
@@ -133,7 +133,7 @@ def main():
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 
-    torch.save(policy.state_dict(), "./model/bc_mpc_int")
+    torch.save(policy.state_dict(), "./model/bc_sac_pen")
 
 
 def unnormalize_states(nominal_states):

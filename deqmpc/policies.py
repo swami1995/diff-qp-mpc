@@ -465,7 +465,7 @@ class NNPolicy(torch.nn.Module):
         self.dt = env.dt
         self.device = args.device
         self.hdim = args.hdim
-        self.output_type = 3
+        self.output_type = 1
         # output_type = 0 : output only actions
         # output_type = 1 : output only states
         # output_type = 2 : output states and actions
