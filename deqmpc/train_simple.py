@@ -14,30 +14,38 @@ from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
+def seeding(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
 def main():
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--T", type=int, default=2)
+    parser.add_argument("--T", type=int, default=3)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action='store_true')
     parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
+    parser.add_argument("--seed", type=int, default=0)
+
     args = parser.parse_args()
-    args.device = "cpu" #"cuda" if torch.cuda.is_available() else "cpu"
+    seeding(args.seed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    args.device = device if args.device is None else args.device
 
-    # env = PendulumEnv(stabilization=False)
-    env = IntegratorEnv()
+    env = PendulumEnv(stabilization=False)
+    # env = IntegratorEnv()
 
-    gt_trajs = get_gt_data(args, env, "mpc")
-    # gt_trajs = get_gt_data(args, env, "sac")
+    # gt_trajs = get_gt_data(args, env, "mpc")
+    gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 0.001]).to(args.device)
     args.R = torch.Tensor([0.001]).to(args.device)
@@ -67,14 +75,14 @@ def main():
             # ipdb.set_trace()
             for j, (nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = torch.abs(
-                            (nominal_states.transpose(0, 1) - traj_sample["state"])[...,0]#[:, 1:])
-                            * traj_sample["mask"]#[:, :, None]
-                        ).sum(dim=1).mean()
+                            (nominal_states.transpose(0, 1) - traj_sample["state"])#[...,0]#[:, 1:])
+                            * traj_sample["mask"][:, :, None]
+                        ).sum(dim=1).mean()#dim=-1)
                 loss += loss_j
             # ipdb.set_trace()
             loss_end = torch.abs(
-                        (nominal_states.transpose(0, 1) - traj_sample["state"])[...,0]#[:, 1:])
-                        * traj_sample["mask"]#[:, :, None]
+                        (nominal_states.transpose(0, 1) - traj_sample["state"])#[...,0]#[:, 1:])
+                        * traj_sample["mask"][:, :, None]
                     ).sum(dim=1).mean()
         else:
             nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
@@ -95,7 +103,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 1000 == 0:
+        if i % 10 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",

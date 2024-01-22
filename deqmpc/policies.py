@@ -168,6 +168,7 @@ class DEQLayer(torch.nn.Module):
         self.nu = env.nu
         self.nx = env.nx
         self.np = args.np
+        self.dt = env.dt
         self.T = args.T
         self.hdim = args.hdim
         self.layer_type = "mlp"  # args.layer_type
@@ -186,8 +187,11 @@ class DEQLayer(torch.nn.Module):
         z_out = self.deq_layer(xinp, z)
         dx_ref = self.out_layer(z_out)
         dx_ref = dx_ref.view(-1, self.T - 1, self.np)
-        # x_ref = dx_ref + x[:,None,:self.np]*10
-        return dx_ref, z_out
+        np = 1 # self.np
+        vel_ref = dx_ref[..., np:]
+        dx_ref = dx_ref[..., :np] * self.dt
+        x_ref = torch.cat([dx_ref + x[:,None,:np], vel_ref], dim=-1)
+        return x_ref, z_out
 
     def deq_layer(self, x, z):
         if self.layer_type == "mlp":
@@ -252,6 +256,56 @@ class DEQMPCPolicy(torch.nn.Module):
         self.model.to(self.device)
         self.tracking_mpc = Tracking_MPC(args, env)
 
+    # def forward(self, x, x_gt):
+    #     """
+    #     Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
+    #     Args:
+    #         x (tensor 0 x bsz x nx): input state
+    #     Returns:
+    #         trajs (list of tuples): list of tuples of nominal states and actions for each deq iteration
+    #         trajs[k][0] (tensor T x bsz x nx): nominal states for the kth deq iteration
+    #         trajs[k][1] (tensor T x bsz x nu): nominal actions for the kth deq iteration
+    #     """
+    #     # initialize trajectory with zeros
+    #     dx_ref = torch.zeros(x.shape[0], self.T - 1, self.np).to(self.device)
+    #     z = self.model.init_z(x.shape[0]).to(self.device)
+
+    #     # initialize trajs list
+    #     trajs = []
+    #     bsz = x.shape[0]
+
+    #     # run the DEQ layer for deq_iter iterations
+    #     for i in range(self.deq_iter):
+    #         x_ref = torch.cat(
+    #             [x[:, :], (x[:, None, : self.np] + dx_ref).reshape(bsz, -1)], dim=1
+    #         ).detach().clone()
+    #         dx_ref, z = self.model(x_ref, z)
+    #         dx_ref = dx_ref.view(-1, self.T - 1, self.np)
+    #         x_ref = dx_ref + x[:, None, : self.np]
+    #         # ipdb.set_trace()
+    #         if x_ref.shape[1] > 1:
+    #             x_ref_vel = (x_ref[:, 1:] - x_ref[:, :-1]) / self.dt
+    #             x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:, -1:]], dim=1)
+    #         else:
+    #             x_ref_vel = x[:, None, self.np : ]
+    #             # ipdb.set_trace()
+    #         x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
+    #         x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
+    #         # ipdb.set_trace()
+    #         x_ref = x_gt + x_ref - x_ref.detach().clone()
+    #         xu_ref = torch.cat(
+    #             [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
+    #         ).transpose(0, 1)
+    #         nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
+    #         dx_ref = (
+    #             nominal_states[1:, :, : self.np].transpose(0, 1) - x[:, None, : self.np]
+    #         )
+    #         nominal_states_net = x_ref.transpose(0, 1)
+    #         trajs.append((nominal_states, nominal_actions))
+    #         # trajs.append((nominal_states_net, nominal_actions))
+
+    #     return trajs
+
     def forward(self, x, x_gt):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
@@ -263,45 +317,45 @@ class DEQMPCPolicy(torch.nn.Module):
             trajs[k][1] (tensor T x bsz x nu): nominal actions for the kth deq iteration
         """
         # initialize trajectory with zeros
-        dx_ref = torch.zeros(x.shape[0], self.T - 1, self.np).to(self.device)
+        x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
         z = self.model.init_z(x.shape[0]).to(self.device)
 
         # initialize trajs list
         trajs = []
         bsz = x.shape[0]
+        self.tracking_mpc.reinitialize()
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
-            x_ref = torch.cat(
-                [x[:, :], (x[:, None, : self.np] + dx_ref).reshape(bsz, -1)], dim=1
-            ).detach().clone()
-            dx_ref, z = self.model(x_ref, z)
-            dx_ref = dx_ref.view(-1, self.T - 1, self.np)
-            x_ref = dx_ref + x[:, None, : self.np]
+            x_ref, z = self.model(x_ref, z)
+            x_ref = x_ref.view(-1, self.T-1, self.np)
+            # if x_ref.shape[1] > 1:
+            #     x_ref_vel = (x_ref[:, 1:] - x_ref[:, :-1]) / self.dt
+            #     x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:, -1:]], dim=1)
+            # else:
+            #     x_ref_vel = x[:, None, self.np : ]
+            # x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
             # ipdb.set_trace()
-            if x_ref.shape[1] > 1:
-                x_ref_vel = (x_ref[:, 1:] - x_ref[:, :-1]) / self.dt
-                x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:, -1:]], dim=1)
-            else:
-                x_ref_vel = x[:, None, self.np : ]
-                # ipdb.set_trace()
-            x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
             x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
+            # nominal_states = x_ref.transpose(0, 1)
+            # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
+            # trajs.append((nominal_states, nominal_actions))
+            # x_ref = x_ref.reshape(bsz, -1)
+            
+
             # ipdb.set_trace()
-            x_ref = x_gt + x_ref - x_ref.detach().clone()
+            # x_ref = x_gt + x_ref - x_ref.detach().clone()
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
             ).transpose(0, 1)
             nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
-            dx_ref = (
-                nominal_states[1:, :, : self.np].transpose(0, 1) - x[:, None, : self.np]
-            )
             nominal_states_net = x_ref.transpose(0, 1)
-            trajs.append((nominal_states, nominal_actions))
+            trajs.append((nominal_states_net, nominal_actions))
+            x_ref = nominal_states.transpose(0, 1).detach().clone().reshape(bsz, -1)
+            # ipdb.set_trace()
             # trajs.append((nominal_states_net, nominal_actions))
 
         return trajs
-
 
 class FFDNetwork(torch.nn.Module):
     """
@@ -368,7 +422,7 @@ class Tracking_MPC(torch.nn.Module):
         self.Q = torch.cat([self.Q, self.R], dim=0)
         self.Q = torch.diag(self.Q).repeat(self.T, self.bsz, 1, 1)
 
-        self.u_init = torch.ones(
+        self.u_init = torch.randn(
             self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
         )
 
@@ -403,7 +457,7 @@ class Tracking_MPC(torch.nn.Module):
         state = x_init  # .unsqueeze(0).repeat(self.bsz, 1)
         nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn)
         # ipdb.set_trace()
-        # self.u_init = nominal_actions.clone().detach()
+        self.u_init = nominal_actions.clone().detach()
         return nominal_states, nominal_actions
 
     def compute_p(self, x_ref):
@@ -418,7 +472,11 @@ class Tracking_MPC(torch.nn.Module):
         # ).sum(dim=-1)
         self.p = -(self.Q * x_ref.unsqueeze(-2)).sum(dim=-1)
         return self.p
-
+    
+    def reinitialize(self):
+        self.u_init = torch.randn(
+            self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
+        )
 
 class NNMPCPolicy(torch.nn.Module):
     """
