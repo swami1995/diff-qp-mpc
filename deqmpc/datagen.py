@@ -5,8 +5,8 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys
-
-sys.path.insert(0, "/home/swaminathan/Workspace/qpth/")
+# sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
+sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 import os
@@ -344,7 +344,7 @@ def sample_trajectory(gt_trajs, bsz, T):
     trajs["state"] = torch.stack(trajs["state"])
     trajs["action"] = torch.stack(trajs["action"])
     trajs["mask"] = torch.stack(trajs["mask"])
-    for i in range(T):
+    for i in reversed(range(T)):
         trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i], dim=1)
     return trajs
 

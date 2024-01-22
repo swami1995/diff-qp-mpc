@@ -394,7 +394,6 @@ class MPC(Module):
         n_not_improved = 0
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
         cost_total = self.compute_cost(xhats_qpf, cost)
-
         delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
         with torch.no_grad():
             _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
@@ -414,11 +413,10 @@ class MPC(Module):
             x_new = self.rollout(x0, u_new, dx)[:-1]
             xhats_qpf = torch.cat((x_new, u_new), dim=2).transpose(0,1)
             cost_total_new = self.compute_cost(xhats_qpf, cost)
-            # ipdb.set_trace()
             if (cost_total_new < cost_total).all():
                 break
             else:
-                mask = (cost_total_new >= cost_total).float()
+                mask = (cost_total_new >= cost_total).float()[None,:,None]
                 alpha = alpha * self.linesearch_decay * mask + (1-mask) * alpha
             if j > self.max_linesearch_iter:
                 print("line search failed")

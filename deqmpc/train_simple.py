@@ -5,8 +5,7 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys
-
-sys.path.insert(0, "/home/swaminathan/Workspace/qpth/")
+sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
@@ -16,32 +15,41 @@ from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
 
+def seeding(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
 def main():
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--T", type=int, default=10)
+    parser.add_argument("--T", type=int, default=3)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
     parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
+    parser.add_argument("--seed", type=int, default=0)
+
     args = parser.parse_args()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    seeding(args.seed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    args.device = device if args.device is None else args.device
 
     env = PendulumEnv(stabilization=False)
     # env = IntegratorEnv()
 
+    # gt_trajs = get_gt_data(args, env, "mpc")
     gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
-    args.Q = torch.Tensor([10.0, 1]).to(args.device)
-    args.R = torch.Tensor([1.0]).to(args.device)
+    args.Q = torch.Tensor([10.0, 0.001]).to(args.device)
+    args.R = torch.Tensor([0.001]).to(args.device)
     if args.deq:
         policy = DEQMPCPolicy(args, env).to(args.device)
     else:
@@ -64,7 +72,7 @@ def main():
         traj_sample["state"] = unnormalize_states(traj_sample["state"])
         if args.deq:
             loss = 0.0
-            trajs = policy(traj_sample["state"][:, 0])
+            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"])
             # ipdb.set_trace()
             for j, (nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = (
@@ -117,7 +125,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 1000 == 0:
+        if i % 10 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",
@@ -130,14 +138,11 @@ def main():
                 np.mean(losses_end),
             )
             losses = []
+            losses_end = []
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)
 
     torch.save(policy.state_dict(), "./model/bc_sac_pen")
-<<<<<<< HEAD
-
-=======
->>>>>>> deqmpc
 
 def unnormalize_states(nominal_states):
     # ipdb.set_trace()
