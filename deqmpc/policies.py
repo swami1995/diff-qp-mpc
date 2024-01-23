@@ -315,7 +315,7 @@ class DEQMPCPolicy(torch.nn.Module):
             trajs[k][0] (tensor T x bsz x nx): nominal states for the kth deq iteration
             trajs[k][1] (tensor T x bsz x nu): nominal actions for the kth deq iteration
         """
-        # initialize trajectory with zeros
+        # initialize trajectory with current state
         x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
         z = self.model.init_z(x.shape[0]).to(self.device)
 
@@ -347,12 +347,17 @@ class DEQMPCPolicy(torch.nn.Module):
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
             ).transpose(0, 1)
+            
+            # With QP
             nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
             nominal_states_net = x_ref.transpose(0, 1)
-            trajs.append((nominal_states_net, nominal_actions))
+            trajs.append((nominal_states, nominal_actions))
             x_ref = nominal_states.transpose(0, 1).detach().clone().reshape(bsz, -1)
-            # ipdb.set_trace()
-            # trajs.append((nominal_states_net, nominal_actions))
+
+            # Without QP, just RNN
+            # nominal_states_net = x_ref.transpose(0, 1)
+            # trajs.append((nominal_states_net, None))
+            # x_ref = nominal_states_net.transpose(0, 1).detach().clone().reshape(bsz, -1)
 
         return trajs
 
@@ -531,7 +536,7 @@ class NNPolicy(torch.nn.Module):
         self.dt = env.dt
         self.device = args.device
         self.hdim = args.hdim
-        self.output_type = 1
+        self.output_type = 0
         # output_type = 0 : output only actions
         # output_type = 1 : output only states
         # output_type = 2 : output states and actions

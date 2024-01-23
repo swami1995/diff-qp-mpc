@@ -78,43 +78,46 @@ def main():
         args = torch.load("./model/bc_sac_pen_args")
         args.device = "cpu"
         args.bsz = 1
-        args.Q = torch.Tensor([1000.0, 1000.0])
+        args.Q = torch.Tensor([100.0, 10.0])
         args.R = torch.Tensor([1.0])
         policy = NNPolicy(args, env)
         policy.load_state_dict(torch.load("./model/bc_sac_pen"))
         policy.eval()
         # test controlled dynamics
-        state = torch.Tensor([[1.9, 0.1]])
+        state = torch.Tensor([[1.8, -0.4]])
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
         state_hist = state
         torque_hist = [0.0]
-        # for i in range(170):        
-        #     _, action = policy(state)
-        #     state = env.dynamics(state, action[:, 0, 0])
-        #     state_hist = torch.cat((state_hist, state), dim=0)
-        #     torque_hist.append(action[:, 0, 0].detach().numpy()[0])
 
-        tracking_mpc = Tracking_MPC(args, env)
+        if policy.output_type == 0 or policy.output_type == 2:
+            for i in range(170):        
+                _, action = policy(state)
+                state = env.dynamics(state, action[:, 0, 0])
+                state_hist = torch.cat((state_hist, state), dim=0)
+                torque_hist.append(action[:, 0, 0].detach().numpy()[0])
+
+        if policy.output_type == 1 or policy.output_type == 3:
+            tracking_mpc = Tracking_MPC(args, env)            
+            torch.no_grad()
+            for i in range(170):        
+                x_ref, _ = policy(state)
+                xu_ref = torch.cat(
+                    [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
+                ).transpose(0, 1)
+                # ipdb.set_trace()
+                nominal_states, nominal_action = tracking_mpc(state, xu_ref)
+                print("reference states\n", x_ref)
+                print("nominal states\n", nominal_states)            
+                u = nominal_action[0, :, 0]
+
+                state = env.dynamics(state, u)
+                state_hist = torch.cat((state_hist, state), dim=0)
+                # ipdb.set_trace()
+                torque_hist.append(u.detach().numpy()[0])
+                # print(x_ref)
         
-        torch.no_grad()
-        for i in range(170):        
-            x_ref, _ = policy(state)
-            xu_ref = torch.cat(
-                [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
-            ).transpose(0, 1)
-            # ipdb.set_trace()
-            nominal_states, nominal_action = tracking_mpc(state, xu_ref)
-            print("reference states\n", x_ref)
-            print("nominal states\n", nominal_states)            
-            u = nominal_action[0, :, 0]
-
-            state = env.dynamics(state, u)
-            state_hist = torch.cat((state_hist, state), dim=0)
-            # ipdb.set_trace()
-            torque_hist.append(u.detach().numpy()[0])
-            # print(x_ref)
         theta = state_hist[:, 0].detach().numpy()
         theta_dot = state_hist[:, 1].detach().numpy()
         # ipdb.set_trace()

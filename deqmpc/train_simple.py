@@ -24,7 +24,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--T", type=int, default=3)
+    parser.add_argument("--T", type=int, default=5)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
@@ -125,7 +125,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 10 == 0:
+        if i % 100 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",
