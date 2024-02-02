@@ -351,7 +351,7 @@ class DEQMPCPolicy(torch.nn.Module):
             # With QP
             nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
             nominal_states_net = x_ref.transpose(0, 1)
-            trajs.append((nominal_states, nominal_actions))
+            trajs.append((nominal_states_net, nominal_actions))
             x_ref = nominal_states.transpose(0, 1).detach().clone().reshape(bsz, -1)
 
             # Without QP, just RNN
