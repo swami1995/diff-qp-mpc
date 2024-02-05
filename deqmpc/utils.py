@@ -62,3 +62,19 @@ def animate_integrator(env, pos, acc):
     plt.ylabel('Y Position (m)')
     plt.show()
     
+def anime_cartpole1(env, pos, force=0):
+    # animate cartpole
+    def update(frame):
+        ax.clear()
+        ax.set_xlim(-1.5, 1.5)
+        ax.set_ylim(-1.5, 1.5)
+        ax.set_aspect('equal')
+        ax.plot([pos[frame, 0], pos[frame, 0] + np.sin(pos[frame, 1])], [0, -np.cos(pos[frame, 1])], color='blue', linewidth=4)
+        if (force):
+            ax.arrow(pos[frame, 0], 0, force[frame], 0, color='green', width=0.05)
+    fig, ax = plt.subplots()
+    ani = FuncAnimation(fig, update, frames=len(pos), interval=30, repeat=True)
+    plt.title('Cartpole Animation')
+    plt.xlabel('X Position (m)')
+    plt.ylabel('Y Position (m)')
+    plt.show()

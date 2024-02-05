@@ -31,12 +31,13 @@ m_top = sympy.symbols("m_{top}")
 radii = sympy.symbols("r:" + str(n))
 inertia_vals = sympy.symbols("I:" + str(n))
 
-values = {g: 9.81, m_top: 2}
+values = {g: 9.81, m_top: 2}  # what is m_top?
 o_point = {x: 0, xd: 0, xdd: 0}
+# Absolute positions of the joints
 x0 = np.zeros(n * 2 + 2) 
 x0[0] = .0
-x0[1:n+1] = np.pi + np.linspace(-.2,.5,n)
-#x0 = np.array([0.4,0,0,0])
+x0[1:n+1] = 0*np.pi + 0*np.linspace(-0.1, 0.1, n)
+x0 = np.array([0.0,np.pi/2,0, 0, 0, 0])
 
 print(x0)
 
@@ -110,8 +111,10 @@ Lagrangian.form_lagranges_equations()
 
 M = Lagrangian.mass_matrix_full
 K = Lagrangian.forcing_full
+import ipdb; ipdb.set_trace()
 M = M.subs(values)
 K = K.subs(values)
+
 
 print("State vector length is: {}".format(2 * n + 2))
 
@@ -157,6 +160,7 @@ print("Controllability is {}".format(ctrlblty))
 
 # Nonlinear cont. dynamics
 def nonlin_dynamics(x, u):
+    # import ipdb; ipdb.set_trace()
     dxdt = np.linalg.solve(M_lambd(*x, u), K_lambd(*x, u))
     return dxdt.T[0]     
 
@@ -184,7 +188,7 @@ t = np.arange(0,time,dt)
 x = 1*x0
 soltn = np.zeros((int(time/dt), 2 * n + 2))
 for i in range(len(t)):
-    u = np.dot(gains,(ref-x))  # LQR control law
+    u = 0*np.dot(gains,(ref-x))  # LQR control law
     # import pdb; pdb.set_trace()
     x = rk4(nonlin_dynamics, x, u, .05)
     soltn[i] = 1*x
@@ -238,7 +242,7 @@ def init():
 def animate(i):
     #line.set_data(xl[:,i], yl[:,i])
     linef.set_data(xf[:,i], yf[:,i])
-    cart.set_data(xf[0,i], yf[0,i])
+    # cart.set_data(xf[0,i], yf[0,i])
     # draw the cart at xf[0,i] and yf[0,i]
     return line, linef
 
