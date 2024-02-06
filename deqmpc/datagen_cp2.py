@@ -28,7 +28,7 @@ class CartpoleExpert:
         self.type = type
 
         if self.type == "mpc":
-            self.T = 60
+            self.T = 70
             self.goal_state = torch.Tensor([0.0, np.pi/2, 0.0, 0.0, 0.0, 0.0])
             self.goal_weights = torch.Tensor([1.0, 1.0, 1.0, 1, 1, 1])
             self.ctrl_penalty = 1e0
