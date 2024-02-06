@@ -365,7 +365,7 @@ class DEQMPCPolicy(torch.nn.Module):
             trajs[k][0] (tensor T x bsz x nx): nominal states for the kth deq iteration
             trajs[k][1] (tensor T x bsz x nu): nominal actions for the kth deq iteration
         """
-        # initialize trajectory with zeros
+        # initialize trajectory with current state
         x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
         # x_ref = x_gt.view(x_ref.shape)
         z = self.model.init_z(x.shape[0]).to(self.device)
@@ -579,7 +579,7 @@ class NNPolicy(torch.nn.Module):
         self.dt = env.dt
         self.device = args.device
         self.hdim = args.hdim
-        self.output_type = 1
+        self.output_type = 0
         # output_type = 0 : output only actions
         # output_type = 1 : output only states
         # output_type = 2 : output states and actions

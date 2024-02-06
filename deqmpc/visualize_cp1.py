@@ -9,8 +9,8 @@ import sys
 sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
-from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
-from datagen import get_gt_data, merge_gt_data, sample_trajectory
+from envs_v1 import OneLinkCartpoleEnv
+from deqmpc.datagen_cp1 import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import utils
@@ -32,42 +32,47 @@ def main():
     args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    env = PendulumEnv(stabilization=False)
-    # env = IntegratorEnv()
+    env = OneLinkCartpoleEnv(stabilization=False)
 
     # enum of mode of operation
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 2
+    mode = 0
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.Tensor([[1.5, 0]])
+        state = torch.Tensor([[0.0, np.pi-0.4, 0.0, 0.0]])
+        desired_state = torch.Tensor([[0.0, np.pi, 0.0, 0.0]])
         state_hist = state
-        torque = torch.Tensor([[2.]])
-        for i in range(200):        
+        torque = torch.Tensor([[0.]])
+        Kinf = torch.Tensor([[-1.246, 15.896, -0.858, 2.598]])
+        for i in range(250):        
+            torque = -1*Kinf @ (state - desired_state).T
+            print(state, torque)
             state = env.dynamics(state, torque)
             state_hist = torch.cat((state_hist, state), dim=0)
-        theta = state_hist[:, 0]
-        theta_dot = state_hist[:, 1]
+        pos = state_hist[:, :env.np]
+        vel = state_hist[:, env.np:]
 
         plt.figure()
         print(state_hist.shape)
-        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-        plt.legend()
+        plt.plot(pos, label='pos', linewidth=2.0, linestyle='-')
+        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        # plt.legend()
         plt.show()
 
     # ground truth trajectory
     if mode == 1:
-        gt_trajs = get_gt_data(args, env, "sac")
-        idx = 10
-        theta = [item[0][0] for item in gt_trajs[idx]]
-        theta_dot = [item[0][1] for item in gt_trajs[idx]]
+        gt_trajs = get_gt_data(args, env, "mpc")
+        idx = 0
+        pos = ([item[0][0:env.np] for item in gt_trajs[idx]])
+        # import ipdb; ipdb.set_trace()
+        vel = [item[0][env.np:] for item in gt_trajs[idx]]
         torque = [item[1][0] for item in gt_trajs[idx]]
-        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        pos = np.array(pos)
+        plt.plot(pos, label='theta', color='red', linewidth=2.0, linestyle='-')
+        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
         plt.show()
@@ -131,8 +136,9 @@ def main():
         # plt.ylim(-env.max_acc*1.5, env.max_acc*1.5)
         plt.show()        
 
-    utils.animate_pendulum(env, theta, torque)
+    # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
+    utils.anime_cartpole1(env, pos)
 
 if __name__ == "__main__":
     main()
