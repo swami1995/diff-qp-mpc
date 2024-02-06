@@ -354,7 +354,7 @@ class TwoLinkCartpoleDynamics(torch.nn.Module):
         """
 
         q_0, q_1, q_2, qdot_0, qdot_1, qdot_2 = state[..., 0], state[..., 1], state[..., 2], state[..., 3], state[..., 4], state[..., 5]
-        f = action.squeeze(-1)
+        f = -action.squeeze(-1)
 
         qddot_0 = (4.0*f*torch.cos(2.0*q_2)-6.0*f+
                     4.0*qdot_1**2*torch.cos(q_1)+
@@ -400,8 +400,8 @@ class TwoLinkCartpoleDynamics(torch.nn.Module):
                     (75.0*torch.cos(2.0*q_1)-550.0*torch.cos(2.0*q_2)-
                     25.0*torch.cos(2.0*q_1+2.0*q_2)+850.0)
 
-        dq = torch.stack([qdot_0, qdot_1, qdot_2, qddot_0, qddot_1, qddot_2], dim=-1)
-        return dq
+        dq = torch.stack((qdot_0, qdot_1, qdot_2, qddot_0, qddot_1, qddot_2), dim=-1)
+        return dq.reshape(state.shape)
     
     def action_clip(self, action):
         return torch.clamp(action, -self.max_force, self.max_force)
@@ -452,6 +452,8 @@ class TwoLinkCartpoleEnv:
             high = np.concatenate((np.full(self.np, np.pi), np.full(self.np, np.pi*5)))
             high[0], high[1] = 1.0, 1.0  # cart
             self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+
+        self.state = torch.Tensor([0.0, np.pi/2+0.01, 0.0, 0.0, 0.0, 0.0]) # fixed
         
         self.num_successes = 0
         return self.state.numpy()
@@ -465,10 +467,12 @@ class TwoLinkCartpoleEnv:
             tuple: A tuple containing the new state, reward, done flag, and info dict.
         """
         # action = torch.tensor([action], dtype=torch.float32)
-        action = torch.tensor(action, dtype=torch.float32)
+        action = torch.tensor(action, dtype=torch.float32)[0]
         action = self.dynamics.action_clip(action)
+        # ipdb.set_trace()
         self.state = self.dynamics(self.state, action)
         self.state = self.dynamics.state_clip(self.state)
+        # ipdb.set_trace()
         done = self.is_done()
         reward = self.get_reward(action)  # Define your reward function based on the state and action
         return self.state.numpy(), reward, done, {}
@@ -479,15 +483,10 @@ class TwoLinkCartpoleEnv:
         Returns:
             bool: True if the episode is finished, otherwise False.
         """
-        # Implement your logic for ending an episode, e.g., a time limit or reaching a goal state
-        # For demonstration, let's say an episode ends if the pendulum is upright within a small threshold
-        # ipdb.set_trace()
-        # theta, _ = self.state.unbind()
-        # theta, _ = self.state[0][0], self.state[0][1]
         x = self.state[..., 0]
-        theta = self.state[..., 1]
-        desired_angles = torch.full(theta.shape, np.pi)
-        success = (((np.abs(angle_normalize_2pi(theta)) - desired_angles) ** 2).mean() < 0.001 and (np.abs(x) < 0.01).all())
+        theta = self.state[..., 1:2]
+        desired_theta = torch.Tensor([torch.pi/2, 0])
+        success = (torch.norm(theta - desired_theta) < 0.05 and (torch.abs(x) < 0.05))
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
 
@@ -503,9 +502,11 @@ class TwoLinkCartpoleEnv:
         # as a reward, so the closer to upright (0 rad), the higher the reward.
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        angles = self.state[..., 1:self.np]
-        desired_angles = torch.full(angles.shape, np.pi)
-        return -float(((np.abs(angle_normalize_2pi(angles)) - desired_angles) ** 2).mean())
+        x = self.state[..., 0]
+        theta = self.state[..., 1:2]
+        desired_theta = torch.Tensor([np.pi/2, 0])
+        rw = torch.norm(theta - desired_theta) + (torch.abs(x))
+        return -rw
 
     def close(self):
         """
@@ -658,8 +659,8 @@ class OneLinkCartpoleEnv:
         """
         x = self.state[..., 0]
         theta = self.state[..., 1]
-        desired_theta = np.pi
-        success = (np.abs(theta - desired_theta) < 0.05 and (np.abs(x) < 0.05))
+        desired_theta = torch.pi
+        success = (torch.abs(theta - desired_theta) < 0.05 and (torch.abs(x) < 0.05))
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
 
@@ -677,8 +678,8 @@ class OneLinkCartpoleEnv:
         # theta, _ = self.state[0][0], self.state[0][1]
         x = self.state[..., 0]
         theta = self.state[..., 1]
-        desired_theta = np.pi
-        rw = np.abs(theta - desired_theta) + (np.abs(x))
+        desired_theta = torch.pi
+        rw = torch.abs(theta - desired_theta) + (torch.abs(x))
         return -rw
 
     def close(self):

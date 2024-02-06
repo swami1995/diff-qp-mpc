@@ -10,7 +10,7 @@ sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs_v1 import OneLinkCartpoleEnv
-from datagen_v1 import get_gt_data, merge_gt_data, sample_trajectory
+from deqmpc.datagen_cp1 import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import utils
