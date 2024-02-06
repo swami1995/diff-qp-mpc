@@ -31,7 +31,7 @@ class CartpoleExpert:
             self.T = 70
             self.goal_state = torch.Tensor([0.0, np.pi/2, 0.0, 0.0, 0.0, 0.0])
             self.goal_weights = torch.Tensor([1.0, 1.0, 1.0, 1, 1, 1])
-            self.ctrl_penalty = 1e0
+            self.ctrl_penalty = 1e-2
             self.mpc_eps = 1e-3
             self.linesearch_decay = 0.2
             self.max_linesearch_iter = 5
