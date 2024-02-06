@@ -81,7 +81,7 @@ def anime_cartpole1(env, pos, force=0):
 
 ####################
 import time    
-def dpc_draw(X):
+def animate_cartpole2(X):
     # get a random starting state between min state and max state
     p = {"r_1": 1.0, "r_2": 1.0}
 
