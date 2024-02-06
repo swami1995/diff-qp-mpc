@@ -132,7 +132,7 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
-    utils.anime_cartpole2(state_hist.T)
+    utils.animate_cartpole2(state_hist.T)
 
 if __name__ == "__main__":
     main()
