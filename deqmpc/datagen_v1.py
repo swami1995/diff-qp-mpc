@@ -10,7 +10,7 @@ sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 import os
-from envs_v1 import CartpoleEnv, CartpoleEnv, TwoLinkCartpoleDynamics, TwoLinkCartpoleEnv, OneLinkCartpoleEnv
+from envs_v1 import OneLinkCartpoleEnv
 from ppo_train import PPO, GaussianPolicy
 import pickle
 
@@ -28,10 +28,10 @@ class CartpoleExpert:
         self.type = type
 
         if self.type == "mpc":
-            self.T = 200
-            self.goal_state = torch.Tensor([0, np.pi, 0, 0])
-            self.goal_weights = torch.Tensor([10.0, 10.0, 1, 1])
-            self.ctrl_penalty = 0.001
+            self.T = 100
+            self.goal_state = torch.Tensor([0, np.pi, 0.0, 0])
+            self.goal_weights = torch.Tensor([1.0, 1.0, 1, 1])
+            self.ctrl_penalty = 1e0
             self.mpc_eps = 1e-3
             self.linesearch_decay = 0.2
             self.max_linesearch_iter = 5
@@ -86,8 +86,8 @@ class CartpoleExpert:
         nominal_states, nominal_actions = self.ctrl(
             state.double(), self.cost, env.dynamics
         )
-        u = torch.clamp(nominal_actions[0], self.u_lower, self.u_upper)
-        return u  # Return the first action in the optimal sequence
+        # u = torch.clamp(nominal_actions[0], self.u_lower, self.u_upper)
+        return nominal_actions[0]  # Return the first action in the optimal sequence
 
     def energy_shaping_action(self, state):
         """Compute the energy shaping action for the given state."""
@@ -101,7 +101,7 @@ class CartpoleExpert:
         return u.unsqueeze(1)
 
 
-def get_2lcartpole_expert_traj_mpc(env, num_traj):
+def get_1lcartpole_expert_traj_mpc(env, num_traj):
     """
     Get expert trajectories for cartpole environment using MPC for trajectory optimization.
     Args:
@@ -122,10 +122,11 @@ def get_2lcartpole_expert_traj_mpc(env, num_traj):
                 torch.tensor(state, dtype=torch.float32).view(1, -1)
             )
             # ipdb.set_trace()
+            print(state, action)
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()[0]))
-            state = next_state[0]
-            ipdb.set_trace()
+            state = next_state*1
+            # print(state, action)
             # if len(traj) > 100:
             #     ipdb.set_trace()
             print(len(traj))
@@ -134,7 +135,7 @@ def get_2lcartpole_expert_traj_mpc(env, num_traj):
     return trajectories
 
 
-def get_2lcartpole_expert_traj_ppo(env, num_traj):
+def get_1lcartpole_expert_traj_ppo(env, num_traj):
     """
     Get expert trajectories for cartpole environment using the saved PPO checkpoint."""
     state_dim = env.observation_space.shape[0]
@@ -189,7 +190,7 @@ def get_2lcartpole_expert_traj_ppo(env, num_traj):
     return trajectories
 
 
-def get_2lcartpole_expert_traj_sac(env, num_traj):
+def get_1lcartpole_expert_traj_sac(env, num_traj):
     """
     Get expert trajectories for cartpole environment using the saved PPO checkpoint."""
     device = torch.device("cuda" if False else "cpu")
@@ -239,13 +240,13 @@ def save_expert_traj(env, num_traj, type="mpc"):
     """
 
     ## use env name to choose which function to use to get expert trajectories
-    if env.spec_id == "Cartpole-v0" or env.spec_id == "Cartpole-v0-stabilize":
+    if env.spec_id == "OneLinkCartpole-v0" or env.spec_id == "OneLinkCartpole-v0-stabilize":
         if type == "mpc":
-            expert_traj = get_2lcartpole_expert_traj_mpc(env, num_traj)
+            expert_traj = get_1lcartpole_expert_traj_mpc(env, num_traj)
         elif type == "ppo":
-            expert_traj = get_2lcartpole_expert_traj_ppo(env, num_traj)
+            expert_traj = get_1lcartpole_expert_traj_ppo(env, num_traj)
         elif type == "sac":
-            expert_traj = get_2lcartpole_expert_traj_sac(env, num_traj)
+            expert_traj = get_1lcartpole_expert_traj_sac(env, num_traj)
     else:
         raise NotImplementedError            
 
@@ -267,8 +268,8 @@ def get_gt_data(args, env, type="mpc"):
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
-    # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "rb") as f:
+    with open('data/expert_traj_mpc-OneLinkCartpole-v0-stabilize_new.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     return gt_trajs
@@ -370,7 +371,7 @@ def test_qp_mpc(env):
 if __name__ == "__main__":
     print("Starting!")
     # ipdb.set_trace()
-    env = OneLinkCartpoleEnv(1, stabilization=True)
+    env = OneLinkCartpoleEnv(stabilization=True)
     # env = IntegratorEnv()
     save_expert_traj(env, 1, "mpc")
     # test_qp_mpc(env)

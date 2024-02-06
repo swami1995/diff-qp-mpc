@@ -1,70 +1,85 @@
-import numpy as np
-import matplotlib.pyplot as plt
+# You are free to use, modify, copy, distribute the code.
+# Please give a clap on medium, star on github, or share the article if you
+# like.
+# Created by Jonas, github.com/jkoendev
 
-def cartpole1_dynamics(state, t, u, params):
-    M, m1, l1, g = params["M"], params["m1"], params["l1"], params["g"]
-    x, theta1, dx, dtheta1 = state
+# Double pendulum on a cart (dpc) simulation code
+#
+# This file generates the model from symbolic expressions and generates a
+# file with the name `dpc_dynamics_generated.py`
 
-    # cos_theta0 = np.cos(theta0)
-    
-    # M = np.array([
-    #     [1, 0, 0, 0],
-    #     [0, 1, 0, 0],
-    #     [0, 0, m0 + m0, m0 * r0 * cos_theta0],
-    #     [0, 0, m0 * r0 * cos_theta0, I0 + m0 * r0**2]
-    # ])
-    M = np.array([
-        [1, 0, 0, 0,],
-        [0, 1, 0, 0,],
-        [0, 0, m1, 0,],
-        [0, 0, 0, m1 * l1**2,]
+import sympy
+from sympy import sin, cos, simplify
+from sympy import symbols as syms
+from sympy.matrices import Matrix
+from sympy.utilities.lambdify import lambdastr
 
-def simulate_cartpole(initial_state, total_time, control_input, params):
-    """
-    Simulate the 2-link cartpole system using Euler's method.
-    Args:
-        initial_state (list): Initial state [x, theta1, theta2, dx, dtheta1, dtheta2]
-        total_time (float): Total simulation time
-        control_input (function): Control input as a function of time
-        params (dict): System parameters (M, m1, m2, l1, l2, g)
 
-    Returns:
-        time (numpy array): Time array
-        states (numpy array): State trajectory over time
-    """
-    dt = 0.01  # Time step
-    num_steps = int(total_time / dt)
+# state, state derivative, and control variables
+q_0, q_1, q_2, qdot_0, qdot_1, qdot_2, qddot_0, qddot_1, qddot_2, f = syms('q_0 q_1 q_2 qdot_0 qdot_1 qdot_2 qddot_0 qddot_1 qddot_2 f')
 
-    time = np.linspace(0, total_time, num_steps)
-    states = np.zeros((num_steps, len(initial_state)))
-    states[0, :] = initial_state
+# parameters
+r_1, r_2, m_c, m_1, m_2, g = syms('r_1 r_2 m_c m_1 m_2 g')
 
-    for i in range(1, num_steps):
-        u = control_input(time[i])
-        derivatives = cartpole_dynamics(states[i - 1, :], time[i - 1], u, params)
-        states[i, :] = states[i - 1, :] + np.array(derivatives) * dt
+p = Matrix([r_1, r_2, m_c, m_1, m_2, g])      # parameter vector
 
-    return time, states
+q = Matrix([q_0, q_1, q_2])                   # generalized positions
+qdot = Matrix([qdot_0, qdot_1, qdot_2])       # time derivative of q
+qddot = Matrix([qddot_0, qddot_1, qddot_2])   # time derivative of qdot
 
-# Define system parameters
-params = {'M': 1.0, 'm1': 0.1, 'm2': 0.1, 'l1': 1.0, 'l2': 1.0, 'g': 9.8}
+# To calculate time derivatives of a function f(q), we use:
+# df(q)/dt = df(q)/dq * dq/dt = df(q)/dq * qdot
 
-# Define initial state [x, theta1, theta2, dx, dtheta1, dtheta2]
-initial_state = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+# kinematics:
+p_c = Matrix([q_0, 0])
+p_1 = p_c + r_1/2 * Matrix([cos(q_1), sin(q_1)])
+p_2 = p_c + r_1 * Matrix([cos(q_1), sin(q_1)]) + r_2/2 * Matrix([cos(q_1+q_2), sin(q_1+q_2)])
 
-# Define a simple control input function (you can replace this with your own controller)
-def control_input(t):
-    return 0.0
+v_c = p_c.jacobian(Matrix([q_0])) * Matrix([qdot_0])
+v_1 = p_1.jacobian(Matrix([q_0, q_1])) * Matrix([qdot_0, qdot_1])
+v_2 = p_2.jacobian(Matrix([q_0, q_1, q_2])) * Matrix([qdot_0, qdot_1, qdot_2])
 
-# Simulate the system
-total_time = 10.0
-time, states = simulate_cartpole(initial_state, total_time, control_input, params)
+K_c = m_c * v_c.T*v_c / 2
+K_1 = m_1 * v_1.T*v_1 / 2
+K_2 = m_2 * v_2.T*v_2 / 2
 
-# Plot the results
-plt.plot(time, states[:, 0], label='Cart Position')
-plt.plot(time, states[:, 1], label='Theta1')
-plt.plot(time, states[:, 2], label='Theta2')
-plt.xlabel('Time (s)')
-plt.ylabel('State Variables')
-plt.legend()
-plt.show()
+P_1 = Matrix([m_1 * g * p_1[1]])
+P_2 = Matrix([m_2 * g * p_2[1]])
+
+# dynamics:
+
+# Lagrangian L=sum(K)-sum(P)
+L = K_c + K_1 + K_2 - P_1 - P_2
+
+# first term in the Euler-Lagrange equation
+partial_L_by_partial_q = L.jacobian(Matrix([q])).T
+
+# inner term of the second part of the Euler-Lagrange equation
+partial_L_by_partial_qdot = L.jacobian(Matrix([qdot]))
+
+# second term (overall, time derivative) in the Euler-Lagrange equation
+# applies the chain rule
+d_inner_by_dt = partial_L_by_partial_qdot.jacobian(Matrix([q])) * qdot + partial_L_by_partial_qdot.jacobian(Matrix([qdot])) * qddot
+
+# Euler-Lagrange equation
+lagrange_eq = partial_L_by_partial_q - d_inner_by_dt + Matrix([f,0,0])
+
+# solve the lagrange equation for qddot and simplify
+print("Calculations take a while...")
+r = sympy.solvers.solve(simplify(lagrange_eq), Matrix([qddot]))
+
+qddot_0 = simplify(r[qddot_0]);
+qddot_1 = simplify(r[qddot_1]);
+qddot_2 = simplify(r[qddot_2]);
+
+print('qddot_0 = {}\n'.format(qddot_0));
+print('qddot_1 = {}\n'.format(qddot_1));
+print('qddot_2 = {}\n'.format(qddot_2));
+
+# generate python function
+s = lambdastr((q_0, q_1, q_2, qdot_0, qdot_1, qdot_2, f, r_1, r_2, m_c, m_1, m_2, g),
+              [qdot_0, qdot_1, qdot_2, qddot_0, qddot_1, qddot_2])
+
+f_gen = open("dpc_dynamics_generated.py", 'w')
+f_gen.write("import math\ndef dpc_dynamics_generated(q_0, q_1, q_2, qdot_0, qdot_1, qdot_2, f, r_1, r_2, m_c, m_1, m_2, g):\n\tfun="+s+"\n\treturn fun(q_0, q_1, q_2, qdot_0, qdot_1, qdot_2, f, r_1, r_2, m_c, m_1, m_2, g)")
+f_gen.close()

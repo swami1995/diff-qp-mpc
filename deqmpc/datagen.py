@@ -125,7 +125,7 @@ def get_pendulum_expert_traj_mpc(env, num_traj):
             next_state, _, done, _ = env.step(action)
             traj.append((state, action.numpy()[0]))
             state = next_state[0]
-            ipdb.set_trace()
+            # ipdb.set_trace()
             # if len(traj) > 100:
             #     ipdb.set_trace()
             print(len(traj))
@@ -485,5 +485,5 @@ if __name__ == "__main__":
     # ipdb.set_trace()
     env = PendulumEnv(stabilization=False)
     # env = IntegratorEnv()
-    save_expert_traj(env, 300, "sac")
+    save_expert_traj(env, 1, "mpc")
     # test_qp_mpc(env)

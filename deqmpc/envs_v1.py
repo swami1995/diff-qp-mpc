@@ -8,8 +8,8 @@ from sympy.physics import mechanics
 import ipdb
 
 
-def angle_normalize(x):
-    return (((x+np.pi) % (2*np.pi)) - np.pi)
+def angle_normalize_2pi(x):
+    return (((x) % (2*np.pi)))
 
 class Spaces:
     def __init__(self, low, high, shape):
@@ -200,20 +200,8 @@ class CartpoleDynamics(torch.nn.Module):
         return torch.clamp(action, -self.max_force, self.max_force)
     
     def state_clip(self, state):
-        state[..., 1:self.np] = angle_normalize(state[..., 1:self.np])
+        state[..., 1:self.np] = angle_normalize_2pi(state[..., 1:self.np])
         return state
-    
-def angle_normalize(x):
-    return (((x+np.pi) % (2*np.pi)) - np.pi)
-
-class Spaces:
-    def __init__(self, low, high, shape):
-        self.low = low
-        self.high = high
-        self.shape = shape
-    
-    def sample(self):
-        return np.random.uniform(self.low, self.high)
 
 
 class CartpoleEnv:
@@ -292,7 +280,7 @@ class CartpoleEnv:
         # theta, _ = self.state[0][0], self.state[0][1]
         angles = self.state[..., 1:self.np]
         desired_angles = torch.full(angles.shape, np.pi)
-        success = ((np.abs(angle_normalize(angles)) - desired_angles) ** 2).mean() < 0.01
+        success = ((np.abs(angle_normalize_2pi(angles)) - desired_angles) ** 2).mean() < 0.01
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
 
@@ -310,7 +298,7 @@ class CartpoleEnv:
         # theta, _ = self.state[0][0], self.state[0][1]
         angles = self.state[..., 1:self.np]
         desired_angles = torch.full(angles.shape, np.pi)
-        return -float(((np.abs(angle_normalize(angles)) - desired_angles) ** 2).mean())
+        return -float(((np.abs(angle_normalize_2pi(angles)) - desired_angles) ** 2).mean())
 
     def close(self):
         """
@@ -322,7 +310,9 @@ class CartpoleEnv:
 ###########################
 # 2-link cartpole dynamics
 ###########################
-
+    
+# https://openocl.github.io/tutorials/tutorial-01-modeling-double-cartpole/
+    
 class TwoLinkCartpoleDynamics(torch.nn.Module):
     def __init__(self):
         '''
@@ -330,9 +320,9 @@ class TwoLinkCartpoleDynamics(torch.nn.Module):
         '''
         super().__init__()
         self.dt = 0.05
-        self.max_force = 3.0        
+        self.max_force = 5.0        
         self.g = 9.81
-        self.M = 2.
+        self.M = 5.
         self.m1 = 1.
         self.m2 = 1.
         self.l1 = 1. 
@@ -363,48 +353,62 @@ class TwoLinkCartpoleDynamics(torch.nn.Module):
         angle from downward, anti-clockwise is positive
         """
 
-        M, m1, m2, l1, l2, g = self.M, self.m1, self.m2, self.l1, self.l2, self.g
-        x, theta1, theta2, dx, dtheta1, dtheta2 = state[..., 0], state[..., 1], state[..., 2], state[..., 3], state[..., 4], state[..., 5]
-        u = action.squeeze(-1)
+        q_0, q_1, q_2, qdot_0, qdot_1, qdot_2 = state[..., 0], state[..., 1], state[..., 2], state[..., 3], state[..., 4], state[..., 5]
+        f = action.squeeze(-1)
 
-        derivatives = torch.stack([
-            dx,
-            dtheta1,
-            dtheta2,
-            (m2*l1*dtheta1**2*torch.sin(theta2) + m2*l2*dtheta2**2*torch.sin(theta2) +
-            (m1 + m2)*g*torch.sin(theta1) + u) /
-            (M + m1*torch.sin(theta1)**2 + m2*(torch.sin(theta1)**2 + torch.sin(theta2)**2)),
-            (-m2*l2*dtheta2**2*torch.sin(theta2) - (m1 + m2)*g*torch.sin(theta1)*torch.cos(theta1) -
-            (M + m1)*g*torch.sin(theta1) + (M + m1)*u*torch.cos(theta1)) /
-            (l1*(M + m1*torch.sin(theta1)**2 + m2*(torch.sin(theta1)**2 + torch.sin(theta2)**2))),
-            (m1 + m2)*(M + m1)*l1*dtheta1**2*torch.sin(theta2) +
-            m2*l2*dtheta2**2*torch.sin(theta2)*torch.cos(theta2) +
-            (m1 + m2)*g*torch.sin(theta1)*torch.cos(theta2) +
-            (M + m1)*u*torch.cos(theta2) /
-            (l2*(M + m1*torch.sin(theta1)**2 + m2*(torch.sin(theta1)**2 + torch.sin(theta2)**2)))
-        ], dim=-1)
+        qddot_0 = (4.0*f*torch.cos(2.0*q_2)-6.0*f+
+                    4.0*qdot_1**2*torch.cos(q_1)+
+                    qdot_1**2*torch.cos(q_1-q_2)-
+                    qdot_1**2*torch.cos(q_1+2.0*q_2)+
+                    2.0*qdot_1*qdot_2*torch.cos(q_1-q_2)+
+                    qdot_2**2*torch.cos(q_1-q_2)-
+                    29.43*torch.sin(2.0*q_1)+
+                    9.81*torch.sin(2.0*q_1+2.0*q_2)) / \
+                    (3.0*torch.cos(2.0*q_1)-22.0*torch.cos(2.0*q_2)-
+                    torch.cos(2.0*q_1+2.0*q_2)+34.0)
+        qddot_1 = (-8.0*f*torch.sin(q_1)+4.0*f*torch.sin(q_1+2.0*q_2)+
+                    3.0*qdot_1**2*torch.sin(2.0*q_1)+
+                    23.0*qdot_1**2*torch.sin(q_2)+
+                    22.0*qdot_1**2*torch.sin(2.0*q_2)+
+                    qdot_1**2*torch.sin(2.0*q_1+q_2)+
+                    46.0*qdot_1*qdot_2*torch.sin(q_2)+
+                    2.0*qdot_1*qdot_2*torch.sin(2.0*q_1+q_2)+
+                    23.0*qdot_2**2*torch.sin(q_2)+
+                    qdot_2**2*torch.sin(2.0*q_1+q_2)-
+                    490.5*torch.cos(q_1)+
+                    215.82*torch.cos(q_1+2.0*q_2)) / \
+                    (3.0*torch.cos(2.0*q_1)-
+                    22.0*torch.cos(2.0*q_2)-
+                    torch.cos(2.0*q_1+2.0*q_2)+34.0)
+        qddot_2 = -((100.0*qdot_1**2*torch.sin(q_2)+
+                    981.0*torch.cos(q_1+q_2)) *
+                    (-(3.0*torch.sin(q_1)+
+                        torch.sin(q_1+q_2))**2+
+                    28.0*torch.cos(q_2)+42.0)+
+                    0.5*(200.0*qdot_1*qdot_2*torch.sin(q_2)+
+                        100.0*qdot_2**2*torch.sin(q_2)-
+                        2943.0*torch.cos(q_1)-
+                        981.0*torch.cos(q_1+q_2))*
+                    (25.0*torch.cos(q_2)+3.0*torch.cos(2.0*q_1+q_2)+
+                    torch.cos(2.0*q_1+2.0*q_2)+13.0)+
+                    50.0*(2.0*torch.sin(q_1)+3.0*torch.sin(q_1-q_2)-
+                    2.0*torch.sin(q_1+q_2)-torch.sin(q_1+2.0*q_2))*
+                    (-2.0*f+3.0*qdot_1**2*torch.cos(q_1)+
+                    qdot_1**2*torch.cos(q_1+q_2)+
+                    2.0*qdot_1*qdot_2*torch.cos(q_1+q_2)+
+                    qdot_2**2*torch.cos(q_1+q_2))) / \
+                    (75.0*torch.cos(2.0*q_1)-550.0*torch.cos(2.0*q_2)-
+                    25.0*torch.cos(2.0*q_1+2.0*q_2)+850.0)
 
-        return derivatives
+        dq = torch.stack([qdot_0, qdot_1, qdot_2, qddot_0, qddot_1, qddot_2], dim=-1)
+        return dq
     
     def action_clip(self, action):
         return torch.clamp(action, -self.max_force, self.max_force)
     
     def state_clip(self, state):
-        state[..., 1:self.np] = angle_normalize(state[..., 1:self.np])
+        state[..., 1:self.np] = angle_normalize_2pi(state[..., 1:self.np])
         return state
-    
-def angle_normalize(x):
-    return (((x+np.pi) % (2*np.pi)) - np.pi)
-
-class Spaces:
-    def __init__(self, low, high, shape):
-        self.low = low
-        self.high = high
-        self.shape = shape
-    
-    def sample(self):
-        return np.random.uniform(self.low, self.high)
-
 
 class TwoLinkCartpoleEnv:
     def __init__(self, n=1, stabilization=False):
@@ -439,8 +443,8 @@ class TwoLinkCartpoleEnv:
             numpy.ndarray: The initial state.
         """
         if self.stabilization:
-            high = np.concatenate((np.full(self.np, 0.1), np.full(self.np, 0.1)))
-            high[0], high[1] = 1.0, 1.0  # cart
+            high = np.concatenate((np.full(self.np, 0.05), np.full(self.np, 0.05)))
+            high[0], high[1] = 0.1, 0.1  # cart
             offset = torch.tensor([np.pi, 0.0]*self.np, dtype=torch.float32)
             offset[0], offset[1] = 0.0, 0.0  # cart
             self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32) + offset
@@ -480,9 +484,10 @@ class TwoLinkCartpoleEnv:
         # ipdb.set_trace()
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        angles = self.state[..., 1:self.np]
-        desired_angles = torch.full(angles.shape, np.pi)
-        success = ((np.abs(angle_normalize(angles)) - desired_angles) ** 2).mean() < 0.01
+        x = self.state[..., 0]
+        theta = self.state[..., 1]
+        desired_angles = torch.full(theta.shape, np.pi)
+        success = (((np.abs(angle_normalize_2pi(theta)) - desired_angles) ** 2).mean() < 0.001 and (np.abs(x) < 0.01).all())
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
 
@@ -500,7 +505,7 @@ class TwoLinkCartpoleEnv:
         # theta, _ = self.state[0][0], self.state[0][1]
         angles = self.state[..., 1:self.np]
         desired_angles = torch.full(angles.shape, np.pi)
-        return -float(((np.abs(angle_normalize(angles)) - desired_angles) ** 2).mean())
+        return -float(((np.abs(angle_normalize_2pi(angles)) - desired_angles) ** 2).mean())
 
     def close(self):
         """
@@ -518,12 +523,12 @@ class OneLinkCartpoleDynamics(torch.nn.Module):
         Initializes the cartpole dynamics
         '''
         super().__init__()
-        self.dt = 0.05
-        self.max_force = 3.0        
-        self.g = 9.81
-        self.M = 2.
-        self.m = 1.
-        self.l = 1. 
+        self.dt = 0.01
+        self.max_force = 5.0        
+        self.g = -9.81
+        self.M = 0.5
+        self.m = 0.2
+        self.l = 0.3 
         self.n = 1
         self.nx = 2*self.n + 2
         self.nu = 1
@@ -552,43 +557,36 @@ class OneLinkCartpoleDynamics(torch.nn.Module):
 
         M, m, l, g = self.M, self.m, self.l, self.g
         x, theta, dx, theta_dot = state[..., 0], state[..., 1], state[..., 2], state[..., 3]
-        theta = theta + np.pi
+
+        state_shape = state.shape
         u = action.squeeze(-1)
 
         x_ddot = (u + m * l * theta_dot**2 * torch.sin(theta) - m * g * torch.sin(theta) * torch.cos(theta)) / (M + m * torch.sin(theta)**2)
         theta_ddot = (-u * torch.cos(theta) - m * l * theta_dot**2 * torch.sin(theta) * torch.cos(theta) + (M + m) * g * torch.sin(theta)) / (l * (M + m * torch.sin(theta)**2))
-                                                                                    
-        derivatives = torch.stack([
+
+        # ipdb.set_trace()
+        
+        derivatives = torch.stack((
             dx,
             theta_dot,
             x_ddot,
             theta_ddot
-        ], dim=-1)
+        ), dim=-1)
 
-        return derivatives
+        # ipdb.set_trace()
+
+        return derivatives.reshape(state_shape)
     
     def action_clip(self, action):
         return torch.clamp(action, -self.max_force, self.max_force)
     
     def state_clip(self, state):
-        state[..., 1:self.np] = angle_normalize(state[..., 1:self.np])
+        state[..., 1:self.np] = angle_normalize_2pi(state[..., 1:self.np])
         return state
     
-def angle_normalize(x):
-    return (((x+np.pi) % (2*np.pi)) - np.pi)
-
-class Spaces:
-    def __init__(self, low, high, shape):
-        self.low = low
-        self.high = high
-        self.shape = shape
-    
-    def sample(self):
-        return np.random.uniform(self.low, self.high)
-
 
 class OneLinkCartpoleEnv:
-    def __init__(self, n=1, stabilization=False):
+    def __init__(self, stabilization=False):
         self.dynamics = OneLinkCartpoleDynamics()
         self.spec_id = 'OneLinkCartpole-v0{}'.format('-stabilize' if stabilization else '')
         self.state = None  # Will be initialized in reset
@@ -621,14 +619,16 @@ class OneLinkCartpoleEnv:
         """
         if self.stabilization:
             high = np.concatenate((np.full(self.np, 0.1), np.full(self.np, 0.1)))
-            high[0], high[2] = 1.0, 1.0  # cart
-            offset = torch.tensor([np.pi, 0.0]*self.np, dtype=torch.float32)
-            offset[0], offset[2] = 0.0, 0.0  # cart
+            high[0], high[2] = 0.1, 0.1  # cart
+            offset = torch.tensor([0, np.pi, 0, 0.0], dtype=torch.float32)
             self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32) + offset
+            self.state = self.state
         else:
             high = np.concatenate((np.full(self.np, np.pi), np.full(self.np, np.pi*5)))
             high[0], high[2] = 1.0, 1.0  # cart
             self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+        
+        self.state = torch.Tensor([0.0, np.pi-0.9, 0.0, 0.0])
         
         self.num_successes = 0
         return self.state.numpy()
@@ -642,7 +642,7 @@ class OneLinkCartpoleEnv:
             tuple: A tuple containing the new state, reward, done flag, and info dict.
         """
         # action = torch.tensor([action], dtype=torch.float32)
-        action = torch.tensor(action, dtype=torch.float32)
+        action = torch.tensor(action, dtype=torch.float32)[0]
         action = self.dynamics.action_clip(action)
         self.state = self.dynamics(self.state, action)
         self.state = self.dynamics.state_clip(self.state)
@@ -656,14 +656,10 @@ class OneLinkCartpoleEnv:
         Returns:
             bool: True if the episode is finished, otherwise False.
         """
-        # Implement your logic for ending an episode, e.g., a time limit or reaching a goal state
-        # For demonstration, let's say an episode ends if the pendulum is upright within a small threshold
-        # ipdb.set_trace()
-        # theta, _ = self.state.unbind()
-        # theta, _ = self.state[0][0], self.state[0][1]
-        angles = self.state[..., 1:self.np]
-        desired_angles = torch.full(angles.shape, np.pi)
-        success = ((np.abs(angle_normalize(angles)) - desired_angles) ** 2).mean() < 0.01
+        x = self.state[..., 0]
+        theta = self.state[..., 1]
+        desired_theta = np.pi
+        success = (np.abs(theta - desired_theta) < 0.05 and (np.abs(x) < 0.05))
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
 
@@ -679,9 +675,11 @@ class OneLinkCartpoleEnv:
         # as a reward, so the closer to upright (0 rad), the higher the reward.
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        angles = self.state[..., 1:self.np]
-        desired_angles = torch.full(angles.shape, np.pi)
-        return -float(((np.abs(angle_normalize(angles)) - desired_angles) ** 2).mean())
+        x = self.state[..., 0]
+        theta = self.state[..., 1]
+        desired_theta = np.pi
+        rw = np.abs(theta - desired_theta) + (np.abs(x))
+        return -rw
 
     def close(self):
         """

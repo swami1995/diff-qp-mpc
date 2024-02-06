@@ -10,7 +10,7 @@ sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs_v1 import OneLinkCartpoleEnv
-from datagen import get_gt_data, merge_gt_data, sample_trajectory
+from datagen_v1 import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import utils
@@ -42,10 +42,14 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.Tensor([[1.0, np.pi+0.1, 0.0, 0.0]])
+        state = torch.Tensor([[0.0, np.pi-0.1, 0.0, 0.0]])
+        desired_state = torch.Tensor([[0.0, np.pi, 0.0, 0.0]])
         state_hist = state
         torque = torch.Tensor([[0.]])
-        for i in range(200):        
+        Kinf = torch.Tensor([[-0.246, 15.896, -0.858, 2.598]])
+        for i in range(2):        
+            torque = -1*Kinf @ (state - desired_state).T
+            print(state, torque)
             state = env.dynamics(state, torque)
             state_hist = torch.cat((state_hist, state), dim=0)
         pos = state_hist[:, :env.np]
@@ -60,13 +64,15 @@ def main():
 
     # ground truth trajectory
     if mode == 1:
-        gt_trajs = get_gt_data(args, env, "sac")
-        idx = 10
-        theta = [item[0][0] for item in gt_trajs[idx]]
-        theta_dot = [item[0][1] for item in gt_trajs[idx]]
+        gt_trajs = get_gt_data(args, env, "mpc")
+        idx = 0
+        pos = ([item[0][0:env.np] for item in gt_trajs[idx]])
+        # import ipdb; ipdb.set_trace()
+        vel = [item[0][env.np:] for item in gt_trajs[idx]]
         torque = [item[1][0] for item in gt_trajs[idx]]
-        plt.plot(theta, label='theta', color='red', linewidth=2.0, linestyle='-')
-        plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        pos = np.array(pos)
+        plt.plot(pos, label='theta', color='red', linewidth=2.0, linestyle='-')
+        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
         plt.plot(torque, label='torque', color='green', linewidth=2.0, linestyle='--')
         plt.legend()
         plt.show()

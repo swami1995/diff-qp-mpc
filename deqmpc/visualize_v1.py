@@ -42,7 +42,7 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.Tensor([[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]])
+        state = torch.Tensor([[0.0, -np.pi/2+0.1, 0.0, 0.0, 0.0, 0.0]])
         state_hist = state
         torque = torch.Tensor([[0.]])
         for i in range(200):        
@@ -132,6 +132,7 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
+    utils.dpc_draw(state_hist.T)
 
 if __name__ == "__main__":
     main()

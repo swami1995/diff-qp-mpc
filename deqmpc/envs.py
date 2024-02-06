@@ -129,7 +129,7 @@ class PendulumEnv:
         # ipdb.set_trace()
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        theta, _ = self.state[0], self.state[1]
+        theta, _ = self.state[...,0], self.state[...,1]
         success = abs(angle_normalize(theta)) < 0.05
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
@@ -146,7 +146,7 @@ class PendulumEnv:
         # as a reward, so the closer to upright (0 rad), the higher the reward.
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        theta, _ = self.state[0], self.state[1]
+        theta, _ = self.state[...,0], self.state[...,1]
         return -float(angle_normalize(theta) ** 2)
 
     def close(self):
