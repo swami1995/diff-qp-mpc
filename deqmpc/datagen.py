@@ -277,7 +277,7 @@ def get_gt_data(args, env, type="mpc"):
     return gt_trajs
 
 
-def merge_gt_data(gt_trajs):
+def merge_gt_data(gt_trajs, num_trajs=2):
     """
     Merge ground truth data for imitation learning.
     Args:
@@ -286,7 +286,9 @@ def merge_gt_data(gt_trajs):
         A list of (state, action) tuples.
     """
     merged_gt_traj = {"state": [], "action": [], "mask": []}
-    for traj in gt_trajs:
+    for i, traj in enumerate(gt_trajs):
+        # if i >= num_trajs:
+        #     break
         for state, action in traj:
             merged_gt_traj["state"].append(state)
             merged_gt_traj["action"].append(action)

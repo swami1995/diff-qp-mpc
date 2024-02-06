@@ -4,13 +4,16 @@ import time
 import numpy as np
 import torch
 import torch.autograd as autograd
-import sys
+import sys, os
 sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
+
+# import tensorboard from pytorch
+from torch.utils.tensorboard import SummaryWriter
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
@@ -36,11 +39,25 @@ def main():
     parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--name", type=str, default=None)
+    parser.add_argument("--save", action="store_true")
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--layer_type", type=str, default='mlp')
+    parser.add_argument("--kernel_width", type=int, default=3)
+    parser.add_argument("--pretrain", action="store_true")
+    parser.add_argument("--lastqp_solve", action="store_true")
+    parser.add_argument("--qp_solve", action="store_true")
+    parser.add_argument("--pooling", type=str, default="mean")
 
     args = parser.parse_args()
     seeding(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     args.device = device if args.device is None else args.device
+    if args.save:
+        if not os.path.exists("./logs/" + args.name):
+            os.makedirs("./logs/" + args.name)
+        args.name = args.name + f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_np{args.np}"
+        writer = SummaryWriter("./logs/" + args.name)
 
     env = PendulumEnv(stabilization=False)
     # env = IntegratorEnv()
@@ -48,38 +65,42 @@ def main():
     # gt_trajs = get_gt_data(args, env, "mpc")
     gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
-    args.Q = torch.Tensor([10.0, 0.001]).to(args.device)
+    args.Q = torch.Tensor([10.0, 1.00]).to(args.device)
     args.R = torch.Tensor([0.001]).to(args.device)
     if args.deq:
         policy = DEQMPCPolicy(args, env).to(args.device)
+        # save arguments
+        if args.save:
+            torch.save(args, "./logs/" + args.name + "/args")
     else:
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
         # save arguments
         torch.save(args, "./model/bc_sac_pen_args")
-    # ipdb.set_trace()
+        
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
     losses_end = []
 
     # run imitation learning using gt_trajs
-    for i in range(10000):
+    for i in range(5000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
 
-        # ipdb.set_trace()
         traj_sample["state"] = unnormalize_states(traj_sample["state"])
+        iter_qp_solve = False if (i < 1000 or not args.pretrain) else True
+        qp_solve = iter_qp_solve and args.qp_solve # warm start only after 1000 iterations
+        lastqp_solve = args.lastqp_solve and iter_qp_solve
         if args.deq:
             loss = 0.0
-            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"])
-            # ipdb.set_trace()
-            for j, (nominal_states, nominal_actions) in enumerate(trajs):
+            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
+            for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = (
                     torch.abs(
                         (
                             nominal_states.transpose(0, 1) - traj_sample["state"]
-                        )  # [:, 1:])
+                        )
                         * traj_sample["mask"][:, :, None]
                     )
                     .sum(dim=-1)
@@ -88,7 +109,7 @@ def main():
                 loss += loss_j
             loss_end = (
                 torch.abs(
-                    (nominal_states.transpose(0, 1) - traj_sample["state"])  # [:, 1:])
+                    (nominal_states.transpose(0, 1) - traj_sample["state"])
                     * traj_sample["mask"][:, :, None]
                 )
                 .sum(dim=-1)
@@ -97,7 +118,6 @@ def main():
         else:
             loss = 0.0
             nominal_states, nominal_actions = policy(traj_sample["state"][:, 0])
-            # ipdb.set_trace()
             if policy.output_type == 0 or policy.output_type == 2:
                 loss += (
                     torch.abs(
@@ -137,12 +157,18 @@ def main():
                 "loss_end: ",
                 np.mean(losses_end),
             )
+            if args.save:
+                torch.save(policy.state_dict(), "./model/" + args.name)
+                writer.add_scalar("losses/loss_avg", np.mean(losses) / args.deq_iter, i)
+                writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
+
+            
             losses = []
             losses_end = []
             # print('nominal states: ', nominal_states)
-            # print('nominal actions: ', nominal_actions)
+            # print('nominal actions: ', nominal_actions)   
 
-    torch.save(policy.state_dict(), "./model/bc_sac_pen")
+    # torch.save(policy.state_dict(), "./model/bc_sac_pen")
 
 def unnormalize_states(nominal_states):
     # ipdb.set_trace()
