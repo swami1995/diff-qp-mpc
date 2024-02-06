@@ -1,9 +1,12 @@
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.autograd as autograd
 import qpth.qp_wrapper as mpc
 import ipdb
-
+# from torch_geometric.nn import GCNConv, global_mean_pool
+import torch.nn.functional as F
+# from policy_utils import SinusoidalPosEmb
 
 class DEQPolicy(torch.nn.Module):
     def __init__(self, args, env):
@@ -158,7 +161,15 @@ class DEQPolicy(torch.nn.Module):
 #       - Note : don't do parameter sharing between the nodes in gnn - the sequential order is important and maybe keeping the parameters somewhat separate is a good idea.
 #       - but with limited data - parameter sharing might be a good idea - so maybe some sort of hybrid?
 # 4. Make recurrence flexible - fixed point or whatever
-
+# 5. Options for diffing through only fixed point, computing fixed point and other losses. 
+#       - Only penalize the fixed point but train the network for the rest as well.
+#       - Anderson/Broyden based fixed point solves
+# 5. Figure out the collocation stuff 
+#       - Is there a simpler/cleaner way to handle the initial deq iterations? - maybe we should try to satisfy the constraints exactly only if the network outputs are actually close enough to the constraint manifold
+# 6. Complexity analysis
+# 7. Write other solvers - Autmented lagrangian or ADMM or whatever
+# 8. Confidences for each knot point - for the Q cost coefficient. - There should again probably be some TD component to the cost coefficient too. 
+        
 
 class DEQLayer(torch.nn.Module):
     def __init__(self, args, env):
@@ -170,21 +181,25 @@ class DEQLayer(torch.nn.Module):
         self.dt = env.dt
         self.T = args.T
         self.hdim = args.hdim
-        self.layer_type = "mlp"  # args.layer_type
+        self.layer_type = args.layer_type
         self.inp_type = ""  # args.inp_type
         self.out_type = ""  # args.out_type
+        self.kernel_width = args.kernel_width
+        self.pooling = args.pooling
+        self.deq_expand = 4
+        self.kernel_width_out = 1
 
-        self.inp_layer = self.get_input_layer()
+        self.setup_input_layer()
         self.setup_deq_layer()
-        self.out_layer = self.get_output_layer()
+        self.setup_output_layer()
 
     def forward(self, x, z):
         """
         compute the policy output for the given state x
         """
-        xinp = self.inp_layer(x)
+        xinp = self.input_layer(x)
         z_out = self.deq_layer(xinp, z)
-        dx_ref = self.out_layer(z_out)
+        dx_ref = self.output_layer(z_out)
         dx_ref = dx_ref.view(-1, self.T - 1, self.np)
         np = 1 # self.np
         vel_ref = dx_ref[..., np:]
@@ -192,6 +207,19 @@ class DEQLayer(torch.nn.Module):
         x_ref = torch.cat([dx_ref + x[:,None,:np], vel_ref], dim=-1)
         return x_ref, z_out
 
+    def input_layer(self, x):
+        if self.layer_type == "mlp":
+            inp = self.inp_layer(x)
+        elif self.layer_type == "gcn":
+            t = self.time_emb.unsqueeze(0).repeat(x.shape[0], 1, 1)
+            x = x.reshape(-1, self.T, self.nx)
+            x_emb = self.node_encoder(x)
+            x0_emb = self.x0_encoder(x[:,0]).unsqueeze(1).repeat(1, self.T, 1)
+            inp = torch.cat([x_emb, x0_emb, t], dim=-1)
+            inp = self.input_encoder(inp)
+        elif self.layer_type == "gat":
+            NotImplementedError
+        return inp
     def deq_layer(self, x, z):
         if self.layer_type == "mlp":
             z = self.fcdeq1(z)
@@ -199,15 +227,39 @@ class DEQLayer(torch.nn.Module):
             z = self.lndeq1(z)
             out = self.lndeq3(self.reludeq2(z + self.lndeq2(x + self.fcdeq2(z))))
         elif self.layer_type == "gcn":
-            raise NotImplementedError
+            z = z.view(-1, self.T, self.hdim)
+            z = self.convdeq1(z.permute(0, 2, 1))
+            z = self.mishdeq1(z)
+            z = self.gndeq1(z)
+            out = self.gndeq3(self.mishdeq2(z + self.gndeq2(x + self.convdeq2(z))))
+            out = out.permute(0, 2, 1).view(-1, self.hdim)
+        elif self.layer_type == "gat":
+            NotImplementedError
         return out
 
-    def init_z(self, bsz):
-        return torch.zeros(bsz, self.hdim, dtype=torch.float32, device=self.args.device)
-
-    def get_input_layer(self):
+    def output_layer(self, z):
         if self.layer_type == "mlp":
-            return torch.nn.Sequential(
+            return self.out_layer(z)
+        elif self.layer_type == "gcn":
+            z = z.view(-1, self.T, self.hdim)
+            z = self.convout(z.permute(0, 2, 1))
+            z = self.mishout(z)
+            z = self.gnout(z)
+            return self.final_layer(z).permute(0, 2, 1)[:, 1:]
+        elif self.layer_type == "gat":
+            NotImplementedError
+
+    def init_z(self, bsz):
+        if self.layer_type == "mlp":
+            return torch.zeros(bsz, self.hdim, dtype=torch.float32, device=self.args.device)
+        elif self.layer_type == "gcn":
+            return torch.zeros(bsz, self.T, self.hdim, dtype=torch.float32, device=self.args.device)
+        elif self.layer_type == "gat":
+            NotImplementedError
+
+    def setup_input_layer(self):
+        if self.layer_type == "mlp":
+            self.inp_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.nx + self.np * (self.T - 1), self.hdim),
                 torch.nn.LayerNorm(self.hdim),
                 # torch.nn.ReLU()
@@ -215,7 +267,43 @@ class DEQLayer(torch.nn.Module):
             # self.fc_inp = torch.nn.Linear(self.nx + self.np*self.T, self.hdim)
             # self.ln_inp = torch.nn.LayerNorm(self.hdim)
         elif self.layer_type == "gcn":
-            raise NotImplementedError
+            ## Get sinusoidal embeddings for the time steps
+            # self.time_encoder = nn.Sequential(
+            #     SinusoidalPosEmb(self.hdim),
+            #     nn.Linear(self.hdim, self.hdim*4),
+            #     nn.Mish(),
+            #     nn.Linear(self.hdim*4, self.hdim),
+            #     nn.LayerNorm(self.hdim)
+            #     )
+            self.time_emb = torch.nn.Parameter(torch.randn(self.T, self.hdim))
+            ## Get the node embeddings
+            self.node_encoder = nn.Sequential(
+                nn.Linear(self.nx, self.hdim),
+                nn.LayerNorm(self.hdim),
+                nn.Mish()
+                )
+            
+            self.x0_encoder = nn.Sequential(
+                nn.Linear(self.nx, self.hdim),
+                nn.LayerNorm(self.hdim),
+                nn.Mish()
+                )
+            
+            self.input_encoder = nn.Sequential(
+                nn.Linear(self.hdim, self.hdim*4),
+                nn.Mish(),
+                nn.Linear(self.hdim*3, self.hdim),
+                nn.LayerNorm(self.hdim),
+                # nn.Mish()
+                )
+            
+            self.global_pooling = {
+                "max": torch.max,
+                "mean": torch.mean,
+                "sum": torch.sum
+            }[self.pooling]
+        elif self.layer_type == "gat":
+            NotImplementedError
 
     def setup_deq_layer(
         self,
@@ -229,17 +317,29 @@ class DEQLayer(torch.nn.Module):
             self.reludeq2 = torch.nn.ReLU()
             self.lndeq3 = torch.nn.LayerNorm(self.hdim)
         elif self.layer_type == "gcn":
-            raise NotImplementedError
+            self.convdeq1 = torch.nn.Conv1d(self.hdim, self.hdim*self.deq_expand, self.kernel_width)
+            self.convdeq2 = torch.nn.Conv1d(self.hdim*self.deq_expand, self.hdim, self.kernel_width)
+            self.mishdeq1 = torch.nn.Mish()
+            self.mishdeq2 = torch.nn.Mish()
+            self.gndeq1 = torch.nn.GroupNorm(self.num_groups, self.hdim*self.deq_expand)
+            self.gndeq2 = torch.nn.GroupNorm(self.num_groups, self.hdim)
+            self.gndeq3 = torch.nn.GroupNorm(self.num_groups, self.hdim)
+        elif self.layer_type == "gat":
+            NotImplementedError
 
-    def get_output_layer(self):
+    def setup_output_layer(self):
         if self.layer_type == "mlp":
-            return torch.nn.Sequential(
+            self.out_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.hdim, self.np * (self.T - 1))
             )
         elif self.layer_type == "gcn":
-            raise NotImplementedError
-
-
+            self.convout = torch.nn.Conv1d(self.hdim, self.hdim, self.kernel_width)
+            self.gnout = torch.nn.GroupNorm(self.num_groups, self.hdim)
+            self.mishout = torch.nn.Mish()
+            self.final_layer = torch.nn.Conv1d(self.hdim, self.np, self.kernel_width_out)
+        elif self.layer_type == "gat":
+            NotImplementedError
+        
 class DEQMPCPolicy(torch.nn.Module):
     def __init__(self, args, env):
         super().__init__()
@@ -255,57 +355,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.model.to(self.device)
         self.tracking_mpc = Tracking_MPC(args, env)
 
-    # def forward(self, x, x_gt):
-    #     """
-    #     Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
-    #     Args:
-    #         x (tensor 0 x bsz x nx): input state
-    #     Returns:
-    #         trajs (list of tuples): list of tuples of nominal states and actions for each deq iteration
-    #         trajs[k][0] (tensor T x bsz x nx): nominal states for the kth deq iteration
-    #         trajs[k][1] (tensor T x bsz x nu): nominal actions for the kth deq iteration
-    #     """
-    #     # initialize trajectory with zeros
-    #     dx_ref = torch.zeros(x.shape[0], self.T - 1, self.np).to(self.device)
-    #     z = self.model.init_z(x.shape[0]).to(self.device)
-
-    #     # initialize trajs list
-    #     trajs = []
-    #     bsz = x.shape[0]
-
-    #     # run the DEQ layer for deq_iter iterations
-    #     for i in range(self.deq_iter):
-    #         x_ref = torch.cat(
-    #             [x[:, :], (x[:, None, : self.np] + dx_ref).reshape(bsz, -1)], dim=1
-    #         ).detach().clone()
-    #         dx_ref, z = self.model(x_ref, z)
-    #         dx_ref = dx_ref.view(-1, self.T - 1, self.np)
-    #         x_ref = dx_ref + x[:, None, : self.np]
-    #         # ipdb.set_trace()
-    #         if x_ref.shape[1] > 1:
-    #             x_ref_vel = (x_ref[:, 1:] - x_ref[:, :-1]) / self.dt
-    #             x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:, -1:]], dim=1)
-    #         else:
-    #             x_ref_vel = x[:, None, self.np : ]
-    #             # ipdb.set_trace()
-    #         x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
-    #         x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
-    #         # ipdb.set_trace()
-    #         x_ref = x_gt + x_ref - x_ref.detach().clone()
-    #         xu_ref = torch.cat(
-    #             [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
-    #         ).transpose(0, 1)
-    #         nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
-    #         dx_ref = (
-    #             nominal_states[1:, :, : self.np].transpose(0, 1) - x[:, None, : self.np]
-    #         )
-    #         nominal_states_net = x_ref.transpose(0, 1)
-    #         trajs.append((nominal_states, nominal_actions))
-    #         # trajs.append((nominal_states_net, nominal_actions))
-
-    #     return trajs
-
-    def forward(self, x, x_gt):
+    def forward(self, x, x_gt, iter=0, qp_solve=True, lastqp_solve=False):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
         Args:
@@ -317,6 +367,7 @@ class DEQMPCPolicy(torch.nn.Module):
         """
         # initialize trajectory with zeros
         x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
+        # x_ref = x_gt.view(x_ref.shape)
         z = self.model.init_z(x.shape[0]).to(self.device)
 
         # initialize trajs list
@@ -328,32 +379,29 @@ class DEQMPCPolicy(torch.nn.Module):
         for i in range(self.deq_iter):
             x_ref, z = self.model(x_ref, z)
             x_ref = x_ref.view(-1, self.T-1, self.np)
-            # if x_ref.shape[1] > 1:
-            #     x_ref_vel = (x_ref[:, 1:] - x_ref[:, :-1]) / self.dt
-            #     x_ref_vel = torch.cat([x_ref_vel, x_ref_vel[:, -1:]], dim=1)
-            # else:
-            #     x_ref_vel = x[:, None, self.np : ]
-            # x_ref = torch.cat([x_ref, x_ref_vel], dim=-1)
-            # ipdb.set_trace()
             x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
             # nominal_states = x_ref.transpose(0, 1)
             # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # trajs.append((nominal_states, nominal_actions))
             # x_ref = x_ref.reshape(bsz, -1)
             
-
             # ipdb.set_trace()
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :1])], dim=-1
             ).transpose(0, 1)
-            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
+            nominal_states = x_ref.transpose(0, 1)
+            nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
+            if qp_solve:
+                nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
             nominal_states_net = x_ref.transpose(0, 1)
-            trajs.append((nominal_states_net, nominal_actions))
-            x_ref = nominal_states.transpose(0, 1).detach().clone().reshape(bsz, -1)
-            # ipdb.set_trace()
-            # trajs.append((nominal_states_net, nominal_actions))
+            trajs.append((nominal_states_net, nominal_states, nominal_actions))
+            # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
+            x_ref = nominal_states.transpose(0, 1).reshape(bsz, -1).detach().clone()
 
+        if lastqp_solve:
+            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
+            trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs
 
 class FFDNetwork(torch.nn.Module):
