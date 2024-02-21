@@ -7,7 +7,8 @@ import torch.autograd as autograd
 import sys
 # sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
 sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
-import qpth.qp_wrapper as mpc
+# import qpth.qp_wrapper as mpc
+import qpth.AL_mpc as mpc
 import ipdb
 import os
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
@@ -28,7 +29,7 @@ class PendulumExpert:
         self.type = type
 
         if self.type == "mpc":
-            self.T = 200
+            self.T = 10
             self.goal_state = torch.Tensor([0.0, 0.0])
             self.goal_weights = torch.Tensor([10.0, 0.1])
             self.ctrl_penalty = 0.001
@@ -77,6 +78,7 @@ class PendulumExpert:
                 u_init=self.u_init,  # .double(),
                 grad_method=mpc.GradMethods.AUTO_DIFF,
                 solver_type="dense",
+                single_qp_solve=True,  # linear system
             )
             self.cost = mpc.QuadCost(self.Q, self.p)
 
@@ -481,11 +483,16 @@ def get_int_expert_traj_mpc(env, num_traj):
         trajectories.append(traj)
     return trajectories
 
+def seeding(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
 if __name__ == "__main__":
+    seeding(2)
     print("Starting!")
     # ipdb.set_trace()
-    env = PendulumEnv(stabilization=False)
+    env = PendulumEnv(stabilization=True)
     # env = IntegratorEnv()
-    save_expert_traj(env, 1, "mpc")
+    # save_expert_traj(env, 300, "sac")
+    save_expert_traj(env, 2, "mpc")
     # test_qp_mpc(env)

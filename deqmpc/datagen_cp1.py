@@ -28,10 +28,10 @@ class CartpoleExpert:
         self.type = type
 
         if self.type == "mpc":
-            self.T = 100
+            self.T = 200
             self.goal_state = torch.Tensor([0, np.pi, 0.0, 0])
             self.goal_weights = torch.Tensor([1.0, 1.0, 1, 1])
-            self.ctrl_penalty = 1e0
+            self.ctrl_penalty = 0.000001
             self.mpc_eps = 1e-3
             self.linesearch_decay = 0.2
             self.max_linesearch_iter = 5
@@ -46,7 +46,7 @@ class CartpoleExpert:
                 env.action_space.high, dtype=torch.float32
             ).double()
 
-            self.qp_iter = 1
+            self.qp_iter = 2
             self.u_init = torch.zeros(self.T, self.bsz, self.nu).double()
             self.q = torch.cat(
                 (self.goal_weights, self.ctrl_penalty * torch.ones(self.nu))
@@ -77,17 +77,23 @@ class CartpoleExpert:
                 u_init=self.u_init,  # .double(),
                 grad_method=mpc.GradMethods.AUTO_DIFF,
                 solver_type="dense",
+                add_goal_constraint=True,
+                x_goal = torch.stack([env.goal]*self.bsz, dim=0),
             )
             self.cost = mpc.QuadCost(self.Q, self.p)
 
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
         # ipdb.set_trace()
+        F, f = self.ctrl.linearize_dynamics(torch.stack([env.goal]*self.bsz, dim=0).unsqueeze(0).repeat(self.T, 1, 1), torch.zeros_like(self.u_init), env.dynamics, diff=False)
+        dx = mpc.LinDx(F, f)
+        # ipdb.set_trace()
         nominal_states, nominal_actions = self.ctrl(
-            state.double(), self.cost, env.dynamics
+            state.double(), self.cost, dx, env.dynamics
         )
+        # ipdb.set_trace()
         # u = torch.clamp(nominal_actions[0], self.u_lower, self.u_upper)
-        return nominal_actions[0]  # Return the first action in the optimal sequence
+        return nominal_actions[0], nominal_actions  # Return the first action in the optimal sequence
 
     def energy_shaping_action(self, state):
         """Compute the energy shaping action for the given state."""
@@ -118,7 +124,7 @@ def get_1lcartpole_expert_traj_mpc(env, num_traj):
         traj = []
         done = False
         while not done:
-            action = mpc_controller.optimize_action(
+            action, actions = mpc_controller.optimize_action(
                 torch.tensor(state, dtype=torch.float32).view(1, -1)
             )
             # ipdb.set_trace()
@@ -130,6 +136,8 @@ def get_1lcartpole_expert_traj_mpc(env, num_traj):
             # if len(traj) > 100:
             #     ipdb.set_trace()
             print(len(traj))
+            actions = torch.cat([actions[1:], actions[-1].unsqueeze(0)], dim=0)
+            mpc_controller.ctrl.u_init = actions
         print(f"Trajectory length: {len(traj)}")
         trajectories.append(traj)
     return trajectories

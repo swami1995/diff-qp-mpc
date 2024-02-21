@@ -82,7 +82,7 @@ class CartpoleExpert:
 
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
-        # ipdb.set_trace()
+        ipdb.set_trace()
         nominal_states, nominal_actions = self.ctrl(
             state.double(), self.cost, env.dynamics
         )

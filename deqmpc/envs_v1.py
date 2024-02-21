@@ -1,10 +1,10 @@
 import torch
-import sympy, sympytorch
+# import sympy, sympytorch
 import numpy as np
-import scipy
-from scipy import linalg
-from sympy.physics import vector
-from sympy.physics import mechanics
+# import scipy
+# from scipy import linalg
+# from sympy.physics import vector
+# from sympy.physics import mechanics
 import ipdb
 
 
@@ -94,7 +94,7 @@ class OneLinkCartpoleDynamics(torch.nn.Module):
     
 
 class OneLinkCartpoleEnv:
-    def __init__(self, stabilization=False):
+    def __init__(self, bsz=1, max_steps=200, stabilization=False):
         self.dynamics = OneLinkCartpoleDynamics()
         self.spec_id = 'OneLinkCartpole-v0{}'.format('-stabilize' if stabilization else '')
         self.state = None  # Will be initialized in reset
@@ -103,7 +103,10 @@ class OneLinkCartpoleEnv:
         self.np = self.dynamics.np  
         self.max_force = self.dynamics.max_force
         self.dt = self.dynamics.dt
+        self.T = max_steps
+        self.bsz = bsz
         self.num_successes = 0
+        self.goal = torch.Tensor([0.0, np.pi, 0.0, 0.0])
         # create observation space based on nx
         low = np.concatenate((np.full(self.np, -np.pi), np.full(self.np, -np.pi*5)))
         self.observation_space = Spaces(low, -low, (self.nx, 2))
@@ -119,27 +122,44 @@ class OneLinkCartpoleEnv:
         np.random.seed(seed)
         torch.manual_seed(seed)
 
-    def reset(self):
+    def reset(self, reset_idxs=None):
         """
         Resets the environment to an initial state, which is a random angle and angular velocity.
         Returns:
             numpy.ndarray: The initial state.
         """
-        if self.stabilization:
-            high = np.concatenate((np.full(self.np, 0.1), np.full(self.np, 0.1)))
-            high[0], high[2] = 0.1, 0.1  # cart
-            offset = torch.tensor([0, np.pi, 0, 0.0], dtype=torch.float32)
-            self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32) + offset
-            self.state = self.state
+        if reset_idxs is None:
+            if self.stabilization:
+                high = np.concatenate((np.full(self.np, 0.1), np.full(self.np, 0.1)))[None].repeat(self.bsz, axis=0)
+                high[:,0], high[:,2] = 0.1, 0.1  # cart
+                offset = torch.tensor([0, np.pi, 0, 0.0], dtype=torch.float32)[None, :]
+                self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32) + offset
+                self.state = self.state
+            else:
+                high = np.concatenate((np.full(self.np, np.pi), np.full(self.np, np.pi*5)))[None].repeat(self.bsz, axis=0)
+                high[:,0], high[:,2] = 1.0, 1.0  # cart
+                self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+            
+            self.state = torch.Tensor([0.0, np.pi-0.1, 0.0, 0.0])[None].repeat(self.bsz, 1)
+            
+            self.num_successes = torch.zeros(self.bsz)
+            self.num_steps = torch.zeros(self.bsz)
+            return self.state.numpy()
         else:
-            high = np.concatenate((np.full(self.np, np.pi), np.full(self.np, np.pi*5)))
-            high[0], high[2] = 1.0, 1.0  # cart
-            self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
-        
-        self.state = torch.Tensor([0.0, np.pi-0.9, 0.0, 0.0])
-        
-        self.num_successes = 0
-        return self.state.numpy()
+            if self.stabilization:
+                high = np.concatenate((np.full(self.np, 0.1), np.full(self.np, 0.1)))[None].repeat(len(reset_idxs), axis=0)
+                high[:,0], high[:,2] = 0.1, 0.1  # cart
+                offset = torch.tensor([0, np.pi, 0, 0.0], dtype=torch.float32)[None, :]
+                self.state[reset_idxs] = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32) + offset
+            else:
+                high = np.concatenate((np.full(self.np, np.pi), np.full(self.np, np.pi*5)))[None].repeat(len(reset_idxs), axis=0)
+                high[:,0], high[:,2] = 1.0, 1.0  # cart
+                self.state[reset_idxs] = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
+
+            self.state[reset_idxs] = torch.Tensor([0.0, np.pi-0.1, 0.0, 0.0])[None].repeat(len(reset_idxs), 1)
+            self.num_successes[reset_idxs] = 0
+            self.num_steps[reset_idxs] = 0
+            return self.state[reset_idxs].numpy()
 
     def step(self, action):
         """
@@ -150,7 +170,7 @@ class OneLinkCartpoleEnv:
             tuple: A tuple containing the new state, reward, done flag, and info dict.
         """
         # action = torch.tensor([action], dtype=torch.float32)
-        action = torch.tensor(action, dtype=torch.float32)[0]
+        action = torch.tensor(action, dtype=torch.float32)[..., 0]
         action = self.dynamics.action_clip(action)
         self.state = self.dynamics(self.state, action)
         self.state = self.dynamics.state_clip(self.state)
@@ -167,9 +187,9 @@ class OneLinkCartpoleEnv:
         x = self.state[..., 0]
         theta = self.state[..., 1]
         desired_theta = torch.pi
-        success = (torch.abs(theta - desired_theta) < 0.05 and (torch.abs(x) < 0.05))
-        self.num_successes = 0 if not success else self.num_successes + 1
-        return self.num_successes >= 10
+        success = torch.logical_and(torch.abs(theta - desired_theta) < 0.05, (torch.abs(x) < 0.05)).float()
+        self.num_successes = (self.num_successes + 1)*success
+        return torch.logical_and(self.num_successes >= 10, self.num_steps >= self.T)
 
     def get_reward(self, action):
         """
