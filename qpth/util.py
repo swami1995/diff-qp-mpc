@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import ipdb
 
 from torch.autograd import Variable
 
@@ -208,3 +209,477 @@ def data_maybe(x):
     if x is None:
         return None
     return x.data
+
+def init_fn(dr, ysize, rho, Hinv):
+    # dx, dy = dr[..., :-ysize], dr[..., -ysize:]
+    # return torch.cat([dx*Hinv, -dy*rho], dim=-1), dr
+    return dr*Hinv, dr
+
+def matvec(part_Us, part_VTs, x, ysize=1, rho=1, Hinv=1):
+    # Compute (-I + UV^T)x
+    # x: (N, 2d, L')
+    # part_Us: (N, 2d, L', threshold)
+    # part_VTs: (N, threshold, 2d, L')
+    init_x, x = init_fn(x, ysize, rho, Hinv)
+    if part_Us.nelement() == 0:
+        return init_x
+    VTx = torch.einsum('bdij, bij -> bd', part_VTs, x)  # (N, threshold)
+    return init_x + torch.einsum('bijd, bd -> bij', part_Us, VTx)     # (N, 2d, L'), but should really be (N, (2d*L'), 1)
+
+
+def broyden_AL(g, meritfn, dyn_fn, cost_fn, x0, y, threshold, eps, rho=1, Hinv=1, ysize=1, ls=False, name="unknown", idx=False, x_size=None, printi=True):
+    bsz, total_hsize, n_elem = x0.size() # (bsz, T, xd+ud)
+    dev = x0.device
+
+    x_est = x0           # (bsz, 2d, L')
+    if idx:
+        gx = g(x_est, y)        # (bsz, 2d, L')
+    else:
+        gx = g(x_est)
+    nstep = 0
+    tnstep = 0
+    LBFGS_thres = min(threshold, 20)
+
+    # For fast calculation of inv_jacobian (approximately)
+    Us = torch.zeros(bsz, total_hsize, n_elem, LBFGS_thres).to(x0)
+    VTs = torch.zeros(bsz, LBFGS_thres, total_hsize, n_elem).to(x0)
+    update = -matvec(Us[:,:,:,:nstep], VTs[:,:nstep], gx, ysize, rho, Hinv)# -gx
+    new_objective = init_objective = torch.norm(gx).item()
+    prot_break = False
+    trace = [init_objective]
+    new_trace = [-1]
+
+    # To be used in protective breaks
+    protect_thres = 1e6 * n_elem
+    lowest = new_objective
+    lowest_xest, lowest_gx, lowest_step = x_est, gx, nstep
+    dyn_res = dyn_fn(x_est) if dyn_fn is not None else 0
+    cost = cost_fn(x_est) if cost_fn is not None else 0
+    print("nstep, dyn residual, cost , rel residual, merit value, torch.norm(delta_x), torch.norm(gx), torch.norm(update), s")
+    print(0, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(gx).item())
+    while new_objective >= eps and nstep < threshold:
+        if idx:
+            g1 = lambda x: g(x, y)
+        else:
+            g1 = g
+        x_est, gx, delta_x, delta_gx, ite, s, merit = line_search(update, x_est, gx, g1, meritfn, nstep=nstep, on=ls)
+        yopt = g(x_est, y, y_update=True)
+        y = yopt#*(1-s) + yopt*s
+        nstep += 1
+        tnstep += (ite+1)
+        new_objective = torch.norm(gx).item()
+
+        trace.append(new_objective)
+        try:
+            new2_objective = torch.norm(delta_x).item() / (torch.norm(x_est - delta_x).item())   # Relative residual
+        except:
+            new2_objective = torch.norm(delta_x).item() / (torch.norm(x_est - delta_x).item() + 1e-9)
+        new_trace.append(new2_objective)
+        if new_objective < lowest:
+            lowest_xest, lowest_gx = x_est.clone().detach(), gx.clone().detach()
+            lowest = new_objective
+            lowest_step = nstep
+        if new_objective < eps:
+            print("converged 1")
+            break
+        if new_objective < 3*eps and nstep > 30 and np.max(trace[-30:]) / np.min(trace[-30:]) < 1.3:
+            # if there's hardly been any progress in the last 30 steps
+            print("converged 2")
+            break
+        if new_objective > init_objective * protect_thres:
+            prot_break = True
+            print("converged 3")
+            break
+
+        part_Us, part_VTs = Us[:,:,:,:(nstep-1)], VTs[:,:(nstep-1)]
+        # uncomment depending on good broyden vs bad broyden : both usually work.
+        vT = delta_gx                                     # good broyden
+        # vT = rmatvec(part_Us, part_VTs, delta_x, init)  # bad broyden 
+        u = (delta_x - matvec(part_Us, part_VTs, delta_gx, ysize, rho, Hinv)) / torch.einsum('bij, bij -> b', vT, delta_gx)[:,None,None]
+        vT[vT != vT] = 0
+        u[u != u] = 0
+        VTs[:,(nstep-1) % LBFGS_thres] = vT
+        Us[:,:,:,(nstep-1) % LBFGS_thres] = u
+        update = -matvec(Us[:,:,:,:nstep], VTs[:,:nstep], gx, ysize, rho, Hinv)
+        dyn_res = dyn_fn(x_est) if dyn_fn is not None else 0
+        cost = cost_fn(x_est) if cost_fn is not None else 0
+        print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), new2_objective, merit.mean().item(), torch.norm(delta_x).item(), torch.norm(x_est).item(), torch.norm(gx).item(), torch.norm(update).item(), s)
+        # ipdb.set_trace()
+    Us, VTs = None, None
+    return {"result": lowest_xest,
+            "nstep": nstep,
+            "tnstep": tnstep,
+            "lowest_step": lowest_step,
+            "diff": torch.norm(lowest_gx).item(),
+            "diff_detail": torch.norm(lowest_gx, dim=1),
+            "prot_break": prot_break,
+            "trace": trace,
+            "new_trace": new_trace,
+            "eps": eps,
+            "threshold": threshold,
+            "gx": lowest_gx}
+
+def GD_AL(g, r0, threshold, eps, rho=1, Hinv=1, ysize=1, ls=False, name="unknown", dyn_fn=None, cost_fn=None):
+    " Alternating gradient descent on the augmented Lagrangian for x and y"
+    bsz, total_hsize, n_elem = r0.size() # (bsz, T, xd+ud)
+    dev = r0.device
+    r_est = r0
+    betax = 0.1
+    betay = 0.4
+    x_est = r_est[..., :-ysize]
+    y_est = r_est[..., -ysize:]
+    dyn_res = dyn_fn(x_est) if dyn_fn is not None else 0
+    cost = cost_fn(x_est) if cost_fn is not None else 0
+    print(torch.cat([y_est[0], dyn_res[0]], dim=-1))
+
+    for i in range(20):           # (bsz, 2d, L')
+        gr = g(r_est)
+        x = r_est[..., :-ysize]
+        y = r_est[..., -ysize:]
+        x_est = x - betax * gr[..., :-ysize]
+        y_est = y - betay * gr[..., -ysize:]
+        r_est = torch.cat([x_est, y_est], dim=-1)
+        delta_x = x_est - x
+        delta_y = y_est - y
+        dyn_res = dyn_fn(x_est) if dyn_fn is not None else 0
+        cost = cost_fn(x_est) if cost_fn is not None else 0
+        print(i,  torch.norm(delta_x).item(), torch.norm(delta_y).item(), torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(y_est).item(), torch.norm(gr).item())
+        print(torch.cat([y_est[0], dyn_res[0]], dim=-1))
+        if torch.norm(gr).item() < eps:
+            break
+    ipdb.set_trace()
+    return {"result": r_est,
+            "eps": eps,
+            "threshold": threshold,
+            "gx": gr}
+
+class iterationData:
+    """docstring for iterationData"""
+    def __init__(self, alpha, s, y, ys):
+        self.alpha = alpha
+        self.s = s
+        self.y = y
+        self.ys = ys
+
+def LBFGS_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, rho=1, Hinv=1, ysize=1, ls=False, name="unknown", idx=False, x_size=None, printi=True):
+    bsz, total_hsize, n_elem = x0.size() # (bsz, T, xd+ud)
+    dev = x0.device
+
+    x_est = x0           # (bsz, 2d, L')
+    gx = g(x_est, z)  # (bsz, 2d, L')
+    cost = cost_fn(x_est) 
+    dyn_res = dyn_fn(x_est)
+    tnstep = 0
+    lbfgs_mem = LBFGS_thres = min(threshold, 20)
+
+    # For fast calculation of inv_jacobian (approximately)
+    lm = []
+    for i in range(0, threshold):
+        s = torch.zeros(bsz, total_hsize, dtype=x0.dtype).to(x0.device)
+        y = torch.zeros(bsz, total_hsize, dtype=x0.dtype).to(x0.device)
+        lm.append(iterationData(s[:,0], s, y, s[:,0]))
+
+    Hinv = Hinv#.clamp(-1, 1)
+    update = -Hinv * gx # Need to adaptively regularize Hinv
+    new_objective = init_objective = torch.norm(gx).item()
+    prot_break = False
+    trace = [init_objective]
+    new_trace = [-1]
+
+    # To be used in protective breaks
+    nstep = 0
+    protect_thres = 1e6 * n_elem
+    lowest = new_objective
+    lowest_xest, lowest_gx, lowest_step = x_est, gx, nstep
+    num_fails = 0
+    num_fails_total = 0
+    print("nstep, dyn residual, cost , rel residual, merit value, torch.norm(delta_x), torch.norm(gx), torch.norm(update), s")
+    print(0, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(gx).item())
+    while nstep < threshold:# and new_objective >= eps:
+        if idx:
+            g1 = lambda x: g(x, z)
+        else:
+            g1 = g
+        gx_old = gx
+        x_est, gx, delta_x, delta_gx, ite, stepsz, merit = line_search(update, x_est, gx, g1, meritfn, nstep=nstep, on=ls)
+        Bs = -stepsz*gx_old
+        zopt = g(x_est, z, y_update=True)
+        sz = 1.0#max(stepsz, 0.5)
+        z = z*(1-sz) + zopt*sz
+        nstep += 1
+        tnstep += (ite+1)
+        new_objective = torch.norm(gx).item()
+
+        trace.append(new_objective)
+        try:
+            new2_objective = torch.norm(delta_x).item() / (torch.norm(x_est - delta_x).item())   # Relative residual
+        except:
+            new2_objective = torch.norm(delta_x).item() / (torch.norm(x_est - delta_x).item() + 1e-9)
+        new_trace.append(new2_objective)
+        if new_objective < lowest:
+            lowest_xest, lowest_gx = x_est.clone().detach(), gx.clone().detach()
+            lowest = new_objective
+            lowest_step = nstep
+        # if new_objective < eps:
+        #     print("converged 1")
+        #     break
+        # if new_objective < 3*eps and nstep > 30 and np.max(trace[-30:]) / np.min(trace[-30:]) < 1.3:
+        #     # if there's hardly been any progress in the last 30 steps
+        #     print("converged 2")
+        #     break
+        # if new_objective > init_objective * protect_thres:
+        #     prot_break = True
+        #     print("converged 3")
+        #     break
+
+        it = lm[nstep-1]
+        itsi = it.s = delta_x
+        ityi = it.y = delta_gx
+        ys = torch.bmm(ityi.view(bsz, 1, -1), itsi.view(bsz, -1, 1)).squeeze(-1)
+        sBs = torch.bmm(itsi.view(bsz, 1, -1), Bs.view(bsz, -1, 1)).squeeze(-1)
+
+        dc = 0.2 # damping
+        if (ys<dc*sBs).sum() > 0:
+            num_fails_total += (ys<=dc*sBs).sum()
+            num_fails += 1
+            print("Damping", num_fails, num_fails_total)
+            damping = True
+            if damping:
+                theta = torch.ones_like(ys)
+                theta[ys<dc*sBs] = (((1 - dc) * sBs)/torch.clamp(sBs - ys, 1e-14, 100)) [ys<dc*sBs]
+                ityi = theta * ityi + (1 - theta) * Bs
+                ys = torch.bmm(ityi.view(bsz, 1, -1), itsi.view(bsz, -1, 1)).squeeze(-1)
+
+        # For the limited memory version, uncomment the second line
+        # ipdb.set_trace()
+        bound = min(lbfgs_mem,nstep)
+
+        # Compute scalars ys and yy:
+        yy = torch.bmm(ityi.view(bsz, 1, -1), ityi.view(bsz, -1, 1)).squeeze(-1)
+        update = -gx
+        # it.y = ityi
+        it.ys = ys
+        j = nstep
+        for i in range(0, bound):
+            # from later to former
+            j = j-1
+            it = lm[j]
+            it.alpha = torch.bmm(it.s.view(bsz, 1, -1), update.view(bsz, -1, 1)).squeeze(-1) / (it.ys + 1e-8)
+            update = update - (it.y * it.alpha)
+        # ipdb.set_trace()
+        update = update * (ys/(yy + 1e-8))
+
+        for i in range(0, bound):
+            it = lm[j]
+            beta = torch.bmm(it.y.view(bsz, 1, -1), update.view(bsz, -1, 1)).squeeze(-1)
+            beta = beta /(it.ys + 1e-8)
+            update = update + (it.s * (it.alpha - beta))
+            # from former to later
+            j = j+1
+
+        dyn_res = dyn_fn(x_est) if dyn_fn is not None else 0
+        cost = cost_fn(x_est) if cost_fn is not None else 0
+        print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), new2_objective, merit.mean().item(), torch.norm(delta_x).item(), torch.norm(x_est).item(), torch.norm(gx).item(), torch.norm(update).item(), stepsz)
+        # ipdb.set_trace()
+    Us, VTs = None, None
+    return {"result": x_est,
+            "nstep": nstep,
+            "tnstep": tnstep,
+            "lowest_step": lowest_step,
+            "diff": torch.norm(lowest_gx).item(),
+            "diff_detail": torch.norm(lowest_gx, dim=1),
+            "prot_break": prot_break,
+            "trace": trace,
+            "new_trace": new_trace,
+            "eps": eps,
+            "threshold": threshold,
+            "gx": lowest_gx}
+
+def Newton_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, rho=1, Hinv=1, ysize=1, ls=False, name="unknown", idx=False, x_size=None, printi=True):
+    bsz, total_hsize, n_elem = x0.size() # (bsz, T, xd+ud)
+    dev = x0.device
+
+    x_est = x0           # (bsz, 2d, L')
+    gx = g(x_est, z)  # (bsz, 2d, L')
+    cost = cost_fn(x_est) 
+    dyn_res = dyn_fn(x_est)
+    tnstep = 0
+
+    # Solve for newton steps on the augmented lagrangian
+    nstep = 0
+    prot_break = False
+    lowest_gx = gx
+    lowest_step = 0
+    print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(gx).item())
+    while torch.norm(gx).item() > threshold and nstep < 4:
+        nstep += 1
+        
+        # Compute the hessian and gradient of the augmented lagrangian
+        merit = meritfn(x_est, grad=True).mean()
+        grad = torch.autograd.grad(merit, x_est)[0]
+        meritfn_mean = lambda x: meritfn(x, grad=True).mean()
+        Hess = torch.autograd.functional.hessian(meritfn_mean, (x_est))
+        # Hess = Hess + torch.eye(total_hsize, device=dev).unsqueeze(0).expand(bsz, total_hsize, total_hsize) * eps
+        
+        # Solve for the newton step
+        stepsz = 0
+        reg = 0#1e-5
+        Hess = Hess.reshape(10*3,10*3)
+        eye = torch.eye(10*3, device=dev)
+        # while stepsz < 1e-5:
+        update = -torch.linalg.solve(Hess+reg*eye, grad.reshape(-1)).reshape(1,10,3)
+        if ls:
+            stepsz = 1
+            new2_objective = meritfn(x_est + stepsz * update).mean().item()
+            while new2_objective > merit.mean().item():
+                stepsz *= 0.5
+                new2_objective = meritfn(x_est + stepsz * update).mean().item()
+                # if stepsz < 1e-8:
+                #     break
+        # if torch.isnan(update).sum() > 0:
+        #     ipdb.set_trace()
+        else:
+            x_est = x_est + update
+            new2_objective = meritfn(x_est).mean().item()
+        # reg *= 10
+        x_est = x_est + stepsz * update
+        gx = g(x_est, z)
+        cost = cost_fn(x_est)
+        dyn_res = dyn_fn(x_est)
+        print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), new2_objective, torch.norm(gx).item(), torch.norm(update).item(), stepsz)
+        # ipdb.set_trace()
+        
+    Us, VTs = None, None
+    return {"result": x_est,
+            "nstep": nstep,
+            "tnstep": tnstep,
+            "lowest_step": lowest_step,
+            "diff": torch.norm(lowest_gx).item(),
+            "diff_detail": torch.norm(lowest_gx, dim=1),
+            "prot_break": prot_break,
+            "eps": eps,
+            "threshold": threshold,
+            "gx": gx}
+
+def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1, amin=0): 
+    ### TODO : Parallelize this search!
+    ite = 0
+    phi_a0 = phi(alpha0)    # First do an update with step size 1
+    mask = (phi_a0 > phi0 + c1*alpha0*derphi0).float()
+    if torch.sum(mask)==0:
+        return alpha0, phi_a0, ite
+
+    # Otherwise, compute the minimizer of a quadratic interpolant
+    alpha1 = -((derphi0) * alpha0**2 / 2.0 / (phi_a0 - phi0 - derphi0 * alpha0))*mask + alpha0*(1-mask)
+    phi_a1 = phi(alpha1)
+
+    # Otherwise loop with cubic interpolation until we find an alpha which
+    # satisfies the first Wolfe condition (since we are backtracking, we will
+    # assume that the value of alpha is not too small and satisfies the second
+    # condition.
+    while alpha1.min() > amin:       # we are assuming alpha>0 is a descent direction
+        factor = alpha0**2 * alpha1**2 * (alpha1-alpha0)
+        a = alpha0**2 * (phi_a1 - phi0 - derphi0*alpha1) - \
+            alpha1**2 * (phi_a0 - phi0 - derphi0*alpha0)
+        a = a / factor
+        b = -alpha0**3 * (phi_a1 - phi0 - derphi0*alpha1) + \
+            alpha1**3 * (phi_a0 - phi0 - derphi0*alpha0)
+        b = b / factor
+
+        alpha2 = (-b + torch.sqrt(torch.abs(b**2 - 3 * a * derphi0))) / (3.0*a)
+        alpha2 = alpha2*mask + alpha1*(1-mask)
+        phi_a2 = phi(alpha2)
+        ite += 1
+        mask = (phi_a2 > phi0 + c1*alpha2*derphi0).float()
+        if torch.sum(mask)==0:
+            return alpha2.item(), phi_a2, ite
+        
+    
+        # if (alpha1 - alpha2) > alpha1 / 2.0 or (1 - alpha2/alpha1) < 0.96:
+        #     alpha2 = alpha1 / 2.0
+
+        alpha0 = alpha1
+        alpha1 = alpha2
+        phi_a0 = phi_a1
+        phi_a1 = phi_a2
+    mask = alpha1 < amin
+    alpha1 = (~mask)*alpha1
+    print("unconverged line search")
+    # Failed to find a suitable step length
+    return alpha1.item(), phi_a1, ite
+
+def scalar_search_armijo2(phi, phi0, derphi0, c1=1e-4, alpha0=1, amin=0):
+    ite = 0
+    phi_a0 = phi(alpha0)    # First do an update with step size 1
+    mask = phi_a0 > phi0 + c1*alpha0*derphi0
+    if torch.sum(mask)==0:
+        return alpha0, phi_a0, ite
+
+    alpha1 = mask*alpha0/2.0 + (~mask)*alpha0
+    alpha2 = alpha1
+    phi_a1 = phi(alpha1)
+
+    while torch.min(alpha1) > amin:       # we are assuming alpha>0 is a descent direction
+        phi_a2 = phi(alpha2)
+        ite += 1
+        mask = phi_a2 > phi0 + c1*alpha2*derphi0
+        if torch.sum(mask)==0:
+            return alpha2, phi_a2, ite
+
+        alpha2 = mask*alpha1/2.0 + (~mask)*alpha1
+
+        alpha0 = alpha1
+        alpha1 = alpha2
+        phi_a0 = phi_a1
+        phi_a1 = phi_a2
+    mask = alpha1 < amin
+    alpha1 = (~mask)*alpha1
+
+    # Failed to find a suitable step length
+    return alpha1, phi_a1, ite
+
+def line_search(update, x0, g0, g, meritfn, nstep=0, on=True):
+    """
+    `update` is the propsoed direction of update.
+
+    Code adapted from scipy.
+    """
+    bsz = x0.size(0)
+    tmp_s = [0]
+    tmp_g0 = [g0]
+    tmp_phi = [meritfn(x0)]
+    # tmp_phi = [torch.norm(g0)**2]
+    s_norm = torch.norm(x0) / torch.norm(update)
+
+    def phi(s, store=True):
+        if s == tmp_s[0]:
+            return tmp_phi[0]    # If the step size is so small... just return something
+
+        x_est = x0 + s * update
+        # g0_new = g(x_est)
+        phi_new = meritfn(x_est)#
+        # phi_new = _safe_norm(g0_new)**2
+        if store:
+            tmp_s[0] = s
+            # tmp_g0[0] = g0_new
+            tmp_phi[0] = phi_new
+        return phi_new
+
+    if on:
+        derphi = (update.view(bsz, -1)* g0.view(bsz,-1)).sum(dim=1)
+        # derphi0 = -tmp_phi[0]
+        # derphi = derphi.mean()
+        s, phi1, ite = scalar_search_armijo(phi, tmp_phi[0], derphi, amin=1e-12)
+    if (not on) or s is None:
+        s = 1.0
+        ite = 0
+        ipdb.set_trace()
+    x_est = x0 + s * update
+    # if s == tmp_s[0]:
+    #     g0_new = tmp_g0[0]
+    # else:
+    g0_new = g(x_est)
+    if (not on) or s is None:
+        tmp_phi[-1] = meritfn(x_est)
+    return x_est, g0_new, x_est - x0, g0_new - g0, ite, s, tmp_phi[-1]
+

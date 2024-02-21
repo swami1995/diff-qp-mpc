@@ -146,7 +146,10 @@ class MPC(Module):
             solver_type='dense',
             single_qp_solve=False,
             add_goal_constraint=False,
-            x_goal=None
+            x_goal=None,
+            diag_cost=False, 
+            ineqG=None,
+            ineqh=None,
     ):
         super().__init__()
 
@@ -158,7 +161,11 @@ class MPC(Module):
         self.T = T
         self.u_lower = u_lower
         self.u_upper = u_upper
+        self.x_upper = None
+        self.x_lower = None
         self.x_goal = x_goal
+        self.ineqG = ineqG
+        self.ineqh = ineqh        
 
         if not isinstance(u_lower, float):
             self.u_lower = util.detach_maybe(self.u_lower)
@@ -189,25 +196,21 @@ class MPC(Module):
         self.solver_type = solver_type
         self.single_qp_solve = single_qp_solve
         self.add_goal_constraint = add_goal_constraint
-
-        if solver_type == 'dense':
-            idxs_1 = torch.arange(n_state + n_ctrl)
-            idxs_0 = torch.arange(n_state)
-            idxs_0, idxs_1 = torch.meshgrid(idxs_0, idxs_1, indexing='ij')
-            self.A_slices_xu1 = torch.cat([idxs_1 + (n_state+n_ctrl)*i for i in range(T-1)], dim=0).view(-1)
-            self.A_slices_xu0 = torch.cat([idxs_0 + (n_state)*i for i in range(T-1)], dim=0).view(-1)
-            idxs_1 = torch.arange(n_state + n_ctrl)
-            idxs_0 = torch.arange(n_state)
-            self.A_slices_xx1 = torch.cat([torch.arange(n_state) + (n_state+n_ctrl)*(i+1) for i in range(T-1)], dim=0).view(-1)
-            self.A_slices_xx0 = torch.cat([torch.arange(n_state) + (n_state)*i for i in range(T-1)], dim=0).view(-1)
-
-            idx = torch.arange(n_state + n_ctrl)
-            idx_0, idx_1 = torch.meshgrid(idx, idx, indexing='ij')
-            self.Q_slices_xu1 = torch.cat([idx_1 + (n_state+n_ctrl)*i for i in range(T)], dim=0).view(-1)
-            self.Q_slices_xu0 = torch.cat([idx_0 + (n_state+n_ctrl)*i for i in range(T)], dim=0).view(-1)
-
-            self.G_slices_uu1 = torch.cat([torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(i) for i in range(T)], dim=0).view(-1)
-            self.G_slices_uu0 = torch.cat([torch.arange(n_ctrl) + (n_ctrl)*i for i in range(T)], dim=0).view(-1)         
+        self.diag_cost = True# diag_cost
+        self.al_iter = 20
+        self.neq = n_state*(T-1) + n_state
+        self.nineq = 0
+        self.dyn_res_crit = 1e-6
+        self.dyn_res_factor = 10
+        self.rho_prev = 1.0
+        if self.add_goal_constraint:
+            self.neq += n_state
+        if ineqG is not None:
+            self.nineq = ineqG.size(1)
+        if u_lower is not None:
+            self.nineq += n_ctrl*T*2
+        if self.x_lower is not None:
+            self.nineq += n_state*T*2
         # return self.Qi, self.Gi, self.Ai
 
     def forward(self, x0, cost, dx, dx_true=None):
@@ -289,59 +292,160 @@ class MPC(Module):
         best = None
         # ipdb.set_trace()
         if self.single_qp_solve:
+            if self.diag_cost:
+                cost = QuadCost(cost.C.diagonal(dim1=-2, dim2=-1), cost.c)
             x, u, cost_total = self.single_qp_ls(x, u, dx, x0, cost)
         else:
             x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
         
         return (x, u)
     
-    def single_qp(self, x, u, dx, x0, cost):
-        if isinstance(dx, LinDx):
-            F, f = dx.F, dx.f
-            if f is None:
-                f = torch.zeros((self.T-1, self.n_batch, self.n_state)).to(x0)
+    def single_qp(self, x, u, dx, x0, cost, lamda_init=None, rho_init=None):
+        x = x.transpose(0,1)
+        u = u.transpose(0,1)
+        if lamda_init is None:
+            lamda = torch.zeros(self.n_batch, self.neq+self.nineq).type_as(x)#.reshape(self.n_batch, self.T, -1) 
         else:
-            # Linearize the dynamics around the current state and action.
-            F, f = self.linearize_dynamics(
-                x, util.detach_maybe(u), dx, diff=False)
+            lamda = lamda_init
+        if rho_init is None:
+            rho = self.rho_prev
+        else:
+            rho = rho_init
 
-        # ipdb.set_trace()
-        dyn_res_lam = lambda x: self.dyn_res(x, self.dx_true, x0)
-        if self.solver_type == 'dense':
-            Q, q = self.compute_Qq_dense(cost.C, cost.c)
-            A, b = self.compute_Ab_dense(F, f, x0)
-            G, h = self.compute_Gh_dense(x0)
-            # xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
-            xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b, dyn_res_lam)
-        xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T, -1)
-        x_hat = xhats_qpf[:, :, :self.n_state].transpose(0,1)
-        u_hat = xhats_qpf[:, :, self.n_state:].transpose(0,1)
-        cost_total = self.compute_cost(xhats_qpf, cost)
-        delta_x = x_hat - x
-        delta_u = u_hat - u
-        # ipdb.set_trace()
-        return delta_x, delta_u, cost_total
+        x_old, u_old = x, u
+        dyn_res_clamp_start = self.dyn_res(torch.cat((x, u), dim=2), dx, x0, res_type='clamp')
+        dyn_res_clamp_start = dyn_res_clamp_start.norm().item()
+        
+        # Augmented Lagrangian updates with broyden for root finding of the residual
+        for i in range(self.al_iter):
+            xu = torch.cat((x, u), dim=2)
+            # ipdb.set_trace()
+            y = lamda + rho*self.dyn_res(xu, dx, x0, res_type='clamp')
+            input = torch.cat((x, u), dim=2)
+            Hinv = 1/cost.C.transpose(0,1) # Might need to adaptively regularize this based on rho and solver progress/step size. 
+            fn = lambda x,y,y_update=False : self.grad_res(x, y, cost, dx, x0, lamda, rho, y_update)
+            dyn_fn = lambda x : self.dyn_res(x, dx, x0)
+            cost_fn = lambda x : self.compute_cost(x, cost)
+            merit_fn = lambda x, grad=False : self.merit_function(x, dx, x0, cost, lamda, rho, grad)
+            # out = util.broyden_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=10, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
+            # out = util.LBFGS_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=80, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
+            out = util.Newton_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=1e-3, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
+            # out = util.GD_AL(fn, input, threshold=10, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, dyn_fn = dyn_fn, cost_fn = cost_fn)
+            # x_res, lam_res = self.grad_res(x, lamda, cost, dx, x0, lamda, rho)    
 
-    def dyn_res(self, x, dx, x0):
+            x_new, u_new = out['result'][:,:,:self.n_state], out['result'][:,:,self.n_state:]
+            delta_x = x_new - x
+            delta_u = u_new - u
+            delta_xu = torch.cat((delta_x, delta_u), dim=2)
+            # if delta_xu.norm() < self.eps:
+            #     print("converged, iter : ", i, " norm : ", delta_xu.norm())
+            #     break
+            # else:
+            #     print("not converged, iter : ", i, " norm : ", delta_xu.norm())
+            # ipdb.set_trace()
+            dyn_res, dyn_res_clamp = self.dyn_res(torch.cat((x_new, u_new), dim=2), dx, x0, res_type='both')
+            lamda = lamda + rho*dyn_res
+            lamda[:, self.neq:] = torch.clamp(lamda[:, self.neq:], min=0)
+            rho = rho*10
+            x, u = x_new, u_new
+            dyn_res_clamp = torch.norm(dyn_res_clamp).item()
+            if  dyn_res_clamp < self.dyn_res_crit or dyn_res_clamp < dyn_res_clamp_start/self.dyn_res_factor:
+                break
+            ipdb.set_trace()
+
+        delta_x = (x - x_old).transpose(0,1)
+        delta_u = (u - u_old).transpose(0,1)
+        return delta_x, delta_u, out['result']
+    
+    def merit_function(self, xu, dx, x0, cost, lamda, rho, grad=False):
+        bsz = xu.size(0)
+        cost_total = self.compute_cost(xu, cost)
+        res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
+        # if grad:
+        return cost_total + (lamda*res).view(bsz, -1).sum(dim=1) + 0.5*rho*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1)
+        # else:
+        #     return cost_total.mean() + (lamda*res_clamp).view(bsz, -1).sum(dim=1).mean() + 0.5*rho*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1).mean()
+
+    def dyn_res_eq(self, x, u, dx, x0):
         " split x into state and control and compute dynamics residual using dx"
         # ipdb.set_trace()
-        x = x.reshape(self.n_batch, self.T, self.n_state+self.n_ctrl)
-        x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
         if isinstance(dx, LinDx):
             x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
             # x_next = x_next[:,:-1]
         else:
             x_next = dx(x, u)[:,:-1]
             
-        res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
-        res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
+        res = (x_next - x[:,1:,:])#.reshape(self.n_batch, -1)
+        res_init = (x[:,0,:] - x0).reshape(self.n_batch, 1, -1)
         if self.add_goal_constraint:
             res_goal = (x[:,-1,:] - self.x_goal).reshape(self.n_batch, -1)
             res = torch.cat((res, res_init, res_goal), dim=1)
         else:
             res = torch.cat((res, res_init), dim=1)
+        res = res.reshape(self.n_batch, -1)
         return res
+    
+    def dyn_res_ineq(self, x, u, dx, x0):
+        # Add state constraints if self.x_lower and self.x_upper are not None
+        res = None
+        if self.x_lower is not None:
+            res = torch.cat((
+                x - self.x_upper, 
+                -x + self.x_lower
+                ), dim=2)
 
+        # Add control constraints if self.u_lower and self.u_upper are not None
+        if self.u_lower is not None:
+            res_u = torch.cat((
+                u - self.u_upper,
+                -u + self.u_lower
+                ), dim=2)
+            if res is None:
+                res = res_u
+            else:
+                res = torch.cat((res,res_u), dim=2)
+        
+        # Add other inequality constraints if self.ineqG and self.ineqh are not None
+        if self.ineqG is not None:
+            res_G = torch.bmm(self.ineqG, x.unsqueeze(-1)) - self.ineqh
+            if res is None:
+                res = res_G
+            else:
+                res = torch.cat((res,res_G), dim=2)
+        res = res.reshape(self.n_batch, -1)
+        res_clamp = torch.clamp(res, min=0)
+        return res, res_clamp
+    
+    def dyn_res(self, x, dx, x0, res_type='clamp'):
+        x = x.reshape(self.n_batch, self.T, self.n_state+self.n_ctrl)
+        x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
+        # Equality residuals
+        res_eq = self.dyn_res_eq(x, u, dx, x0)
+        # Inequality residuals
+        res_ineq, res_ineq_clamp = self.dyn_res_ineq(x, u, dx, x0)
+        if res_type == 'noclamp':
+            return torch.cat((res_eq, res_ineq), dim=1)
+        elif res_type == 'clamp':
+            return torch.cat((res_eq, res_ineq_clamp), dim=1)
+        else:
+            return torch.cat((res_eq, res_ineq), dim=1), torch.cat((res_eq, res_ineq_clamp), dim=1)
+
+    def grad_res(self, x, y, cost, dx, x0, lam, rho, y_update=False):
+        " compute the gradient of the residual with respect to x"
+        # ipdb.set_trace()
+        if y_update:
+            return lam + rho*self.dyn_res(x, dx, x0)
+        cost_grad = self.compute_cost_gradient(x, cost)
+        x.requires_grad_(True)
+        dyn_res = self.dyn_res(x, dx, x0)
+        grad_res = torch.autograd.grad(dyn_res, x, grad_outputs=y)[0]
+        x_res = grad_res + cost_grad
+        # y_res = y/rho - lam/rho - dyn_res
+        # dr = torch.cat((x_res, y_res), dim=-1)
+        # print("residual norms : ", dr.norm(), cost_grad.norm(), dyn_res.norm())
+        # if y_update:
+        #     return lam + rho*dyn_res
+        return x_res
 
     def solve_nonlin(self, x, u, dx, x0, cost):
         best = None
@@ -405,10 +509,12 @@ class MPC(Module):
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
         cost_total = self.compute_cost(xhats_qpf, cost)
         delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
-        with torch.no_grad():
-            _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
-        x = x + delta_x * alpha
-        u = u + delta_u * alpha
+        # with torch.no_grad():
+        #     _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
+        x = x + delta_x #* alpha
+        u = u + delta_u# * alpha
+        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        cost_total = self.compute_cost(xhats_qpf, cost)
         return x, u, cost_total
 
 
@@ -432,165 +538,6 @@ class MPC(Module):
                 print("line search failed")
                 ipdb.set_trace()
         return x_new, u_new, alpha, cost_total_new
-
-    def approximate_cost(self, x, u, Cf, diff=True):
-        with torch.enable_grad():
-            tau = torch.cat((x, u), dim=2).data
-            tau = Variable(tau, requires_grad=True)
-            if self.slew_rate_penalty is not None:
-                print("""
-MPC Error: Using a non-convex cost with a slew rate penalty is not yet implemented.
-The current implementation does not correctly do a line search.
-More details: https://github.com/locuslab/mpc.pytorch/issues/12
-""")
-                sys.exit(-1)
-                differences = tau[1:, :, -self.n_ctrl:] - tau[:-1, :, -self.n_ctrl:]
-                slew_penalty = (self.slew_rate_penalty * differences.pow(2)).sum(-1)
-            costs = list()
-            hessians = list()
-            grads = list()
-            for t in range(self.T):
-                tau_t = tau[t]
-                if self.slew_rate_penalty is not None:
-                    cost = Cf(tau_t) + (slew_penalty[t-1] if t > 0 else 0)
-                else:
-                    cost = Cf(tau_t)
-
-                grad = torch.autograd.grad(cost.sum(), tau_t,
-                                           create_graph=True, retain_graph=True)[0]
-                hessian = list()
-                for v_i in range(tau.shape[2]):
-                    hessian.append(
-                        torch.autograd.grad(grad[:, v_i].sum(), tau_t,
-                                            retain_graph=True)[0]
-                    )
-                hessian = torch.stack(hessian, dim=-1)
-                costs.append(cost)
-                grads.append(grad - util.bmv(hessian, tau_t))
-                hessians.append(hessian)
-            costs = torch.stack(costs, dim=0)
-            grads = torch.stack(grads, dim=0)
-            hessians = torch.stack(hessians, dim=0)
-            if not diff:
-                return hessians.data, grads.data, costs.data
-            return hessians, grads, costs
-
-    # @profile
-    def linearize_dynamics(self, x, u, dynamics, diff):
-        # TODO: Cleanup variable usage.
-
-        n_batch = x[0].size(0)
-
-        if self.grad_method == GradMethods.ANALYTIC:
-            _u = Variable(u[:-1].view(-1, self.n_ctrl), requires_grad=True)
-            _x = Variable(x[:-1].contiguous().view(-1, self.n_state),
-                          requires_grad=True)
-
-            # This inefficiently calls dynamics again, but is worth it because
-            # we can efficiently compute grad_input for every time step at once.
-            _new_x = dynamics(_x, _u)
-
-            # This check is a little expensive and should only be done if
-            # modifying this code.
-            # assert torch.abs(_new_x.data - torch.cat(x[1:])).max() <= 1e-6
-
-            if not diff:
-                _new_x = _new_x.data
-                _x = _x.data
-                _u = _u.data
-
-            R, S = dynamics.grad_input(_x, _u)
-
-            f = _new_x - util.bmv(R, _x) - util.bmv(S, _u)
-            f = f.view(self.T-1, n_batch, self.n_state)
-
-            R = R.contiguous().view(self.T-1, n_batch, self.n_state, self.n_state)
-            S = S.contiguous().view(self.T-1, n_batch, self.n_state, self.n_ctrl)
-            F = torch.cat((R, S), 3)
-
-            if not diff:
-                F, f = list(map(Variable, [F, f]))
-            return F, f
-        else:
-            # TODO: This is inefficient and confusing.
-            x_init = x[0]
-            x = [x_init]
-            F, f = [], []
-            with torch.enable_grad():
-                for t in range(self.T):
-                    if t < self.T-1:
-                        xt = Variable(x[t], requires_grad=True)
-                        ut = Variable(u[t], requires_grad=True)
-                        xut = torch.cat((xt, ut), 1)
-                        new_x = dynamics(xt, ut)
-
-                        # Linear dynamics approximation.
-                        if self.grad_method in [GradMethods.AUTO_DIFF,
-                                                GradMethods.ANALYTIC_CHECK]:
-                            Rt, St = [], []
-                            for j in range(self.n_state):
-                                Rj, Sj = torch.autograd.grad(
-                                    new_x[:,j].sum(), [xt, ut],
-                                    retain_graph=True)
-                                if not diff:
-                                    Rj, Sj = Rj.data, Sj.data
-                                Rt.append(Rj)
-                                St.append(Sj)
-                            Rt = torch.stack(Rt, dim=1)
-                            St = torch.stack(St, dim=1)
-                            if torch.isnan(Rt).any() or torch.isnan(St).any():
-                                ipdb.set_trace()
-
-                            if self.grad_method == GradMethods.ANALYTIC_CHECK:
-                                assert False # Not updated
-                                Rt_autograd, St_autograd = Rt, St
-                                Rt, St = dynamics.grad_input(xt, ut)
-                                eps = 1e-8
-                                if torch.max(torch.abs(Rt-Rt_autograd)).data[0] > eps or \
-                                torch.max(torch.abs(St-St_autograd)).data[0] > eps:
-                                    print('''
-            nmpc.ANALYTIC_CHECK error: The analytic derivative of the dynamics function may be off.
-                                    ''')
-                                else:
-                                    print('''
-            nmpc.ANALYTIC_CHECK: The analytic derivative of the dynamics function seems correct.
-            Re-run with GradMethods.ANALYTIC to continue.
-                                    ''')
-                                sys.exit(0)
-                        elif self.grad_method == GradMethods.FINITE_DIFF:
-                            Rt, St = [], []
-                            for i in range(n_batch):
-                                Ri = util.jacobian(
-                                    lambda s: dynamics(s, ut[i]), xt[i], 1e-4
-                                )
-                                Si = util.jacobian(
-                                    lambda a : dynamics(xt[i], a), ut[i], 1e-4
-                                )
-                                if not diff:
-                                    Ri, Si = Ri.data, Si.data
-                                Rt.append(Ri)
-                                St.append(Si)
-                            Rt = torch.stack(Rt)
-                            St = torch.stack(St)
-                        else:
-                            assert False
-
-                        Ft = torch.cat((Rt, St), 2)
-                        F.append(Ft)
-
-                        if not diff:
-                            xt, ut, new_x = xt.data, ut.data, new_x.data
-                        ft = new_x - util.bmv(Rt, xt) - util.bmv(St, ut)
-                        f.append(ft)
-
-                    if t < self.T-1:
-                        x.append(util.detach_maybe(new_x))
-
-            F = torch.stack(F, 0)
-            f = torch.stack(f, 0)
-            if not diff:
-                F, f = list(map(Variable, [F, f]))
-            return F, f
 
     def rollout(self, x, actions, dynamics):
         n_batch = x.size(0)
@@ -620,71 +567,18 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             x.append(new_x)
         return torch.stack(x, 0)
 
-
-    # def compute_Ab_dense(self, F, f, x0):
-    #     T, n_batch, n_state, n_tau = F.size()
-    #     A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
-    #     b = torch.zeros(n_batch, (T+1)*n_state).to(F)
-    #     A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
-    #     A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
-    #     A[:, T*n_state:, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
-    #     b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
-    #     b[:, T*n_state:] = x0
-    #     return A, b
-
-    def compute_Ab_dense(self, F, f, x0):
-        T, n_batch, n_state, n_tau = F.size()
-        n_control = n_tau - n_state
-        if self.add_goal_constraint:
-            A = torch.zeros(n_batch, (T+2)*n_state, (T+1)*n_tau).to(F)
-            b = torch.zeros(n_batch, (T+2)*n_state).to(F)
-        else:
-            A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
-            b = torch.zeros(n_batch, (T+1)*n_state).to(F)
-        A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
-        A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
-        A[:, T*n_state:(T+1)*n_state, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
-        if self.add_goal_constraint:
-            A[:, (T+1)*n_state:, -(n_tau):-(n_control)] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
-            b[:, (T+1)*n_state:] = x0*0 # set to goal
-        b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
-        b[:, T*n_state:(T+1)*n_state] = x0
-        return A, b
-
-    def compute_Qq_dense(self, C, c):
-        T, n_batch, n_tau, n_tau = C.size()
-        Q = torch.zeros(n_batch, (T)*n_tau, (T)*n_tau).to(C)
-        Q[:, self.Q_slices_xu0, self.Q_slices_xu1] = C.transpose(0,1).contiguous().view(n_batch, -1)
-        q = c.transpose(0,1).contiguous().view(n_batch, -1)
-        return Q, q
-    
-    def compute_Gh_dense(self, x0):
-        T, n_batch, n_state, n_ctrl = self.T, self.n_batch, self.n_state, self.n_ctrl
-        n_tau = n_state + n_ctrl
-        if self.u_upper is None:
-            G = torch.zeros(n_batch, n_ctrl, (T)*n_tau).to(x0)
-            h = torch.ones(n_batch, n_ctrl).to(x0)
-            G[:, torch.arange(n_ctrl), torch.arange(n_ctrl)+(T-1)*n_tau+n_state] = 1
-            # h[:, :] *= self.u_upper
-        else:
-            G = torch.zeros(n_batch, 2*T*n_ctrl, (T)*n_tau).to(x0)
-            h = torch.ones(n_batch, 2*T*n_ctrl).to(x0)
-            G[:, self.G_slices_uu0, self.G_slices_uu1] = 1.0
-            G[:, self.G_slices_uu0+T*n_ctrl, self.G_slices_uu1] = -1.0
-            h[:, :T*n_ctrl] *= self.u_upper
-            h[:, T*n_ctrl:] *= -self.u_lower
-        return G, h
-
-    # def compute_Gh_dense(self):
-    #     T, n_batch, n_state, n_ctrl = self.T, self.n_batch, self.n_state, self.n_ctrl
-    #     n_tau = n_state + n_ctrl
-    #     G = torch.zeros(n_batch, n_ctrl, (T)*n_tau)
-    #     h = torch.ones(n_batch, n_ctrl)
-    #     G[:, torch.arange(n_ctrl), torch.arange(n_ctrl)+(T-1)*n_tau+n_state] = 1
-    #     h[:, :] *= self.u_upper
-    #     return G, h
-
     def compute_cost(self, xu, cost):
+        # ipdb.set_trace()
         C = cost.C.transpose(0,1)
         c = cost.c.transpose(0,1)
+        if self.diag_cost:
+            return 0.5*(( xu * C * xu ).sum(-1) + ( c * xu ).sum(-1)).sum(dim=-1)
         return 0.5*((xu.unsqueeze(-1)*C).sum(dim=-2)*xu).sum(dim=-1).sum(dim=-1) + (xu*c).sum(dim=-1).sum(dim=-1)
+    
+    def compute_cost_gradient(self, xu, cost):
+        # ipdb.set_trace()
+        C = cost.C.transpose(0,1)
+        c = cost.c.transpose(0,1)
+        if self.diag_cost:
+            return C*xu + c
+        return torch.cat((C*xu, c), dim=-1)
