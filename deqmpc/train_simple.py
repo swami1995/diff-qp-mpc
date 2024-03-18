@@ -4,7 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.autograd as autograd
-import sys, os
+import sys, os, time
 sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--lastqp_solve", action="store_true")
     parser.add_argument("--qp_solve", action="store_true")
     parser.add_argument("--pooling", type=str, default="mean")
+    parser.add_argument("--solver_type", type=str, default='al')
 
     args = parser.parse_args()
     seeding(args.seed)
@@ -81,6 +82,7 @@ def main():
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
     losses_end = []
+    time_diffs = []
 
     # run imitation learning using gt_trajs
     for i in range(5000):
@@ -89,12 +91,14 @@ def main():
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
 
         traj_sample["state"] = unnormalize_states(traj_sample["state"])
-        iter_qp_solve = False if (i < 1000 or not args.pretrain) else True
+        iter_qp_solve = True#False if (i < 1000 or not args.pretrain) else True
         qp_solve = iter_qp_solve and args.qp_solve # warm start only after 1000 iterations
         lastqp_solve = args.lastqp_solve and iter_qp_solve
         if args.deq:
             loss = 0.0
+            start = time.time()
             trajs = policy(traj_sample["state"][:, 0], traj_sample["state"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
+            end = time.time()
             for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = (
                     torch.abs(
@@ -137,7 +141,7 @@ def main():
                     .mean()
                 )
             loss_end = torch.Tensor([0.0])
-
+        time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
         losses.append(loss.item())
@@ -156,6 +160,8 @@ def main():
                 np.mean(losses) / args.deq_iter,
                 "loss_end: ",
                 np.mean(losses_end),
+                "avg time: ",
+                np.mean(time_diffs)
             )
             if args.save:
                 torch.save(policy.state_dict(), "./model/" + args.name)
@@ -165,6 +171,7 @@ def main():
             
             losses = []
             losses_end = []
+            time_diffs = []
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)   
 

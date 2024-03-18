@@ -21,7 +21,7 @@ def QPFunction(eps=1e-12, verbose=0, notImprovedLim=3,
                  check_Q_spd=True):
     class QPFunctionFn(Function):
         @staticmethod
-        def forward(ctx, Q_, p_, G_, h_, A_, b_):
+        def forward(ctx, Q_, p_, G_, h_, A_, b_, dyn_res, cost_grad):
             """Solve a batch of QPs.
 
             This function solves a batch of QPs, each optimizing over
@@ -93,7 +93,7 @@ def QPFunction(eps=1e-12, verbose=0, notImprovedLim=3,
             if solver == QPSolvers.PDIPM_BATCHED:
                 ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
                 zhats, ctx.nus, ctx.lams, ctx.slacks = pdipm_b.forward(
-                    Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R,
+                    Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R, dyn_res, cost_grad,
                     eps, verbose, notImprovedLim, maxIter)
             elif solver == QPSolvers.CVXPY:
                 vals = torch.Tensor(nBatch).type_as(Q)
@@ -178,7 +178,7 @@ def QPFunction(eps=1e-12, verbose=0, notImprovedLim=3,
                 dps = dps.mean(0)
 
 
-            grads = (dQs, dps, dGs, dhs, dAs, dbs)
+            grads = (dQs, dps, dGs, dhs, dAs, dbs, None, None)
 
             return grads
     return QPFunctionFn.apply
@@ -218,7 +218,7 @@ def DenseQPFunction(bsz = 1,
         
     class Solver(Function):
         @staticmethod
-        def forward(ctx, Q, p, G, h, A, b, dyn_res):
+        def forward(ctx, Q, p, G, h, A, b, dyn_res, cost_grad=None):
             nBatch = Q.size(0)
             # Q = Q.double()#.cuda()
             # G = G.double()#.cuda()
@@ -229,7 +229,7 @@ def DenseQPFunction(bsz = 1,
             K, GT, AT, Didx = preprocess(Q, G, A)
 
             zhats, nus, lams, slacks, K = pdipm_b_LU.forward(
-                K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res, eps, verbose,
+                K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res, cost_grad, eps, verbose,
                 notImprovedLim, maxIter)
 
             ctx.save_for_backward(zhats, nus, lams, K, Q, p, G, A)

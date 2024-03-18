@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 import ipdb
+import time
 
 from torch.autograd import Variable
+from torch.func import hessian, vmap
 
 def print_header(msg):
     print('===>', msg)
@@ -495,7 +497,7 @@ def LBFGS_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, rho=1, Hinv=1, 
             "threshold": threshold,
             "gx": lowest_gx}
 
-def Newton_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, rho=1, Hinv=1, ysize=1, ls=False, name="unknown", idx=False, x_size=None, printi=True):
+def Newton_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, ls=False):
     bsz, total_hsize, n_elem = x0.size() # (bsz, T, xd+ud)
     dev = x0.device
 
@@ -518,7 +520,7 @@ def Newton_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, rho=1, Hinv=1,
         merit = meritfn(x_est, grad=True).mean()
         grad = torch.autograd.grad(merit, x_est)[0]
         meritfn_mean = lambda x: meritfn(x, grad=True).mean()
-        Hess = torch.autograd.functional.hessian(meritfn_mean, (x_est))
+        Hess = hessian(meritfn_mean, (x_est))
         # Hess = Hess + torch.eye(total_hsize, device=dev).unsqueeze(0).expand(bsz, total_hsize, total_hsize) * eps
         
         # Solve for the newton step
@@ -561,6 +563,217 @@ def Newton_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, rho=1, Hinv=1,
             "threshold": threshold,
             "gx": gx}
 
+class NewtonAL(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, g, meritfn, dyn_fn, cost_fn, merit_hess, xi, x0, z, lam, rho, Q, q, Hess, threshold, eps, ls):
+        bsz, T, n_elem = xi.size() # (bsz, T, xd+ud)
+        dev = xi.device
+
+        meritfnQ = lambda x, grad=False : meritfn(x, Q, q, lam, grad=grad)
+        gQ = lambda x, z, grad=False : g(x, z, Q, q, grad)
+        cost_fnQ = lambda x : cost_fn(x, Q, q)
+        meritfn_mean = lambda x, Qi, qi, yi, x0i, rhoi: meritfn(x.view((1,T,n_elem)), Qi[None].transpose(0,1).view((1,T,n_elem)), qi[None].transpose(0,1).view((1,T,n_elem)), yi[None], x0i[None], rhoi[None], grad=True).mean()
+
+        x_est = xi           # (bsz, 2d, L')
+        gx = gQ(x_est, z)  # (bsz, 2d, L')
+        cost = cost_fnQ(x_est) 
+        dyn_res = dyn_fn(x_est)
+        tnstep = 0
+
+        # Solve for newton steps on the augmented lagrangian
+        nstep = 0
+        prot_break = False
+        lowest_gx = gx
+        lowest_step = 0
+        old_dyn_res = torch.norm(dyn_res).item()
+        # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(gx).item())
+        init_update_norm = gx.norm().item()
+        update_norm = init_update_norm
+        Q_tr = Q.transpose(0,1)
+        q_tr = q.transpose(0,1)
+        stepsz = 1
+        # reg = torch.ones(bsz, device=dev, dtype=xi.dtype)*1e-8
+        # status = torch.ones(bsz, device=dev, dtype=xi.dtype)
+        rho_new = rho
+        # Hess = vmap(hessian(meritfn_mean))(x_est.reshape(bsz, -1), Q_tr, q_tr, lam, x0, rho_new).reshape(bsz, T*3,T*3)
+        # Hess = merit_hess(x_est)
+        # U, info = torch.linalg.cholesky_ex(Hess)
+        # U = None
+        cholesky_fail = torch.tensor(False)
+        # if torch.any(info):
+        #     cholesky_fail = torch.tensor(True)
+            # Hesses = Hess[info > 0]
+            # for H in Hesses:
+            #     eigs = torch.linalg.eigvals(H).real
+            #     neg_eigs = eigs[eigs < 0]
+            #     if neg_eigs.nelement() > 0:
+            #         print(neg_eigs)
+            # print("Cholesky failed")
+        # ipdb.set_trace()
+        while torch.norm(gx).item() > threshold and nstep < 4 and stepsz > 1e-8:# and update_norm > 1e-3*init_update_norm:
+            nstep += 1
+            
+            # Compute the hessian and gradient of the augmented lagrangian
+            # ipdb.set_trace()
+            with torch.enable_grad():
+                x_est.requires_grad_(True)
+                merit = meritfnQ(x_est)#, grad=True)
+                merit_mean = merit.sum()
+                grad = torch.autograd.grad(merit_mean, x_est)[0]
+                Hess = merit_hess(x_est)
+                # Hess = hessian(meritfn_mean, (x_est.reshape(bsz, -1)), vectorize=True)
+                # Hess = vmap(hessian(meritfn_mean))(x_est.reshape(bsz, -1), Q_tr, q_tr, lam, x0, rho_new)
+            # Hess = Hess + torch.eye(total_hsize, device=dev).unsqueeze(0).expand(bsz, total_hsize, total_hsize) * eps
+            
+            # Solve for the newton step
+            stepsz = 0
+            reg = 0#reg*10*(1-status) + status*1e-5
+            # Hess = Hess.reshape(bsz, T*3,T*3)
+            # eye = torch.eye(T*3, device=dev).to(Hess).unsqueeze(0).expand(bsz, T*3, T*3)
+            # while stepsz < 1e-5:
+            if not cholesky_fail:
+                U, info = torch.linalg.cholesky_ex(Hess)
+                update = -torch.cholesky_solve(grad.reshape(bsz, -1, 1), U).reshape(bsz,T,3)
+            else:
+                update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(bsz,T,3)
+            if ls:
+                x_est, new2_objective, stepsz, status = line_search_newton(update, x_est, meritfnQ, merit)
+            else:
+                x_est = x_est + update
+                new2_objective = meritfnQ(x_est).mean().item()
+            # reg *= 10
+            # x_est = x_est + stepsz * update
+            # gx = gQ(x_est, z)
+            # cost = cost_fnQ(x_est)
+            dyn_res = dyn_fn(x_est)
+            # update_norm = update.norm().item()
+            new_dyn_res = torch.norm(dyn_res).item()
+            # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), new2_objective, torch.norm(gx).item(), torch.norm(update).item(), stepsz)
+
+            ## exit creteria
+            if abs(old_dyn_res- new_dyn_res)/new_dyn_res < 1e-3 or new_dyn_res < 1e-3:
+                break
+                
+            old_dyn_res = new_dyn_res
+            # rho_new = rho*status[:,None] + rho_new/2*(1-status[:,None])#min(, rho_init*100)
+        # print(nstep)
+        ctx.save_for_backward(Hess, U, x_est, cholesky_fail)
+        Us, VTs = None, None
+        return x_est, gx, status
+    
+    @staticmethod
+    def backward(ctx, x_grad, gx_grad, status_grad):
+        # implicit gradients w.r.t Q and q
+        H, U, x, cholesky_fail = ctx.saved_tensors
+        bsz = x_grad.size(0)
+
+        # solve Hx + g = 0, H = d^2f/dx^2, g is x_grad
+        if cholesky_fail:
+            inp_grad = -torch.linalg.solve(H, x_grad.view(bsz, -1)).reshape(x_grad.shape)
+        else:
+            inp_grad = -torch.cholesky_solve(x_grad.view(bsz, -1, 1), U).reshape(x_grad.shape)
+
+        # Compute the gradient w.r.t. the Q and q 
+        Q_grad = inp_grad*x # if Q is diag
+        # Q_grad = torch.bmm(inp_grad, x.transpose(1,2)) # if Q is not diag
+        q_grad = inp_grad
+
+        return None, None, None, None, None, None, None, None, None, None, Q_grad.transpose(0,1), q_grad.transpose(0,1), None, None, None, None
+
+def line_search_newton(update, x_est, meritfnQ, merit):
+    stepsz = torch.ones(x_est.shape[0], device=x_est.device)*2
+    mask = torch.ones(x_est.shape[0], device=x_est.device)
+    # while mask.sum() > 0 and stepsz.min() > 1e-6:
+    #     stepsz = 0.5*stepsz*mask.float() + stepsz*(1-mask.float())
+    #     x_next = x_est + stepsz[:,None,None] * update
+    #     new2_objective = meritfnQ(x_next)
+    #     mask = new2_objective > merit
+    stepszs = 2**(-torch.arange(20, device=x_est.device).float().unsqueeze(1).expand(20, x_est.shape[0]))
+    x_next = (x_est[None] + stepszs[:,:,None,None] * update[None])
+    new2_objective = vmap(meritfnQ)(x_next)
+    # ipdb.set_trace()
+    new2_objective_min = torch.min(new2_objective, dim=0)
+    batch_idxs = torch.arange(x_est.shape[0], device=x_est.device)
+    stepsz = stepszs[new2_objective_min.indices, batch_idxs]
+    x_next = x_next[new2_objective_min.indices, batch_idxs]
+    new2_objective = new2_objective_min.values
+    status = (new2_objective < merit).float()
+    # if not status.all():
+    #     print("Warning: Line search failed")
+    x_est = status[:,None,None] * x_next + (1-status)[:,None,None] * x_est
+    return x_est, new2_objective.mean().item(), stepsz.mean().item(), status
+                    
+def check_fd_grads(fn, x, eps=1e-8):
+    x_shape = x.shape
+    x = x.reshape(-1)
+    x = x.clone().detach().requires_grad_(True)
+    # ipdb.set_trace()
+    y = fn(x.view(x_shape))
+    # ipdb.set_trace()
+    y = y.norm()
+    # ipdb.set_trace()
+    grad = torch.autograd.grad(y, x)[0]
+    J = torch.zeros(grad.shape).to(x)
+    for i in range(x.nelement()):
+        x1 = x.clone().detach()
+        x1[i] += eps
+        y1 = fn(x1.view(x_shape))
+        y1 = y1.norm()
+        x2 = x.clone().detach()
+        x2[i] -= eps
+        y2 = fn(x2.view(x_shape))
+        y2 = y2.norm()
+        J[i] = (y1 - y2) / (2*eps)
+        # ipdb.set_trace()
+    print(torch.norm(J-grad)/torch.norm(grad), torch.norm(J), torch.norm(grad), torch.norm(J-grad))
+    ipdb.set_trace()
+    return grad, J
+
+def check_grads(fn, x, eps=1e-8):
+    # perform gradient descent or adam updates and check if the loss decreases
+    x_shape = x.shape
+    x = x.reshape(-1)
+    # define optimizer 
+    optimizer = torch.optim.Adam([x], lr=0.1)
+    # optimizer = torch.optim.SGD([x], lr=0.1)
+
+    for i in range(100):
+        optimizer.zero_grad()
+        y = fn(x.view(x_shape))
+        y = y.norm()
+        y.backward()
+        optimizer.step()
+        print(y.item())
+    
+    return x
+
+class CholeskySolver(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, H, b):
+        # don't crash training if cholesky decomp fails
+        U, info = torch.linalg.cholesky_ex(H)
+
+        if torch.any(info):
+            ctx.failed = True
+            return torch.zeros_like(b)
+
+        xs = torch.cholesky_solve(b, U)
+        ctx.save_for_backward(U, xs)
+        ctx.failed = False
+
+        return xs
+
+    @staticmethod
+    def backward(ctx, grad_x):
+        if ctx.failed:
+            return None, None
+
+        U, xs = ctx.saved_tensors
+        dz = torch.cholesky_solve(grad_x, U)
+        dH = -torch.matmul(xs, dz.transpose(-1,-2))
+
+        return dH, dz
+    
 def scalar_search_armijo(phi, phi0, derphi0, c1=1e-4, alpha0=1, amin=0): 
     ### TODO : Parallelize this search!
     ite = 0

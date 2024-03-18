@@ -26,7 +26,7 @@ https://github.com/locuslab/qpth/issues/6
 class KKTSolvers(Enum):
     QR = 1
 
-def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res,
+def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res, cost_grad=None,
             eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20):
     '''
     A primal dual interior point method to solve the sparse QP given by the kkt system in Ki
@@ -65,6 +65,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res,
         #                             torch.cat([G, I1, torch.zeros(nBatch, nineq, neq+nineq).type_as(Q)], dim=-1),
         #                             torch.cat([A, torch.zeros(nBatch, neq, neq+nineq*2).type_as(Q)], dim=-1),
         #                         ], dim=-2)
+        # ipdb.set_trace()
         x, s, z, y = solve_kkt(K, Ktilde, p, torch.zeros(nBatch, nineq).to(p),
                                -h, -b if b is not None else None)
         # ipdb.set_trace()
@@ -84,9 +85,13 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res,
 
     for i in range(maxIter):
         # affine scaling direction
-        
-        rx = ((AT.bmm(y.unsqueeze(-1)).squeeze(-1) if neq > 0 else 0.) +
-                GT.bmm(z.unsqueeze(-1)).squeeze(-1) + Q.bmm(x.unsqueeze(-1)).squeeze(-1) + p)
+        if cost_grad is None:
+            rx = ((AT.bmm(y.unsqueeze(-1)).squeeze(-1) if neq > 0 else 0.) +
+                GT.bmm(z.unsqueeze(-1)).squeeze(-1) + 
+                Q.bmm(x.unsqueeze(-1)).squeeze(-1) + p)
+        else:
+            rx = ((AT.bmm(y.unsqueeze(-1)).squeeze(-1) if neq > 0 else 0.) +
+                GT.bmm(z.unsqueeze(-1)).squeeze(-1) + cost_grad(x))
         rs = s*z
         rz = (G.bmm(x.unsqueeze(-1)).squeeze(-1) + s - h)
         ry = dyn_res(x)#(A.bmm(x.unsqueeze(-1)).squeeze(-1) - b)
@@ -230,6 +235,7 @@ def solve_kkt(K, Ktilde,
         # ipdb.set_trace()
         res = r - K.bmm(l.unsqueeze(-1)).squeeze(-1)
 
+    # print("solved")
     solx = l[:, :nz]
     sols = l[:, nz:nz + nineq]
     solz = l[:, nz + nineq:nz + 2 * nineq]

@@ -2,6 +2,7 @@ import torch
 from torch.autograd import Function, Variable
 from torch.nn import Module
 from torch.nn.parameter import Parameter
+from torch.func import hessian, vmap, jacrev
 
 import numpy as np
 import numpy.random as npr
@@ -10,7 +11,7 @@ from collections import namedtuple
 
 from enum import Enum
 
-import sys
+import sys, time
 
 from . import util
 # from .pnqp import pnqp
@@ -176,6 +177,7 @@ class MPC(Module):
         self.u_zero_I = util.detach_maybe(u_zero_I)
         self.u_init = util.detach_maybe(u_init)
         self.x_init = util.detach_maybe(x_init)
+        device = self.u_upper.device
         self.qp_iter = qp_iter
         self.grad_method = grad_method
         self.delta_u = delta_u
@@ -197,10 +199,10 @@ class MPC(Module):
         self.single_qp_solve = single_qp_solve
         self.add_goal_constraint = add_goal_constraint
         self.diag_cost = True# diag_cost
-        self.al_iter = 20
+        self.al_iter = 2
         self.neq = n_state*(T-1) + n_state
         self.nineq = 0
-        self.dyn_res_crit = 1e-6
+        self.dyn_res_crit = 1e-4
         self.dyn_res_factor = 10
         self.rho_prev = 1.0
         if self.add_goal_constraint:
@@ -211,60 +213,33 @@ class MPC(Module):
             self.nineq += n_ctrl*T*2
         if self.x_lower is not None:
             self.nineq += n_state*T*2
+        self.lamda_prev = torch.zeros(self.n_batch, self.neq+self.nineq).to(self.u_upper)#.type_as(x)#.reshape(self.n_batch, self.T, -1) 
+        self.dyn_res_prev = 1000000
         # return self.Qi, self.Gi, self.Ai
 
-    def forward(self, x0, cost, dx, dx_true=None):
+    def forward(self, x0, cost, dx, dx_true=None, u_init=None, x_init=None):
         # QuadCost.C: [T, n_batch, n_tau, n_tau]
         # QuadCost.c: [T, n_batch, n_tau]
         if dx_true is None:
             self.dx_true = dx
         else:
             self.dx_true = dx_true
-        assert isinstance(cost, QuadCost) or \
-            isinstance(cost, Module) or isinstance(cost, Function)
-        assert isinstance(dx, LinDx) or \
-            isinstance(dx, Module) or isinstance(dx, Function)
 
         # TODO: Clean up inferences, expansions, and assumptions made here.
         if self.n_batch is not None:
             n_batch = self.n_batch
-        elif isinstance(cost, QuadCost) and cost.C.ndimension() == 4:
-            n_batch = cost.C.size(1)
         else:
-            print('MPC Error: Could not infer batch size, pass in as n_batch')
-            sys.exit(-1)
-
-
-        # if c.ndimension() == 2:
-        #     c = c.unsqueeze(1).expand(self.T, n_batch, -1)
-
-        if isinstance(cost, QuadCost):
-            C, c = cost
-            if C.ndimension() == 2:
-                # Add the time and batch dimensions.
-                C = C.unsqueeze(0).unsqueeze(0).expand(
-                    self.T, n_batch, self.n_state+self.n_ctrl, -1)
-            elif C.ndimension() == 3:
-                # Add the batch dimension.
-                C = C.unsqueeze(1).expand(
-                    self.T, n_batch, self.n_state+self.n_ctrl, -1)
-
-            if c.ndimension() == 1:
-                # Add the time and batch dimensions.
-                c = c.unsqueeze(0).unsqueeze(0).expand(self.T, n_batch, -1)
-            elif c.ndimension() == 2:
-                # Add the batch dimension.
-                c = c.unsqueeze(1).expand(self.T, n_batch, -1)
-
-            if C.ndimension() != 4 or c.ndimension() != 3:
-                print('MPC Error: Unexpected QuadCost shape.')
-                sys.exit(-1)
-            cost = QuadCost(C, c)
+            n_batch = cost.C.size(1)
 
         # ipdb.set_trace()
+        assert cost.C.ndimension() == 4
         assert x0.ndimension() == 2 and x0.size(0) == n_batch
 
-        if self.u_init is None:
+        if u_init is not None:
+            u = u_init
+            if u.ndimension() == 2:
+                u = u.unsqueeze(1).expand(self.T, n_batch, -1).clone()
+        elif self.u_init is None:
             u = torch.zeros(self.T, n_batch, self.n_ctrl).type_as(x0.data)
         else:
             u = self.u_init
@@ -272,10 +247,13 @@ class MPC(Module):
                 u = u.unsqueeze(1).expand(self.T, n_batch, -1).clone()
         u = u.type_as(x0.data)
 
-        if self.x_init is None:
+        if x_init is not None:
+            x = x_init
+            if x.ndimension() == 2:
+                x = x.unsqueeze(1).expand(self.T, n_batch, -1).clone()
+        elif self.x_init is None:
             # x = torch.zeros(self.T, n_batch, self.n_state).type_as(x0.data)
             x = self.rollout(x0, u, dx)#[:-1]
-            # ipdb.set_trace()
         else:
             x = self.x_init
             if x.ndimension() == 2:
@@ -298,13 +276,220 @@ class MPC(Module):
         else:
             x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
         
+        self.x_init = x
+        self.u_init = u
         return (x, u)
     
     def single_qp(self, x, u, dx, x0, cost, lamda_init=None, rho_init=None):
+        x = x.transpose(0,1).double()
+        u = u.transpose(0,1).double()
+        x0 = x0.double()
+        if lamda_init is None:
+            lamda = self.lamda_prev.double()
+        else:
+            lamda = lamda_init
+        if rho_init is None:
+            rho = self.rho_prev
+        else:
+            rho = rho_init
+
+        x_old, u_old = x, u
+        with torch.no_grad():
+            dyn_res_clamp_start = self.dyn_res(torch.cat((x, u), dim=2), dx, x0, res_type='clamp').view(self.n_batch, -1)
+            cost_start = self.compute_cost(torch.cat((x, u), dim=2), cost.C.double(), cost.c.double())
+            dyn_res_clamp = dyn_res_clamp_start = dyn_res_clamp_start.norm(dim=-1)
+            if not self.just_initialized:
+                cost_lam_hist = self.cost_lam_hist
+                cost_hist = torch.stack(cost_lam_hist[0][::-1], dim=0)
+                # ipdb.set_trace()
+                cost_sim_idx = torch.max(cost_hist < cost_start[None], dim=0)[1]
+                lamda_hist = torch.stack(cost_lam_hist[1][::-1], dim=0)
+                rho_hist = torch.stack(cost_lam_hist[2][::-1], dim=0)
+                batch_idx = torch.arange(self.n_batch, device=x.device, dtype=torch.long)
+                lamda_hist = lamda_hist[cost_sim_idx, batch_idx]
+                lamda = lamda*(lamda_hist.norm(dim=-1)/lamda.norm(dim=-1)).unsqueeze(-1)
+                rho = rho_hist[cost_sim_idx, batch_idx]
+        
+        # if dyn_res_clamp_start > self.dyn_res_prev*2:
+        #     dyn_res_ratio = dyn_res_clamp_start/self.dyn_res_prev
+        #     rho = rho/dyn_res_ratio
+        rho_init = rho
+        # ipdb.set_trace()
+        # print(dyn_res_clamp_start)
+        Q, q = cost.C.double(), cost.c.double()
+        cost_lam_hist = [[cost_start], [lamda], [rho]]
+        
+        # Augmented Lagrangian updates with broyden for root finding of the residual
+        for i in range(self.al_iter):
+            xu = torch.cat((x, u), dim=2).detach().clone()
+            # ipdb.set_trace()
+            with torch.no_grad():
+                y = lamda + rho*self.dyn_res(xu, dx, x0, res_type='clamp')
+            # input = torch.cat((x, u), dim=2)
+            # Hinv = 1/cost.C.transpose(0,1) # Might need to adaptively regularize this based on rho and solver progress/step size. 
+            fn = lambda xi, yi, Qi, qi, y_update=False : self.grad_res(xi, yi, Qi, qi, dx, x0, lamda, rho, y_update)
+            dyn_fn = lambda xi : self.dyn_res(xi, dx, x0)
+            cost_fn = lambda xi, Qi, qi : self.compute_cost(xi, Qi, qi)
+            merit_fn = lambda xi, Qi, qi, yi, x0i=x0, rhoi=rho, grad=False : self.merit_function(xi, Qi, qi, dx, x0i, yi, rhoi, grad)
+            # out = util.broyden_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=10, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
+            # out = util.LBFGS_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=80, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
+            # out = util.Newton_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=1e-3, eps=1e-6, ls=True)
+            newton_lamda = lambda Qi: util.NewtonAL.apply(fn, merit_fn, dyn_fn, cost_fn, xu, x0, y, lamda, rho, Qi, q, 1e-3, 1e-6, True)[0]
+            # ls_lamda = lambda qi: util.CholeskySolver.apply(torch.diag_embed(Q.squeeze()), -qi.squeeze().unsqueeze(-1))
+            # q = torch.randn_like(q)
+            # util.check_fd_grads(ls_lamda, q, eps=1e-10)
+            # util.check_fd_grads(newton_lamda, Q, eps=1e-10)
+            # util.check_grads(newton_lamda, q, eps=1e-6)
+            merit_hess = lambda xi : self.merit_hessian(xi, Q, q, dx, x0, lamda, rho)
+            Hess = None#merit_hess(xu)
+            out = util.NewtonAL.apply(fn, merit_fn, dyn_fn, cost_fn, merit_hess, xu, x0, y, lamda, rho, Q, q, Hess, 1e-3, 1e-6, True)
+            # out = util.GD_AL(fn, input, threshold=10, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, dyn_fn = dyn_fn, cost_fn = cost_fn)
+            # x_res, lam_res = self.grad_res(x, lamda, cost, dx, x0, lamda, rho)    
+
+            x_new, u_new = out[0][:,:,:self.n_state], out[0][:,:,self.n_state:]
+            status = out[2]
+            delta_x = x_new - x
+            delta_u = u_new - u
+            x, u = x_new, u_new
+            delta_xu = torch.cat((delta_x, delta_u), dim=2)
+            with torch.no_grad():
+                dyn_res, dyn_res_clamp = self.dyn_res(torch.cat((x_new, u_new), dim=2), dx, x0, res_type='both')
+                lamda = lamda + rho*dyn_res
+                lamda = torch.cat([lamda[:, :self.neq:], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
+                cost_res = self.compute_cost(out[0], Q, q)
+                dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
+                # print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
+                
+                rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
+                cost_lam_hist[0].append(cost_res)
+                cost_lam_hist[1].append(lamda)
+                cost_lam_hist[2].append(rho)
+                # if  torch.logical_or(dyn_res_clamp < self.dyn_res_crit, dyn_res_clamp < dyn_res_clamp_start/self.dyn_res_factor).all():
+                #     break
+
+        # ipdb.set_trace()
+        self.cost_lam_hist = cost_lam_hist
+        self.lamda_prev = lamda
+        self.rho_prev = rho
+        self.dyn_res_prev = dyn_res_clamp
+        self.just_initialized = False
+
+        delta_x = (x - x_old).transpose(0,1).float()
+        delta_u = (u - u_old).transpose(0,1).float()
+        return delta_x, delta_u, None
+    
+    def merit_function(self, xu, Q, q, dx, x0, lamda, rho, grad=False):
+        bsz = xu.size(0)
+        cost_total = self.compute_cost(xu, Q, q)
+        res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
+        # ipdb.set_trace()
+        if grad:
+            return cost_total +  0.5*rho[:,0]*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1)
+        else:
+            return cost_total + (lamda*res).view(bsz, -1).sum(dim=1) + 0.5*rho[:,0]*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1)
+        # else:
+        #     return cost_total.mean() + (lamda*res_clamp).view(bsz, -1).sum(dim=1).mean() + 0.5*rho*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1).mean()
+    
+    def merit_hessian(self, xu, Q, q, dx, x0, lamda, rho):
+        bsz = xu.size(0)
+        xi_shape = (1, xu.shape[1], xu.shape[2])
+        # res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
+        dyn_res_fn = lambda xi, xi0 : self.dyn_res(xi.view(xi_shape), dx, xi0.view(1, x0.shape[1]), res_type='clamp')[0]
+        # constraint jacobian
+        constraint_jac = vmap(jacrev(dyn_res_fn))(xu.view(bsz, -1), x0)
+        constraint_hess = torch.bmm(constraint_jac.permute(0,2,1), constraint_jac)
+        if self.diag_cost:
+            Qfull = torch.diag_embed(Q.view(bsz, -1))
+        return Qfull + rho[:,:,None]*constraint_hess
+    def dyn_res_eq(self, x, u, dx, x0):
+        " split x into state and control and compute dynamics residual using dx"
+        # ipdb.set_trace()
+        bsz = x.size(0)
+        if isinstance(dx, LinDx):
+            x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
+        else:
+            x_next = dx(x, u)[:,:-1]
+            
+        res = (x_next - x[:,1:,:])#.reshape(self.n_batch, -1)
+        res_init = (x[:,0,:] - x0).reshape(bsz, 1, -1)
+        # print(res.shape, res_init.shape, x0.shape, x.shape)
+        if self.add_goal_constraint:
+            res_goal = (x[:,-1,:] - self.x_goal).reshape(bsz, -1)
+            res = torch.cat((res, res_init, res_goal), dim=1)
+        else:
+            res = torch.cat((res, res_init), dim=1)
+        res = res.reshape(bsz, -1)
+        return res
+    
+    def dyn_res_ineq(self, x, u, dx, x0):
+        # Add state constraints if self.x_lower and self.x_upper are not None
+        bsz = x.size(0)
+        res = None
+        if self.x_lower is not None:
+            res = torch.cat((
+                x - self.x_upper, 
+                -x + self.x_lower
+                ), dim=2)
+
+        # Add control constraints if self.u_lower and self.u_upper are not None
+        if self.u_lower is not None:
+            res_u = torch.cat((
+                u - self.u_upper,
+                -u + self.u_lower
+                ), dim=2)
+            if res is None:
+                res = res_u
+            else:
+                res = torch.cat((res,res_u), dim=2)
+        
+        # Add other inequality constraints if self.ineqG and self.ineqh are not None
+        if self.ineqG is not None:
+            res_G = torch.bmm(self.ineqG, x.unsqueeze(-1)) - self.ineqh
+            if res is None:
+                res = res_G
+            else:
+                res = torch.cat((res,res_G), dim=2)
+        res = res.reshape(bsz, -1)
+        res_clamp = torch.clamp(res, min=0)
+        return res, res_clamp
+    
+    def dyn_res(self, x, dx, x0, res_type='clamp'):
+        x = x.reshape(-1, self.T, self.n_state+self.n_ctrl)
+        x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
+        # Equality residuals
+        res_eq = self.dyn_res_eq(x, u, dx, x0)
+        # Inequality residuals
+        res_ineq, res_ineq_clamp = self.dyn_res_ineq(x, u, dx, x0)
+        if res_type == 'noclamp':
+            return torch.cat((res_eq, res_ineq), dim=1)
+        elif res_type == 'clamp':
+            return torch.cat((res_eq, res_ineq_clamp), dim=1)
+        else:
+            return torch.cat((res_eq, res_ineq), dim=1), torch.cat((res_eq, res_ineq_clamp), dim=1)
+
+    def grad_res(self, x, y, Q, q, dx, x0, lam, rho, y_update=False):
+        " compute the gradient of the residual with respect to x"
+        # ipdb.set_trace()
+        if y_update:
+            return lam + rho*self.dyn_res(x, dx, x0)
+        cost_grad = self.compute_cost_gradient(x, Q, q)
+        x.requires_grad_(True)
+        with torch.enable_grad():
+            dyn_res = self.dyn_res(x, dx, x0)
+            grad_res = torch.autograd.grad(dyn_res, x, grad_outputs=y)[0]
+        x_res = grad_res + cost_grad
+        # y_res = y/rho - lam/rho - dyn_res
+        # dr = torch.cat((x_res, y_res), dim=-1)
+        # print("residual norms : ", dr.norm(), cost_grad.norm(), dyn_res.norm())
+        # if y_update:
+        #     return lam + rho*dyn_res
+        return x_res
+
+    def solve_nonlin(self, x, u, dx, x0, cost, lamda_init=None, rho_init=None):
         x = x.transpose(0,1)
         u = u.transpose(0,1)
         if lamda_init is None:
-            lamda = torch.zeros(self.n_batch, self.neq+self.nineq).type_as(x)#.reshape(self.n_batch, self.T, -1) 
+            lamda = self.lamda_prev
         else:
             lamda = lamda_init
         if rho_init is None:
@@ -346,176 +531,33 @@ class MPC(Module):
             dyn_res, dyn_res_clamp = self.dyn_res(torch.cat((x_new, u_new), dim=2), dx, x0, res_type='both')
             lamda = lamda + rho*dyn_res
             lamda[:, self.neq:] = torch.clamp(lamda[:, self.neq:], min=0)
+            dyn_res_clamp = torch.norm(dyn_res_clamp).item()
+            if  dyn_res_clamp < self.dyn_res_crit:
+                break
+
             rho = rho*10
             x, u = x_new, u_new
-            dyn_res_clamp = torch.norm(dyn_res_clamp).item()
-            if  dyn_res_clamp < self.dyn_res_crit or dyn_res_clamp < dyn_res_clamp_start/self.dyn_res_factor:
-                break
-            ipdb.set_trace()
+        
+        self.lamda_prev = lamda
+        self.rho_prev = rho
 
         delta_x = (x - x_old).transpose(0,1)
         delta_u = (u - u_old).transpose(0,1)
         return delta_x, delta_u, out['result']
-    
-    def merit_function(self, xu, dx, x0, cost, lamda, rho, grad=False):
-        bsz = xu.size(0)
-        cost_total = self.compute_cost(xu, cost)
-        res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
-        # if grad:
-        return cost_total + (lamda*res).view(bsz, -1).sum(dim=1) + 0.5*rho*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1)
-        # else:
-        #     return cost_total.mean() + (lamda*res_clamp).view(bsz, -1).sum(dim=1).mean() + 0.5*rho*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1).mean()
-
-    def dyn_res_eq(self, x, u, dx, x0):
-        " split x into state and control and compute dynamics residual using dx"
-        # ipdb.set_trace()
-        if isinstance(dx, LinDx):
-            x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
-            # x_next = x_next[:,:-1]
-        else:
-            x_next = dx(x, u)[:,:-1]
-            
-        res = (x_next - x[:,1:,:])#.reshape(self.n_batch, -1)
-        res_init = (x[:,0,:] - x0).reshape(self.n_batch, 1, -1)
-        if self.add_goal_constraint:
-            res_goal = (x[:,-1,:] - self.x_goal).reshape(self.n_batch, -1)
-            res = torch.cat((res, res_init, res_goal), dim=1)
-        else:
-            res = torch.cat((res, res_init), dim=1)
-        res = res.reshape(self.n_batch, -1)
-        return res
-    
-    def dyn_res_ineq(self, x, u, dx, x0):
-        # Add state constraints if self.x_lower and self.x_upper are not None
-        res = None
-        if self.x_lower is not None:
-            res = torch.cat((
-                x - self.x_upper, 
-                -x + self.x_lower
-                ), dim=2)
-
-        # Add control constraints if self.u_lower and self.u_upper are not None
-        if self.u_lower is not None:
-            res_u = torch.cat((
-                u - self.u_upper,
-                -u + self.u_lower
-                ), dim=2)
-            if res is None:
-                res = res_u
-            else:
-                res = torch.cat((res,res_u), dim=2)
-        
-        # Add other inequality constraints if self.ineqG and self.ineqh are not None
-        if self.ineqG is not None:
-            res_G = torch.bmm(self.ineqG, x.unsqueeze(-1)) - self.ineqh
-            if res is None:
-                res = res_G
-            else:
-                res = torch.cat((res,res_G), dim=2)
-        res = res.reshape(self.n_batch, -1)
-        res_clamp = torch.clamp(res, min=0)
-        return res, res_clamp
-    
-    def dyn_res(self, x, dx, x0, res_type='clamp'):
-        x = x.reshape(self.n_batch, self.T, self.n_state+self.n_ctrl)
-        x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
-        # Equality residuals
-        res_eq = self.dyn_res_eq(x, u, dx, x0)
-        # Inequality residuals
-        res_ineq, res_ineq_clamp = self.dyn_res_ineq(x, u, dx, x0)
-        if res_type == 'noclamp':
-            return torch.cat((res_eq, res_ineq), dim=1)
-        elif res_type == 'clamp':
-            return torch.cat((res_eq, res_ineq_clamp), dim=1)
-        else:
-            return torch.cat((res_eq, res_ineq), dim=1), torch.cat((res_eq, res_ineq_clamp), dim=1)
-
-    def grad_res(self, x, y, cost, dx, x0, lam, rho, y_update=False):
-        " compute the gradient of the residual with respect to x"
-        # ipdb.set_trace()
-        if y_update:
-            return lam + rho*self.dyn_res(x, dx, x0)
-        cost_grad = self.compute_cost_gradient(x, cost)
-        x.requires_grad_(True)
-        dyn_res = self.dyn_res(x, dx, x0)
-        grad_res = torch.autograd.grad(dyn_res, x, grad_outputs=y)[0]
-        x_res = grad_res + cost_grad
-        # y_res = y/rho - lam/rho - dyn_res
-        # dr = torch.cat((x_res, y_res), dim=-1)
-        # print("residual norms : ", dr.norm(), cost_grad.norm(), dyn_res.norm())
-        # if y_update:
-        #     return lam + rho*dyn_res
-        return x_res
-
-    def solve_nonlin(self, x, u, dx, x0, cost):
-        best = None
-        n_not_improved = 0
-        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
-        cost_total = self.compute_cost(xhats_qpf, cost)
-        # ipdb.set_trace()
-        # print("init", cost_total.mean().item())
-        with torch.no_grad():
-            for i in range(self.qp_iter):
-                u_prev = u.clone()
-                delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
-                # ipdb.set_trace()
-
-                x, u, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
-                full_du_norm = (u - u_prev).norm()
-
-
-                if best is None:
-                    best = {
-                        'x': list(torch.split(x, split_size_or_sections=1, dim=1)),
-                        'u': list(torch.split(u, split_size_or_sections=1, dim=1)),
-                        'costs': cost_total,
-                    }
-                else:
-                    for j in range(self.n_batch):
-                        if cost_total[j] <= best['costs'][j] + self.best_cost_eps:
-                            n_not_improved = 0
-                            best['x'][j] = x[:,j].unsqueeze(1)
-                            best['u'][j] = u[:,j].unsqueeze(1)
-                            best['costs'][j] = cost_total[j]
-
-                # if self.verbose > 0:
-                #     util.table_log('lqr', (
-                #         ('iter', i),
-                #         ('mean(cost)', torch.mean(best['costs']).item(), '{:.4e}'),
-                #         ('||full_du||_max', max(full_du_norm).item(), '{:.2e}'),
-                #         # ('||alpha_du||_max', max(alpha_du_norm), '{:.2e}'),
-                #         # TODO: alphas, total_qp_iters here is for the current
-                #         # iterate, not the best
-                #         ('mean(alphas)', mean_alphas.item(), '{:.2e}'),
-                #         ('total_qp_iters', n_total_qp_iter),
-                #     ))
-                # print(i, cost_total.mean().item(), full_du_norm)
-
-                if full_du_norm < self.eps or \
-                n_not_improved > self.not_improved_lim:
-                    break
-        
-        x, u = torch.cat(best['x'], dim=1), torch.cat(best['u'], dim=1)
-        delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
-        with torch.no_grad():
-            _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
-        x = x + delta_x * alpha
-        u = u + delta_u * alpha        
-        return x, u, cost_total
 
     def single_qp_ls(self, x, u, dx, x0, cost):
         best = None
         n_not_improved = 0
-        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
-        cost_total = self.compute_cost(xhats_qpf, cost)
+        # xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        # cost_total = self.compute_cost(xhats_qpf, cost.C, cost.c)
         delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
         # with torch.no_grad():
         #     _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
         x = x + delta_x #* alpha
         u = u + delta_u# * alpha
-        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
-        cost_total = self.compute_cost(xhats_qpf, cost)
-        return x, u, cost_total
+        # xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        # cost_total = self.compute_cost(xhats_qpf, cost.C, cost.c)
+        return x, u, 0
 
 
     def line_search(self, x, u, delta_x, delta_u, dx, x0, cost):
@@ -567,18 +609,26 @@ class MPC(Module):
             x.append(new_x)
         return torch.stack(x, 0)
 
-    def compute_cost(self, xu, cost):
+    def compute_cost(self, xu, Q, q):
         # ipdb.set_trace()
-        C = cost.C.transpose(0,1)
-        c = cost.c.transpose(0,1)
+        C = Q.transpose(0,1)
+        c = q.transpose(0,1)
         if self.diag_cost:
-            return 0.5*(( xu * C * xu ).sum(-1) + ( c * xu ).sum(-1)).sum(dim=-1)
+            return (0.5*( xu * C * xu ).sum(-1) + ( c * xu ).sum(-1)).sum(dim=-1)
         return 0.5*((xu.unsqueeze(-1)*C).sum(dim=-2)*xu).sum(dim=-1).sum(dim=-1) + (xu*c).sum(dim=-1).sum(dim=-1)
     
-    def compute_cost_gradient(self, xu, cost):
+    def compute_cost_gradient(self, xu, Q, q):
         # ipdb.set_trace()
-        C = cost.C.transpose(0,1)
-        c = cost.c.transpose(0,1)
+        C = Q.transpose(0,1)
+        c = q.transpose(0,1)
         if self.diag_cost:
             return C*xu + c
         return torch.cat((C*xu, c), dim=-1)
+
+    def reinitialize(self, x):
+        self.u_init = None
+        self.x_init = None
+        self.rho_prev = torch.ones((self.n_batch,1), device=x.device, dtype=x.dtype)
+        self.lamda_prev = torch.zeros(self.n_batch, self.neq+self.nineq, device=x.device, dtype=x.dtype)
+        self.dyn_res_prev = 1000000
+        self.just_initialized = True

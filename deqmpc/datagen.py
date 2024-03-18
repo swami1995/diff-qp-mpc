@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 # import qpth.qp_wrapper as mpc
 import qpth.AL_mpc as mpc
+# import qpth.sl1qp_mpc as mpc
 import ipdb
 import os
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
@@ -38,7 +39,7 @@ class PendulumExpert:
             self.max_linesearch_iter = 5
             self.nx = env.observation_space.shape[0]
             self.nu = env.action_space.shape[0]
-            self.bsz = 1
+            self.bsz = 2
 
             self.u_lower = torch.tensor(
                 env.action_space.low, dtype=torch.float32
@@ -85,6 +86,7 @@ class PendulumExpert:
     def optimize_action(self, state):
         """Solve the MPC problem for the given state."""
         # ipdb.set_trace()
+        state = torch.cat([state, state], dim=0)
         nominal_states, nominal_actions = self.ctrl(
             state.double(), self.cost, env.dynamics
         )
@@ -491,7 +493,7 @@ if __name__ == "__main__":
     seeding(2)
     print("Starting!")
     # ipdb.set_trace()
-    env = PendulumEnv(stabilization=True)
+    env = PendulumEnv(stabilization=False)
     # env = IntegratorEnv()
     # save_expert_traj(env, 300, "sac")
     save_expert_traj(env, 2, "mpc")
