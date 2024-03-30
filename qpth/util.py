@@ -633,9 +633,13 @@ class NewtonAL(torch.autograd.Function):
             # while stepsz < 1e-5:
             if not cholesky_fail:
                 U, info = torch.linalg.cholesky_ex(Hess)
-                update = -torch.cholesky_solve(grad.reshape(bsz, -1, 1), U).reshape(bsz,T,3)
+                update = -torch.cholesky_solve(grad.reshape(bsz, -1, 1), U).reshape(bsz,T,n_elem)
+                if update.isnan().sum() > 0 or update.isinf().sum() > 0:
+                    # ipdb.set_trace()
+                    update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(bsz,T,n_elem)
+                    cholesky_fail = torch.tensor(True)
             else:
-                update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(bsz,T,3)
+                update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(bsz,T,n_elem)
             if ls:
                 x_est, new2_objective, stepsz, status = line_search_newton(update, x_est, meritfnQ, merit)
             else:
@@ -645,6 +649,8 @@ class NewtonAL(torch.autograd.Function):
             # x_est = x_est + stepsz * update
             # gx = gQ(x_est, z)
             # cost = cost_fnQ(x_est)
+            if x_est.isnan().sum() > 0 or x_est.isinf().sum() > 0:
+                ipdb.set_trace()
             dyn_res = dyn_fn(x_est)
             # update_norm = update.norm().item()
             new_dyn_res = torch.norm(dyn_res).item()
@@ -657,7 +663,10 @@ class NewtonAL(torch.autograd.Function):
             old_dyn_res = new_dyn_res
             # rho_new = rho*status[:,None] + rho_new/2*(1-status[:,None])#min(, rho_init*100)
         # print(nstep)
-        ctx.save_for_backward(Hess, U, x_est, cholesky_fail)
+        try:
+            ctx.save_for_backward(Hess, U, x_est, cholesky_fail)
+        except:
+            ipdb.set_trace()
         Us, VTs = None, None
         return x_est, gx, status
     

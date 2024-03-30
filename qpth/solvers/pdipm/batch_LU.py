@@ -31,7 +31,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res, cost_grad=None,
     '''
     A primal dual interior point method to solve the sparse QP given by the kkt system in Ki
     '''
-    # verbose = 1
+    verbose = -1
     nineq, nz = G.shape[1], G.shape[2]
     neq = A.shape[1]
     nBatch = Q.shape[0]

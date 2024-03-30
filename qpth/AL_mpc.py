@@ -7,8 +7,6 @@ from torch.func import hessian, vmap, jacrev
 import numpy as np
 import numpy.random as npr
 
-from collections import namedtuple
-
 from enum import Enum
 
 import sys, time
@@ -19,14 +17,7 @@ from . import util
 # from .dynamics import CtrlPassthroughDynamics
 from . import qp
 import ipdb
-
-QuadCost = namedtuple('QuadCost', 'C c')
-LinDx = namedtuple('LinDx', 'F f')
-
-# https://stackoverflow.com/questions/11351032
-QuadCost.__new__.__defaults__ = (None,) * len(QuadCost._fields)
-LinDx.__new__.__defaults__ = (None,) * len(LinDx._fields)
-
+from al_utils import *
 
 class GradMethods(Enum):
     AUTO_DIFF = 1
@@ -215,6 +206,7 @@ class MPC(Module):
             self.nineq += n_state*T*2
         self.lamda_prev = torch.zeros(self.n_batch, self.neq+self.nineq).to(self.u_upper)#.type_as(x)#.reshape(self.n_batch, self.T, -1) 
         self.dyn_res_prev = 1000000
+        self.mask = torch.ones(self.n_batch, self.T, 1).to(self.u_upper)
         # return self.Qi, self.Gi, self.Ai
 
     def forward(self, x0, cost, dx, dx_true=None, u_init=None, x_init=None):
@@ -295,8 +287,10 @@ class MPC(Module):
 
         x_old, u_old = x, u
         with torch.no_grad():
+        # if True:
             dyn_res_clamp_start = self.dyn_res(torch.cat((x, u), dim=2), dx, x0, res_type='clamp').view(self.n_batch, -1)
             cost_start = self.compute_cost(torch.cat((x, u), dim=2), cost.C.double(), cost.c.double())
+            # cost_start = self.compute_cost(torch.cat((x, u), dim=2), cost.C, cost.c)
             dyn_res_clamp = dyn_res_clamp_start = dyn_res_clamp_start.norm(dim=-1)
             if not self.just_initialized:
                 cost_lam_hist = self.cost_lam_hist
@@ -316,7 +310,8 @@ class MPC(Module):
         rho_init = rho
         # ipdb.set_trace()
         # print(dyn_res_clamp_start)
-        Q, q = cost.C.double(), cost.c.double()
+        Q = cost.C.double()
+        q = cost.c.double()
         cost_lam_hist = [[cost_start], [lamda], [rho]]
         
         # Augmented Lagrangian updates with broyden for root finding of the residual
@@ -396,12 +391,12 @@ class MPC(Module):
         # res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
         dyn_res_fn = lambda xi, xi0 : self.dyn_res(xi.view(xi_shape), dx, xi0.view(1, x0.shape[1]), res_type='clamp')[0]
         # constraint jacobian
-        constraint_jac = vmap(jacrev(dyn_res_fn))(xu.view(bsz, -1), x0)
+        constraint_jac = vmap(jacrev(dyn_res_fn))(xu.view(bsz, -1), x0)#, self.mask)
         constraint_hess = torch.bmm(constraint_jac.permute(0,2,1), constraint_jac)
         if self.diag_cost:
-            Qfull = torch.diag_embed(Q.view(bsz, -1))
+            Qfull = torch.diag_embed(Q.reshape(bsz, -1))
         return Qfull + rho[:,:,None]*constraint_hess
-    def dyn_res_eq(self, x, u, dx, x0):
+    def dyn_res_eq(self, x, u, dx, x0, mask=None):
         " split x into state and control and compute dynamics residual using dx"
         # ipdb.set_trace()
         bsz = x.size(0)
@@ -409,15 +404,21 @@ class MPC(Module):
             x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
         else:
             x_next = dx(x, u)[:,:-1]
-            
-        res = (x_next - x[:,1:,:])#.reshape(self.n_batch, -1)
+        
+        # if mask is None:
+        #     mask = self.mask
+        res = (x_next - x[:,1:,:])#*mask[:,:-1]#.reshape(self.n_batch, -1)
+        # ipdb.set_trace()
         res_init = (x[:,0,:] - x0).reshape(bsz, 1, -1)
         # print(res.shape, res_init.shape, x0.shape, x.shape)
         if self.add_goal_constraint:
             res_goal = (x[:,-1,:] - self.x_goal).reshape(bsz, -1)
             res = torch.cat((res, res_init, res_goal), dim=1)
         else:
-            res = torch.cat((res, res_init), dim=1)
+            try:
+                res = torch.cat((res, res_init), dim=1)
+            except:
+                ipdb.set_trace()
         res = res.reshape(bsz, -1)
         return res
     
@@ -457,7 +458,7 @@ class MPC(Module):
         x = x.reshape(-1, self.T, self.n_state+self.n_ctrl)
         x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
         # Equality residuals
-        res_eq = self.dyn_res_eq(x, u, dx, x0)
+        res_eq = self.dyn_res_eq(x, u, dx, x0)#, mask)
         # Inequality residuals
         res_ineq, res_ineq_clamp = self.dyn_res_ineq(x, u, dx, x0)
         if res_type == 'noclamp':
@@ -625,10 +626,11 @@ class MPC(Module):
             return C*xu + c
         return torch.cat((C*xu, c), dim=-1)
 
-    def reinitialize(self, x):
+    def reinitialize(self, x, mask):
         self.u_init = None
         self.x_init = None
         self.rho_prev = torch.ones((self.n_batch,1), device=x.device, dtype=x.dtype)
         self.lamda_prev = torch.zeros(self.n_batch, self.neq+self.nineq, device=x.device, dtype=x.dtype)
         self.dyn_res_prev = 1000000
         self.just_initialized = True
+        self.mask = mask

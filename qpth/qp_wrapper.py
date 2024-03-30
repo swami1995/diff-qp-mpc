@@ -219,8 +219,8 @@ class MPC(Module):
             self.dx_true = dx_true
         assert isinstance(cost, QuadCost) or \
             isinstance(cost, Module) or isinstance(cost, Function)
-        assert isinstance(dx, LinDx) or \
-            isinstance(dx, Module) or isinstance(dx, Function)
+        # assert isinstance(dx, LinDx) or \
+        #     isinstance(dx, Module) or isinstance(dx, Function)
 
         # TODO: Clean up inferences, expansions, and assumptions made here.
         if self.n_batch is not None:
@@ -671,8 +671,8 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             h = torch.ones(n_batch, 2*T*n_ctrl).to(x0)
             G[:, self.G_slices_uu0, self.G_slices_uu1] = 1.0
             G[:, self.G_slices_uu0+T*n_ctrl, self.G_slices_uu1] = -1.0
-            h[:, :T*n_ctrl] *= self.u_upper
-            h[:, T*n_ctrl:] *= -self.u_lower
+            h[:, :T*n_ctrl] *= torch.cat([self.u_upper[None]]*T, dim=-1)
+            h[:, T*n_ctrl:] *= torch.cat([-self.u_lower[None]]*T, dim=-1)
         return G, h
 
     # def compute_Gh_dense(self):

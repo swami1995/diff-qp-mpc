@@ -9,7 +9,7 @@ from torch.distributions import MultivariateNormal
 from torch.distributions import Categorical
 import torch.nn.functional as F
 from torch.distributions import Normal
-
+import ipdb
 import numpy as np
 
 from envs import PendulumEnv
@@ -55,6 +55,159 @@ class RolloutBuffer:
         del self.rewards[:]
         del self.state_values[:]
         del self.is_terminals[:]
+
+class CGACRunningMeanStd(nn.Module):
+    def __init__(self, insize, epsilon=1e-05, per_channel=False, norm_only=False):
+        super(CGACRunningMeanStd, self).__init__()
+        print('RunningMeanStd: ', insize)
+        self.insize = insize
+        self.epsilon = epsilon
+
+        self.norm_only = norm_only
+        self.per_channel = per_channel
+        if per_channel:
+            if len(self.insize) == 3:
+                self.axis = [0,2,3]
+            if len(self.insize) == 2:
+                self.axis = [0,2]
+            if len(self.insize) == 1:
+                self.axis = [0]
+            in_size = self.insize[0] 
+        else:
+            self.axis = [0]
+            in_size = insize
+
+        self.register_buffer("running_mean", torch.zeros(in_size, dtype = torch.float64))
+        self.register_buffer("running_var", torch.ones(in_size, dtype = torch.float64))
+        self.register_buffer("count", torch.ones((), dtype = torch.float64))
+
+    def _update_mean_var_count_from_moments(self, mean, var, count, batch_mean, batch_var, batch_count):
+        delta = batch_mean - mean
+        tot_count = count + batch_count
+
+        new_mean = mean + delta * batch_count / tot_count
+        m_a = var * count
+        m_b = batch_var * batch_count
+        M2 = m_a + m_b + delta**2 * count * batch_count / tot_count
+        new_var = M2 / tot_count
+        new_count = tot_count
+        return new_mean, new_var, new_count
+
+    def update(self, input):
+            mean = input.mean(self.axis) # along channel axis
+            var = input.var(self.axis)
+            self.running_mean, self.running_var, self.count = self._update_mean_var_count_from_moments(self.running_mean, self.running_var, self.count, 
+                                                    mean, var, input.size()[0] )
+
+    def forward(self, input, unnorm=False):
+
+        # change shape
+        if self.per_channel:
+            if len(self.insize) == 3:
+                current_mean = self.running_mean.detach().view([1, self.insize[0], 1, 1]).expand_as(input)
+                current_var = self.running_var.detach().view([1, self.insize[0], 1, 1]).expand_as(input)
+            if len(self.insize) == 2:
+                current_mean = self.running_mean.detach().view([1, self.insize[0], 1]).expand_as(input)
+                current_var = self.running_var.detach().view([1, self.insize[0], 1]).expand_as(input)
+            if len(self.insize) == 1:
+                current_mean = self.running_mean.detach().view([1, self.insize[0]]).expand_as(input)
+                current_var = self.running_var.detach().view([1, self.insize[0]]).expand_as(input)        
+        else:
+            current_mean = self.running_mean.detach()
+            current_var = self.running_var.detach()
+        # get output
+
+        if unnorm:
+            y = torch.clamp(input, min=-5.0, max=5.0)
+            y = torch.sqrt(current_var.float() + self.epsilon)*y + current_mean.float()
+        else:
+            if self.norm_only:
+                y = input/ torch.sqrt(current_var.float() + self.epsilon)
+            else:
+                y = (input - current_mean.float()) / torch.sqrt(current_var.float() + self.epsilon)
+                y = torch.clamp(y, min=-5.0, max=5.0)
+        return y
+
+class CGACGaussianPolicy(nn.Module):
+    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None, const_std=False):
+        super(CGACGaussianPolicy, self).__init__()
+        if isinstance(hidden_dim, int):
+            hidden_dim = [hidden_dim, hidden_dim]
+        layer_sizes = [num_inputs,]+hidden_dim
+        activation = nn.ELU()
+
+        layers = []
+        for i in range(len(layer_sizes)-1):
+            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
+            layers.append(activation)
+            layers.append(nn.Identity())
+
+        self.layers = nn.Sequential(*layers)
+        self.mean_linear = nn.Linear(layer_sizes[-1], num_actions)
+
+        self.const_std = const_std
+        if const_std:
+            logstd = -1.0#'actor_logstd_init'
+            self.logstd = torch.nn.Parameter(torch.ones(num_actions, dtype=torch.float32) * logstd)
+        else:
+            self.log_std_linear = nn.Linear(layer_sizes[-1], num_actions)
+
+        self.apply(weights_init_)
+
+        # action rescaling
+        if action_space is None:
+            self.action_scale = torch.tensor(1.)
+            self.action_bias = torch.tensor(0.)
+        else:
+            self.action_scale = torch.FloatTensor(
+                (action_space.high - action_space.low) / 2.)
+            self.action_bias = torch.FloatTensor(
+                (action_space.high + action_space.low) / 2.)
+
+    def forward(self, state):
+        x = self.layers(state)
+        mean = self.mean_linear(x)
+        if self.const_std:
+            log_std = self.logstd 
+        else:
+            log_std = self.log_std_linear(x)
+            log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
+        return mean, log_std
+
+    def log_prob(self, state, action, x_t):
+        mean, log_std = self.forward(state)
+        std = log_std.exp()
+        normal = Normal(mean, std)
+        y_t = (action - self.action_bias)/self.action_scale
+        log_prob = normal.log_prob(x_t)
+        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + epsilon)
+        log_prob = log_prob.sum(1, keepdim=True)
+        return log_prob
+
+    def sample(self, state, netid=1, with_xt=False):
+        mean, log_std = self.forward(state)
+        std = log_std.exp()
+        try:
+            normal = Normal(mean, std)
+        except:
+            ipdb.set_trace()
+        x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
+        y_t = torch.tanh(x_t)
+        action = y_t * self.action_scale + self.action_bias
+        log_prob = normal.log_prob(x_t)
+        # Enforcing Action Bound
+        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + epsilon)
+        log_prob = log_prob.sum(1, keepdim=True)
+        mean = torch.tanh(mean) * self.action_scale + self.action_bias
+        if with_xt:
+            return action, log_prob, mean, x_t
+        else:
+            return action, log_prob, mean
+
+    def to(self, device):
+        self.action_scale = self.action_scale.to(device)
+        self.action_bias = self.action_bias.to(device)
+        return super(CGACGaussianPolicy, self).to(device)
 
 
 class GaussianPolicy(nn.Module):

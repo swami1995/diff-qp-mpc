@@ -13,9 +13,10 @@ import qpth.AL_mpc as mpc
 import ipdb
 import os
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
-from ppo_train import PPO, GaussianPolicy
+from rex_quadrotor import RexQuadrotor
+from ppo_train import PPO, GaussianPolicy, CGACGaussianPolicy, CGACRunningMeanStd
 import pickle
-
+from rexquad_utils import rk4
 
 class PendulumExpert:
     def __init__(self, env, type="mpc"):
@@ -232,6 +233,44 @@ def get_pendulum_expert_traj_sac(env, num_traj):
     # ipdb.set_trace()
     return trajectories
 
+def get_expert_traj_cgac(env, num_traj):
+    """
+    Get expert trajectories for pendulum environment using the saved CGAC checkpoint."""
+    device = torch.device("cuda" if False else "cpu")
+    policy = CGACGaussianPolicy(env.observation_space.shape[0], env.action_space.shape[0], [512,256], env.action_space, True).to(device)
+    rms_obs = CGACRunningMeanStd((env.observation_space.shape[0],)).to(device)
+    # checkpoint = torch.load("/home/sgurumur/locuslab/pytorch-soft-actor-critic/checkpoints/sac_checkpoint_Pendulum-v0_bestT200")
+    checkpoint = torch.load(f"ckpts/cgac/{env.saved_ckpt_name}")
+    policy.load_state_dict(checkpoint["policy_state_dict"])
+    rms_obs.load_state_dict(checkpoint["rms_obs"])
+    trajectories = []
+    reward_trajs = []
+    while len(trajectories) < num_traj:
+        state = env.reset()
+        state_rms = rms_obs(state)
+        traj = []
+        done = False
+        reward_traj = 0
+        while not done:
+            action = policy.sample(state_rms)[2]
+            next_state, reward, done, _ = env.step(action)
+            traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
+            state = next_state
+            state_rms = rms_obs(state)
+            reward_traj += reward
+        print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
+        if reward_traj.item() < 100:
+            continue
+        trajectories.append(traj)
+        reward_trajs.append(reward_traj.item())
+    print(
+        f"Average reward: {np.mean(reward_trajs)}, Avg traj length: {np.mean([len(traj) for traj in trajectories])}"
+    )
+    # dynamics = lambda y: env.dynamics(y, torch.tensor(traj[0][1])[None])
+    # print(env.dynamics(torch.tensor(trajectories[0][0][0])[None], torch.tensor(trajectories[0][0][1])[None]) - torch.tensor(trajectories[0][1][0])[None])
+    # print(rk4(dynamics, torch.tensor(traj[0][0])[None], [0, env.dt]) - torch.tensor(traj[1][0])[None])
+    # ipdb.set_trace()
+    return trajectories
 
 def save_expert_traj(env, num_traj, type="mpc"):
     """Save expert trajectories to a file.
@@ -255,6 +294,8 @@ def save_expert_traj(env, num_traj, type="mpc"):
             expert_traj = get_int_expert_traj_mpc(env, num_traj)
         else:
             raise NotImplementedError
+    elif type == "cgac":
+        expert_traj = get_expert_traj_cgac(env, num_traj)
 
     ## save expert trajectories to a file in data folder
     if os.path.exists("data") == False:
@@ -321,10 +362,15 @@ def sample_trajectory(gt_trajs, bsz, T):
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples with length T.
     """
-    idxs = np.random.randint(0, len(gt_trajs["state"]), bsz)
+    idxs = np.random.randint(0, len(gt_trajs["state"]), bsz*2)
     trajs = {"state": [], "action": [], "mask": []}
-    for i in range(bsz):
-        if idxs[i] + T < len(gt_trajs["state"]):
+    i = 0
+    j = 0
+    while j < bsz:
+        if gt_trajs["mask"][idxs[i]] == 0:
+            i += 1
+            continue
+        if idxs[i] + T <= len(gt_trajs["state"]):
             trajs["state"].append(gt_trajs["state"][idxs[i] : idxs[i] + T])
             trajs["action"].append(gt_trajs["action"][idxs[i] : idxs[i] + T])
             trajs["mask"].append(gt_trajs["mask"][idxs[i] : idxs[i] + T])
@@ -344,14 +390,18 @@ def sample_trajectory(gt_trajs, bsz, T):
             )
             trajs["mask"].append(
                 torch.cat(
-                    [gt_trajs["mask"][idxs[i] :], gt_trajs["mask"][:padding] * 0], dim=0
+                    [gt_trajs["mask"][idxs[i] :], gt_trajs["mask"][:padding] * 0.0], dim=0
                 )
             )
+        i += 1
+        j += 1
     trajs["state"] = torch.stack(trajs["state"])
     trajs["action"] = torch.stack(trajs["action"])
     trajs["mask"] = torch.stack(trajs["mask"])
     for i in reversed(range(T)):
-        trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i], dim=1)
+        trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i+1], dim=1)
+    # trajs["state"] = trajs["state"]*trajs["mask"][:, :, None]
+    # trajs["action"] = trajs["action"]*trajs["mask"][:, :, None]
     return trajs
 
 
@@ -493,8 +543,10 @@ if __name__ == "__main__":
     seeding(2)
     print("Starting!")
     # ipdb.set_trace()
-    env = PendulumEnv(stabilization=False)
+    # env = PendulumEnv(stabilization=False)
+    env = RexQuadrotor(bsz=1)
     # env = IntegratorEnv()
     # save_expert_traj(env, 300, "sac")
-    save_expert_traj(env, 2, "mpc")
+    # save_expert_traj(env, 2, "mpc")
+    save_expert_traj(env, 300, "cgac")
     # test_qp_mpc(env)

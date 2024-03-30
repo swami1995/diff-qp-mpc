@@ -203,7 +203,7 @@ class DEQLayer(torch.nn.Module):
         z_out = self.deq_layer(xinp, z)
         dx_ref = self.output_layer(z_out)
         dx_ref = dx_ref.view(-1, self.T - 1, self.np)
-        np = 1 # self.np
+        np = self.np//2
         vel_ref = dx_ref[..., np:]
         dx_ref = dx_ref[..., :np] * self.dt
         x_ref = torch.cat([dx_ref + x[:,None,:np], vel_ref], dim=-1)
@@ -359,7 +359,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.mpc_time = []
         self.network_time = []
 
-    def forward(self, x, x_gt, iter=0, qp_solve=True, lastqp_solve=False):
+    def forward(self, x, x_gt, u_gt, mask, iter=0, qp_solve=True, lastqp_solve=False):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
         Args:
@@ -378,13 +378,14 @@ class DEQMPCPolicy(torch.nn.Module):
         trajs = []
         bsz = x.shape[0]
         if self.args.solver_type == "al":
-            self.tracking_mpc.reinitialize(x)
+            self.tracking_mpc.reinitialize(x, mask[:, :, None])
         
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
             # torch.cuda.synchronize()
             # start = time.time()
+            # x_ref = (x_ref.view(bsz, self.T, -1)*mask[:, :, None]).view(bsz, -1)
             x_ref, z = self.model(x_ref, z)
             x_ref = x_ref.view(-1, self.T-1, self.np)
             x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
@@ -399,7 +400,7 @@ class DEQMPCPolicy(torch.nn.Module):
                 [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
             ).transpose(0, 1)
             x_ref_tr = x_ref.transpose(0, 1)
-            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])
+            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
             nominal_states = x_ref.transpose(0, 1)
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
@@ -421,7 +422,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve:
-            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
+            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs
 
@@ -567,12 +568,12 @@ class Tracking_MPC(torch.nn.Module):
         self.p = -(self.Q * x_ref.unsqueeze(-2)).sum(dim=-1)
         return self.p
     
-    def reinitialize(self, x):
+    def reinitialize(self, x, mask):
         self.u_init = torch.randn(
             self.T, self.bsz, self.nu, dtype=x.dtype, device=x.device
         )
         self.x_init = None
-        self.ctrl.reinitialize(x)
+        self.ctrl.reinitialize(x, mask)
 
 class NNMPCPolicy(torch.nn.Module):
     """
