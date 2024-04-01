@@ -128,7 +128,7 @@ def main():
                 loss_j = (
                     torch.abs(
                         (
-                            nominal_states.transpose(0, 1) - traj_sample["state"]
+                            nominal_states - traj_sample["state"]
                         )
                         * traj_sample["mask"][:, :, None]
                     )
@@ -142,7 +142,7 @@ def main():
                 # print(f"iter: {i}, traj: {j}, loss: {loss_print}, loss_j: {loss_print.sum(dim=-1)}")
             loss_end = (
                 torch.abs(
-                    (nominal_states.transpose(0, 1) - traj_sample["state"])
+                    (nominal_states - traj_sample["state"])
                     * traj_sample["mask"][:, :, None]
                 )
                 .sum(dim=-1)
@@ -179,7 +179,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 100 == 0:
+        if i % 10 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",

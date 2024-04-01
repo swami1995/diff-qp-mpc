@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.autograd as autograd
 import qpth.qp_wrapper as ip_mpc
 import qpth.AL_mpc as al_mpc
+import qpth.al_utils as al_utils
 import ipdb
 # from torch_geometric.nn import GCNConv, global_mean_pool
 import torch.nn.functional as F
@@ -398,10 +399,10 @@ class DEQMPCPolicy(torch.nn.Module):
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
-            ).transpose(0, 1)
-            x_ref_tr = x_ref.transpose(0, 1)
+            )
+            x_ref_tr = x_ref
             u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
-            nominal_states = x_ref.transpose(0, 1)
+            nominal_states = x_ref
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
             # end = time.time()
@@ -470,6 +471,7 @@ class Tracking_MPC(torch.nn.Module):
         self.dt = env.dt
         self.T = args.T
         self.dyn = env.dynamics
+        self.dyn_jac = env.dynamics_jac
 
         # May comment out input constraints for now
         self.device = args.device
@@ -488,10 +490,10 @@ class Tracking_MPC(torch.nn.Module):
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
             self.R = torch.ones(self.nu, dtype=torch.float32, device=self.device)
         self.Q = torch.cat([self.Q, self.R], dim=0)
-        self.Q = torch.diag(self.Q).repeat(self.T, self.bsz, 1, 1)
+        self.Q = torch.diag(self.Q).repeat(self.bsz, self.T, 1, 1)
 
         self.u_init = torch.randn(
-            self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
+            self.bsz, self.T, self.nu, dtype=torch.float32, device=self.device
         )
 
         self.single_qp_solve = True if self.qp_iter == 1 else False
@@ -545,12 +547,12 @@ class Tracking_MPC(torch.nn.Module):
 
         self.compute_p(xu_ref)
         if self.args.solver_type == "al":
-            cost = al_mpc.QuadCost(self.Q, self.p)
+            cost = al_utils.QuadCost(self.Q, self.p)
         else:
             cost = ip_mpc.QuadCost(self.Q, self.p)
             self.ctrl.u_init = self.u_init
         state = x0  # .unsqueeze(0).repeat(self.bsz, 1)
-        nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn)
+        nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn, self.dyn_jac)
         # ipdb.set_trace()
         self.u_init = nominal_actions.clone().detach()
         return nominal_states, nominal_actions
