@@ -153,8 +153,8 @@ class RexQuadrotor(torch.nn.Module):
         super(RexQuadrotor, self).__init__()
         self.dynamics = RexQuadrotor_dynamics(bsz, mass, J, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
         self.dynamics = torch.jit.script(self.dynamics)
-        self.dynamics_jac = RexQuadrotor_dynamics_jac(bsz, mass, J, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device)
-        self.dynamics_jac = torch.jit.script(self.dynamics_jac)
+        self.dynamics_derivatives = RexQuadrotor_dynamics_jac(bsz, mass, J, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device)
+        self.dynamics_derivatives = torch.jit.script(self.dynamics_derivatives)
         self.bsz = bsz
         self.nx = self.state_dim = self.dynamics.state_dim
         self.nu = self.control_dim = self.dynamics.control_dim

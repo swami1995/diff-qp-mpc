@@ -471,7 +471,7 @@ class Tracking_MPC(torch.nn.Module):
         self.dt = env.dt
         self.T = args.T
         self.dyn = env.dynamics
-        self.dyn_jac = env.derivatives
+        self.dyn_jac = env.dynamics_derivatives
 
         # May comment out input constraints for now
         self.device = args.device
@@ -505,16 +505,14 @@ class Tracking_MPC(torch.nn.Module):
                 self.T,
                 u_lower=self.u_lower,
                 u_upper=self.u_upper,
-                qp_iter=self.qp_iter,
+                # al_iter=self.qp_iter,
                 exit_unconverged=False,
                 eps=1e-2,
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
                 u_init=self.u_init,
-                grad_method=al_mpc.GradMethods.AUTO_DIFF,
                 solver_type="dense",
-                single_qp_solve=self.single_qp_solve,
                 dtype=torch.float64 if args.dtype=="double" else torch.float32,
             )
         else:
