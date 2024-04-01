@@ -52,6 +52,7 @@ def main():
     parser.add_argument("--pooling", type=str, default="mean")
     parser.add_argument("--solver_type", type=str, default='al')
     parser.add_argument("--load", action="store_true")
+    parser.add_argument("--dtype", type=str, default="double")
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
 
     args = parser.parse_args()
