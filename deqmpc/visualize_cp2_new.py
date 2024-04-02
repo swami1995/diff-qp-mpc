@@ -10,10 +10,10 @@ import sys
 sys.path.insert(0, "/home/khai/diff-qp-mpc")
 import qpth.qp_wrapper as mpc
 import ipdb
-from envs.cartpole import CartpoleEnv
+from my_envs.cartpole import CartpoleEnv
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
-from policies import Tracking_MPC
+from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import utils
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
