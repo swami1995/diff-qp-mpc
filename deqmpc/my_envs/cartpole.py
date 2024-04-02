@@ -3,6 +3,8 @@ import numpy as np
 import ipdb
 import time
 
+import sys
+sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
 import cartpole2l
 
@@ -44,8 +46,8 @@ class CartpoleDynamics(torch.nn.Module):
         bsz = state.size(0)
 
         # action only on the first joint
-        tau = torch.zeros((bsz, self.nq), **self.kwargs)
-        tau[:, 0] = action.squeeze(1)
+        tau = torch.zeros_like(state[:, : self.nq])
+        tau[:, 0] = action[:, 0]
         q = state[:, : self.nq].contiguous()
         qdot = state[:, self.nq :].contiguous()
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
@@ -99,6 +101,17 @@ class CartpoleDynamics(torch.nn.Module):
         if reshape_flag:
             return x_jac_x.reshape(bsz, -1, self.nx), x_jac_u.reshape(bsz, -1, self.nu)
         return x_jac_x, x_jac_u
+    
+    def dynamics_derivatives(self, state, action):
+        """
+        Computes the dynamics and its derivatives with respect to the states and actions
+        Args:
+            state (torch.Tensor bsz x nx): The current state.
+            action (torch.Tensor bsz x nu): The action to apply.
+        Returns:
+            Tuple of torch.Tensor: The next state and the derivatives of the dynamics with respect to the states and actions.
+        """
+        return self.forward(state, action), self.derivatives(state, action)
 
     @torch.jit.script
     def _finite_diff_pre_processing(nq: int, q, qdot, tau, h, q_id, qdot_id, tau_id):
@@ -389,21 +402,22 @@ if __name__ == "__main__":
     dynamics = CartpoleDynamics(nx=nx, dt=dt, package=package, kwargs=kwargs)
 
     # create some random states and actions
-    bsz = 5
+    bsz = 2
     state = torch.randn((bsz, nx), **kwargs)
     action = torch.randn((bsz, 1), **kwargs)
 
     # state = torch.tensor([[1.1, 2, 3, 1, 2, 3], [1., 2, 3, 1, 2, 3]], **kwargs)
     # action = torch.tensor([[2.0], [2.2]], **kwargs)
 
-    next_state = dynamics(state, action)
-    jacobians = dynamics.derivatives(state, action)
-    jacobians_fd = dynamics.finite_diff_derivatives(
-        state, action, eps=1e-8, kwargs=kwargs
-    )
+    # next_state = dynamics(state, action)
+    # jacobians = dynamics.derivatives(state, action)
+    # jacobians_fd = dynamics.finite_diff_derivatives(
+    #     state, action, eps=1e-8, kwargs=kwargs
+    # )
+    next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
     print("next_state:", next_state)
-    # print("jacobians:", jacobians)
+    print("jacobians:", jacobians)
     # print("jacobians_fd:", jacobians_fd)
 
     # # calculate the error between jacobians and jacobians_fd

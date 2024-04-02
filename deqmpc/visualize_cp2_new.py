@@ -23,28 +23,46 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--np", type=int, default=1)
+    parser.add_argument("--env", type=str, default="pendulum")
+    parser.add_argument("--np", type=int, default=1)  #TODO configurations
     parser.add_argument("--T", type=int, default=5)
-    # parser.add_argument('--dt', type=float, default=0.05)
-    parser.add_argument("--qp_iter", type=int, default=10)
+    parser.add_argument('--dt', type=float, default=0.05)
+    parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=80)
-    parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--solver_type", type=str, default="al")
-    args = parser.parse_args()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    parser.add_argument("--bsz", type=int, default=128)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--deq", action="store_true")
+    parser.add_argument("--hdim", type=int, default=512)
+    parser.add_argument("--deq_iter", type=int, default=6)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--name", type=str, default=None)
+    parser.add_argument("--save", action="store_true")
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--layer_type", type=str, default='mlp')
+    parser.add_argument("--kernel_width", type=int, default=3)
+    parser.add_argument("--pretrain", action="store_true")
+    parser.add_argument("--lastqp_solve", action="store_true")
+    parser.add_argument("--qp_solve", action="store_true")
+    parser.add_argument("--pooling", type=str, default="mean")
+    parser.add_argument("--solver_type", type=str, default='al')
+    parser.add_argument("--load", action="store_true")
+    parser.add_argument("--dtype", type=str, default="double")
+    parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
 
-    kwargs = {"dtype": torch.float64, "device": "cpu", "requires_grad": False}
+    args = parser.parse_args()
+    args.device = "cpu"
+    kwargs = {"dtype": torch.float64 if args.dtype == "double" else torch.float32, "device": args.device, "requires_grad": False}
     nx = 6
     dt = 0.05
-    env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
+    env = CartpoleEnv(nx=nx, dt=args.dt, stabilization=False, kwargs=kwargs)
 
     # enum of mode of operation
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 0
+    mode = 2
 
     # test uncontrolled dynamics
     if mode == 0:
@@ -86,14 +104,11 @@ def main():
     torch.no_grad()
     if mode == 2:
         args.T = 100
-        args.device = "cpu"
-        args.qp_iter = 1
-        args.eps = 1e-2
         args.warm_start = True
         args.bsz = 1
         args.Q = torch.Tensor([10.0, 10.0, 10, 1.0, 1.0, 1.0])
         args.R = torch.Tensor([1.0])
-        # args.solver_type == "al"
+        args.solver_type = "al"
 
         # test controlled dynamics
         state = torch.tensor([[0.0, np.pi+np.pi, 0.1, 0.0, 0.0, 0.0]], **kwargs)
@@ -104,22 +119,24 @@ def main():
         torque_hist = [0.0]
 
         tracking_mpc = Tracking_MPC(args, env)
+        
         torch.no_grad()
-        for i in range(170):
-            x_ref = torch.zeros((args.bsz, args.T, 6), **kwargs)
-            u_ref = torch.zeros((args.bsz, args.T, 1), **kwargs)
-            xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
-            # ipdb.set_trace()
-            nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
-            print("reference states\n", x_ref)
-            print("nominal states\n", nominal_states)
-            u = nominal_action[0, :, 0]
+        # for i in range(170):
+        x_ref = torch.zeros((args.bsz, args.T, 6), **kwargs)
+        u_ref = torch.zeros((args.bsz, args.T, 1), **kwargs)
+        xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
+        tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
+        # ipdb.set_trace()
+        nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
+        print("reference states\n", x_ref)
+        print("nominal states\n", nominal_states)
+        u = nominal_action[0, :, 0]
 
-            state = env.dynamics(state, u)
-            state_hist = torch.cat((state_hist, state), dim=0)
-            # ipdb.set_trace()
-            torque_hist.append(utils.to_numpy(u)[0])
-            # print(x_ref)
+        state = env.dynamics(state, u)
+        state_hist = torch.cat((state_hist, state), dim=0)
+        # ipdb.set_trace()
+        torque_hist.append(utils.to_numpy(u)[0])
+        # print(x_ref)
 
         theta = state_hist[:, 0].detach().numpy()
         theta_dot = state_hist[:, 1].detach().numpy()

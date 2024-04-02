@@ -326,11 +326,12 @@ class MPC(Module):
     def dyn_res_eq(self, x, u, dx, x0, mask=None):
         " split x into state and control and compute dynamics residual using dx"
         # ipdb.set_trace()
-        bsz = x.size(0)
+        bsz, T, nx = x.shape
+        nu = u.shape[-1]
         if isinstance(dx, al_utils.LinDx):
             x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
         else:
-            x_next = dx(x, u)[:,:-1]
+            x_next = dx(x.reshape(-1, nx), u.reshape(-1, nu)).view(bsz, T-1, nx)
         
         # if mask is None:
         #     mask = self.mask
