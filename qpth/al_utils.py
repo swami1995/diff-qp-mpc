@@ -38,7 +38,7 @@ def merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, x_lower, x_upper, u
     # def dyn_res_in_clamp(xui, x0i):
     #     return dyn_res(xui.view(1,5,-1), dx, x0i.view(1,-1), x_lower, x_upper, u_lower, u_upper)[1].view(-1)
     # constraint_jac = vmap(jacrev(dyn_res_in))(xu.view(bsz, -1), x0)
-    # # constraint_jac_clamp = vmap(jacrev(dyn_res_in_clamp))(xu.view(bsz, -1), x0)
+    # constraint_jac_clamp = vmap(jacrev(dyn_res_in_clamp))(xu.view(bsz, -1), x0)
     # constraint_hess = torch.bmm(constraint_jac_clamp.permute(0,2,1), constraint_jac_clamp)
     # def merit_function_in(xui, x0i, Qi, qi, rhoi, lamdai):
     #     return merit_function(xui.view(1,5,-1), Qi[None], qi[None], dx, x0i.view(1,-1), lamdai[None], rhoi[None], x_lower, x_upper, u_lower, u_upper)
@@ -101,7 +101,7 @@ def constraint_res_jac2_jit(res_eq, res_ineq, res_eq_jac, res_ineq_jac, res_ineq
     res_clamp = torch.cat((res_eq, res_ineq_clamp), dim=-1)
     constraint_jac = torch.cat((res_eq_jac, res_ineq_jac), dim=1)
     constraint_jac_clamp = torch.cat((res_eq_jac, res_ineq_jac_clamp), dim=1)
-    constraint_hess = torch.bmm(constraint_jac_clamp.permute(0,2,1), constraint_jac_clamp)
+    constraint_hess = torch.bmm(constraint_jac.permute(0,2,1), constraint_jac)
     return res, res_clamp, constraint_jac, constraint_jac_clamp, constraint_hess
 
 def dyn_res_eq(x: torch.Tensor, u: torch.Tensor, dx: torch.nn.Module, x0: torch.Tensor) -> torch.Tensor:
