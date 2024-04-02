@@ -129,6 +129,14 @@ def animate_cartpole2(X):
         plt.pause(0.0001)
     plt.close(fig)
 
+# def dpc_endpositions(q_0, q_1, q_2, p):
+#     # Returns the positions of cart, first joint, and second joint
+#     # to draw the black circles
+#     p_c = np.array([q_0, 0]);
+#     p_1 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)])
+#     p_2 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)]) + p["r_2"] * np.array([-np.sin(q_1+q_2), np.cos(q_1+q_2)])
+#     return p_c, p_1, p_2
+ 
 def dpc_endpositions(q_0, q_1, q_2, p):
     # Returns the positions of cart, first joint, and second joint
     # to draw the black circles
@@ -136,8 +144,6 @@ def dpc_endpositions(q_0, q_1, q_2, p):
     p_1 = p_c + p["r_1"] * np.array([np.cos(q_1), np.sin(q_1)])
     p_2 = p_c + p["r_1"] * np.array([np.cos(q_1), np.sin(q_1)]) + p["r_2"] * np.array([np.cos(q_1+q_2), np.sin(q_1+q_2)]);
     return p_c, p_1, p_2
-
-
 
 
 ### Architecture utils
@@ -158,3 +164,29 @@ class SinusoidalPosEmb(nn.Module):
         emb = x[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
+    
+
+def angle_normalize_2pi(x):
+    return (((x) % (2*np.pi)))
+
+class Spaces:
+    def __init__(self, low, high, shape):
+        self.low = low
+        self.high = high
+        self.shape = shape
+    
+    def sample(self):
+        return np.random.uniform(self.low, self.high)
+
+device = None
+
+def set_device(gpu_id):
+    torch.cuda.set_device(gpu_id)
+
+
+def from_numpy(*args, **kwargs):
+    return torch.from_numpy(*args, **kwargs).float().to(device)
+
+
+def to_numpy(tensor):
+    return tensor.cpu().detach().numpy()

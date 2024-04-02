@@ -217,7 +217,7 @@ def dyn_res(xu, dx, x0, x_lower=None, x_upper=None, u_lower=None, u_upper=None):
     res_ineq, res_ineq_clamp = dyn_res_ineq(x, u, x0, x_lower, x_upper, u_lower, u_upper)
     return torch.cat((res_eq, res_ineq), dim=1), torch.cat((res_eq, res_ineq_clamp), dim=1)
 
-@torch.jit.script
+# @torch.jit.script
 def compute_cost(xu : torch.Tensor, Q : torch.Tensor, q : torch.Tensor, diag_cost : bool = True) -> torch.Tensor:
     C = Q
     c = q
