@@ -410,15 +410,16 @@ class DEQMPCPolicy(torch.nn.Module):
             if qp_solve:
                 # torch.cuda.synchronize()
                 # start = time.time()
+                # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
                 
                 # torch.cuda.synchronize()
                 # end = time.time()
                 # self.mpc_time.append(end-start)
-            nominal_states_net = x_ref.transpose(0, 1)
+            nominal_states_net = x_ref#.transpose(0, 1)
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
             # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
-            x_ref = nominal_states.transpose(0, 1).reshape(bsz, -1).detach().clone()
+            x_ref = nominal_states.reshape(bsz, -1).detach().clone()
         # print(f"Network time: {np.mean(self.network_time)} MPC time: {np.mean(self.mpc_time)}")
         self.network_time = []
         self.mpc_time = []

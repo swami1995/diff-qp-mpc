@@ -121,6 +121,7 @@ def main():
             start = time.time()
             # ipdb.set_trace()
             # policy.tracking_mpc.ctrl.dyn_res_eq(traj_sample["state"], traj_sample["action"], env.dynamics, traj_sample["state"][:,0])
+            # ipdb.set_trace()
             trajs = policy(traj_sample["state"][:, 0], traj_sample["state"], traj_sample["action"], traj_sample["mask"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
             end = time.time()
             # set torch precision to 1e-3
