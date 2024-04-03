@@ -439,7 +439,7 @@ if __name__ == "__main__":
         "device": torch.device("cuda"),
         "requires_grad": False,
     }
-    nx = 4
+    nx = 6
     dt = 0.05
     dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
@@ -448,8 +448,8 @@ if __name__ == "__main__":
     # state = torch.randn((bsz, nx), **kwargs)
     # action = torch.randn((bsz, 1), **kwargs)
 
-    # state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
-    state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
+    state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
+    # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
     action = torch.tensor([[-1.1]], **kwargs)
 
     next_state = dynamics(state, action)

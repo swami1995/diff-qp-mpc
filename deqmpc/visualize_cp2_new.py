@@ -106,15 +106,15 @@ def main():
     # test controlled dynamics
     torch.no_grad()
     if mode == 2:
-        args.T = 150
+        args.T = 50
         args.warm_start = True
         args.bsz = 1
-        args.Q = 10*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
+        args.Q = 1*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
         args.R = torch.Tensor([0.1])
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -133,10 +133,9 @@ def main():
 
         nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
         # print("nominal states\n", nominal_states)
-        # print("nominal action\n", nominal_action)
+        print("nominal action\n", nominal_action)
 
         # ipdb.set_trace()
-        state_hist = state
         for i in range(args.T):
             state = env.dynamics(state, nominal_action[:,i])
             # ipdb.set_trace()
