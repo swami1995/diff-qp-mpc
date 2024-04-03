@@ -129,21 +129,21 @@ def animate_cartpole2(X):
         plt.pause(0.0001)
     plt.close(fig)
 
-# def dpc_endpositions(q_0, q_1, q_2, p):
-#     # Returns the positions of cart, first joint, and second joint
-#     # to draw the black circles
-#     p_c = np.array([q_0, 0]);
-#     p_1 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)])
-#     p_2 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)]) + p["r_2"] * np.array([-np.sin(q_1+q_2), np.cos(q_1+q_2)])
-#     return p_c, p_1, p_2
- 
 def dpc_endpositions(q_0, q_1, q_2, p):
     # Returns the positions of cart, first joint, and second joint
     # to draw the black circles
     p_c = np.array([q_0, 0]);
-    p_1 = p_c + p["r_1"] * np.array([np.cos(q_1), np.sin(q_1)])
-    p_2 = p_c + p["r_1"] * np.array([np.cos(q_1), np.sin(q_1)]) + p["r_2"] * np.array([np.cos(q_1+q_2), np.sin(q_1+q_2)]);
+    p_1 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)])
+    p_2 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)]) + p["r_2"] * np.array([-np.sin(q_1+q_2), np.cos(q_1+q_2)])
     return p_c, p_1, p_2
+ 
+# def dpc_endpositions(q_0, q_1, q_2, p):
+#     # Returns the positions of cart, first joint, and second joint
+#     # to draw the black circles
+#     p_c = np.array([q_0, 0]);
+#     p_1 = p_c + p["r_1"] * np.array([np.cos(q_1), np.sin(q_1)])
+#     p_2 = p_c + p["r_1"] * np.array([np.cos(q_1), np.sin(q_1)]) + p["r_2"] * np.array([np.cos(q_1+q_2), np.sin(q_1+q_2)]);
+#     return p_c, p_1, p_2
 
 
 ### Architecture utils

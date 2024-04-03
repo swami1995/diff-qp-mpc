@@ -1,4 +1,5 @@
 import torch
+from torch.autograd import Function
 import numpy as np
 import ipdb
 import time
@@ -8,6 +9,30 @@ sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
 import cartpole2l
 
+class DynamicsFunction(Function):
+    @staticmethod
+    def forward(q_in, qdot_in, tau_in, h_in, my_func):
+        output = my_func(q_in, qdot_in, tau_in, h_in)
+        return output
+    
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        pass
+
+    @staticmethod
+    def vmap(info, in_dims, q_in, qdot_in, tau_in, h_in, my_func):
+        q_in_bdim, qdot_in_bdim, tau_in_bdim, _, _  = in_dims
+        if (q_in.dim() == 3):
+            # repeat h to match shape of (q_in.shape[0], q_in.shape[1], 1)
+            h_in = h_in.repeat(q_in.shape[0], 1, 1)
+
+        q_in = q_in.movedim(q_in_bdim, 0)
+        qdot_in = qdot_in.movedim(qdot_in_bdim, 0)
+        tau_in = tau_in.movedim(tau_in_bdim, 0)
+
+        next_state = DynamicsFunction.apply(q_in, qdot_in, tau_in, h_in, my_func)
+        return next_state, 0
+        
 
 class CartpoleDynamics(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, package=None, kwargs=None):
@@ -31,8 +56,10 @@ class CartpoleDynamics(torch.nn.Module):
             torch.Tensor bsz x nx: The next state.
         """
         # check sizes
+        ipdb.set_trace()
         reshape_flag = False
         if state.dim() == 3:
+            ipdb.set_trace()
             reshape_flag = True
             state = state.reshape(-1, self.nx)
             action = action.reshape(-1, self.nu)
@@ -40,7 +67,7 @@ class CartpoleDynamics(torch.nn.Module):
         assert state.size(1) == self.nx
         assert action.dim() == 2
         assert action.size(1) == self.nu
-        # TODO the package only supports double precision for now
+        # TODO the package only supports double pr  ecision for now
         assert state.dtype == torch.float64
 
         bsz = state.size(0)
@@ -51,10 +78,9 @@ class CartpoleDynamics(torch.nn.Module):
         q = state[:, : self.nq].contiguous()
         qdot = state[:, self.nq :].contiguous()
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
-        # ipdb.set_trace()
 
-        next_state = self.package.dynamics(q, qdot, tau, h)
-        next_state = torch.cat(next_state, dim=1)
+        next_state = DynamicsFunction.apply(q, qdot, tau, h, self.package.dynamics)
+        next_state = torch.cat(next_state, dim=-1)
         if reshape_flag:
             return next_state.reshape(bsz, -1, self.nx)
         return next_state
@@ -90,7 +116,7 @@ class CartpoleDynamics(torch.nn.Module):
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
 
         q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau = (
-            self.package.derivatives(q, qdot, tau, h)
+            DynamicsFunction.apply(q, qdot, tau, h, self.package.derivatives)
         )
 
         # concat jacobians to get dx_dx and dx_du
@@ -414,10 +440,10 @@ if __name__ == "__main__":
     # jacobians_fd = dynamics.finite_diff_derivatives(
     #     state, action, eps=1e-8, kwargs=kwargs
     # )
-    next_state, jacobians = dynamics.dynamics_derivatives(state, action)
+    # next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
-    print("next_state:", next_state)
-    print("jacobians:", jacobians)
+    # print("next_state:", next_state)
+    # print("jacobians:", jacobians)
     # print("jacobians_fd:", jacobians_fd)
 
     # # calculate the error between jacobians and jacobians_fd
@@ -427,7 +453,21 @@ if __name__ == "__main__":
     # print("error:", error)
 
     # create the environment
-    env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
-    env.state = state
-    next_state2 = env.step(to_numpy(action))
-    print("next_state:", next_state2)
+    # env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
+    # env.state = state
+    # next_state2 = env.step(to_numpy(action))
+    # print("next_state:", next_state2)
+
+    #############################
+    # Test vmap
+    #############################
+    ls = 10
+    T = 5
+    bsz = 2
+    state = torch.randn((ls, bsz, T, nx), **kwargs)
+    action = torch.randn((ls, bsz, T, 1), **kwargs)
+    merit = lambda x, u: dynamics(x, u)
+    print("state:", merit(state, action).shape)
+    my_vmap = torch.vmap(merit)
+    next_state = my_vmap(state, action)
+    print("next_state:", next_state.shape)

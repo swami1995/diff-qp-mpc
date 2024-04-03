@@ -107,11 +107,11 @@ def main():
         args.warm_start = True
         args.bsz = 1
         args.Q = torch.Tensor([10.0, 10.0, 10, 1.0, 1.0, 1.0])
-        args.R = torch.Tensor([1.0])
+        args.R = torch.Tensor([0.1])
         args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.0, np.pi+np.pi, 0.1, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[1.0, np.pi+np.pi, 0.1, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -126,32 +126,35 @@ def main():
         u_ref = torch.zeros((args.bsz, args.T, 1), **kwargs)
         xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
         tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
-        # ipdb.set_trace()
         nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
         print("reference states\n", x_ref)
         print("nominal states\n", nominal_states)
+        print("nominal action\n", nominal_action)
         u = nominal_action[0, :, 0]
 
-        state = env.dynamics(state, u)
-        state_hist = torch.cat((state_hist, state), dim=0)
         # ipdb.set_trace()
-        torque_hist.append(utils.to_numpy(u)[0])
-        # print(x_ref)
+        state_hist = nominal_states.squeeze(0)
 
-        theta = state_hist[:, 0].detach().numpy()
-        theta_dot = state_hist[:, 1].detach().numpy()
-        # ipdb.set_trace()
-        torque = torque_hist
+        # state = env.dynamics(state, u)
+        # state_hist = torch.cat((state_hist, state), dim=0)
+        # # ipdb.set_trace()
+        # torque_hist.append(utils.to_numpy(u)[0])
+        # # print(x_ref)
 
-        plt.figure()
-        plt.plot(theta, label="theta", color="red", linewidth=2.0, linestyle="-")
-        plt.plot(
-            theta_dot, label="theta_dot", color="blue", linewidth=2.0, linestyle="-"
-        )
-        plt.plot(torque, label="torque", color="green", linewidth=2.0, linestyle="--")
-        plt.legend()
-        # plt.ylim(-env.max_acc*1.5, env.max_acc*1.5)
-        plt.show()
+        # theta = state_hist[:, 0].detach().numpy()
+        # theta_dot = state_hist[:, 1].detach().numpy()
+        # # ipdb.set_trace()
+        # torque = torque_hist
+
+        # plt.figure()
+        # plt.plot(theta, label="theta", color="red", linewidth=2.0, linestyle="-")
+        # plt.plot(
+        #     theta_dot, label="theta_dot", color="blue", linewidth=2.0, linestyle="-"
+        # )
+        # plt.plot(torque, label="torque", color="green", linewidth=2.0, linestyle="--")
+        # plt.legend()
+        # # plt.ylim(-env.max_acc*1.5, env.max_acc*1.5)
+        # plt.show()
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
