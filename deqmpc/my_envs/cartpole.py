@@ -11,6 +11,7 @@ import cartpole2l
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
 
+
 class DynamicsFunction(Function):
     @staticmethod
     def forward(q_in, qdot_in, tau_in, h_in, my_func):
@@ -44,11 +45,13 @@ class CartpoleDynamics(torch.nn.Module):
         assert nx is not None
         if nx == 6:
             self.package = cartpole2l
+            print("Using 2-link cartpole dynamics")
         elif nx == 4:
             self.package = cartpole1l
+            print("Using 1-link cartpole dynamics")
         else:
             raise NotImplementedError
-        
+
         self.nx = nx  # number of states
         self.nu = 1  # number of inputs
         self.nq = nx // 2  # number of generalized coordinates
@@ -130,13 +133,13 @@ class CartpoleDynamics(torch.nn.Module):
         )
 
         # concat jacobians to get dx_dx and dx_du
-        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=1)
-        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=1)
-        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
-        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, :1]
+        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=-2)
+        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=-2)
+        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=-1)
+        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=-1)[:, :1, :]
         if reshape_flag:
             return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x.transpose(-1, -2), x_jac_u
+        return x_jac_x.transpose(-1, -2), x_jac_u.transpose(-1, -2)
 
     def dynamics_derivatives(self, state, action):
         """
@@ -280,27 +283,23 @@ class CartpoleDynamics(torch.nn.Module):
         )
 
         # concat jacobians to get dx_dx and dx_du
-        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=1)
-        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=1)
-        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
-        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, 0]
+        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=-2)
+        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=-2)
+        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=-1)
+        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=-1)[:, :1, :]
         if reshape_flag:
             return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x.transpose(-1, -2), x_jac_u
+        return x_jac_x.transpose(-1, -2), x_jac_u.transpose(-1, -2)
 
 
 class CartpoleEnv(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
         super().__init__()
         assert nx is not None
-        if nx == 6:
-            self.package = cartpole2l
-        else:
-            self.package = cartpole1l
-        self.nx = nx
         self.dynamics = CartpoleDynamics(
-            nx=nx, dt=dt, package=self.package, kwargs=kwargs
+            nx=nx, dt=dt, kwargs=kwargs
         )
+        self.nx = nx
         self.spec_id = "Cartpole{}l-v0{}".format(
             nx // 2 - 1, "-stabilize" if stabilization else ""
         )
@@ -451,7 +450,7 @@ if __name__ == "__main__":
 
     # state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
     state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
-    action = torch.tensor([[3.6]], **kwargs)
+    action = torch.tensor([[-1.1]], **kwargs)
 
     next_state = dynamics(state, action)
     jacobians = dynamics.derivatives(state, action)
