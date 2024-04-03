@@ -105,7 +105,7 @@ def main():
     # test controlled dynamics
     torch.no_grad()
     if mode == 2:
-        args.T = 100
+        args.T = 150
         args.warm_start = True
         args.bsz = 1
         args.Q = 10*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
@@ -113,7 +113,7 @@ def main():
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.0, 0.1, -0.01, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.1, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -125,7 +125,7 @@ def main():
         torch.no_grad()
         # for i in range(170):
         x_ref = torch.zeros((args.bsz, args.T, 6), **kwargs)
-        u_ref = torch.rand((args.bsz, args.T, 1), **kwargs)*0.1
+        u_ref = torch.rand((args.bsz, args.T, 1), **kwargs)*0.01
         xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
@@ -136,10 +136,11 @@ def main():
 
         # ipdb.set_trace()
         state_hist = state
-        for i in range(100):
+        for i in range(args.T):
             state = env.dynamics(state, nominal_action[:,i])
             # ipdb.set_trace()
             state_hist = torch.cat((state_hist, state), dim=0)
+        print(state)
 
         # state = env.dynamics(state, u)
         # state_hist = torch.cat((state_hist, state), dim=0)
