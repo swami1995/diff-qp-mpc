@@ -67,7 +67,7 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, 0.1, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, 0.01, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
         torque = torch.tensor([[0.0]], **kwargs)

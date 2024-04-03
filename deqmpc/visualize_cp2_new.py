@@ -66,7 +66,7 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
         torque = torch.tensor([[10.0]], **kwargs)
@@ -114,7 +114,7 @@ def main():
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, 0.01, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -133,7 +133,7 @@ def main():
 
         nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
         # print("nominal states\n", nominal_states)
-        print("nominal action\n", nominal_action)
+        # print("nominal action\n", nominal_action)
 
         # ipdb.set_trace()
         for i in range(args.T):
