@@ -66,11 +66,11 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, np.pi, 0.0, 0.0, 15.0, 15.0]], **kwargs)
+        state = torch.tensor([[0.0, 0.01, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
-        torque = torch.tensor([[10.0]], **kwargs)
-        # Kinf = -torch.tensor([[8.535, 231.96, 954.696, 31.6, 157.97, 123.608]], **kwargs)
+        torque = torch.tensor([[5.0]], **kwargs)
+        Kinf = torch.tensor([[8.535, 231.96, 954.696, 31.6, 157.97, 123.608]], **kwargs)
         for i in range(200):
             # torque = -Kinf @ (state - desired_state).T
             state = env.dynamics(state, torque)
@@ -127,7 +127,6 @@ def main():
         xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
         tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
         nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
-        print("reference states\n", x_ref)
         print("nominal states\n", nominal_states)
         print("nominal action\n", nominal_action)
         u = nominal_action[0, :, 0]
