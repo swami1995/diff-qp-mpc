@@ -132,8 +132,8 @@ class CartpoleDynamics(torch.nn.Module):
         x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
         x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, :1]
         if reshape_flag:
-            return x_jac_x.reshape(bsz, -1, self.nx), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x, x_jac_u
+            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1,-2), x_jac_u.reshape(bsz, -1, self.nu)
+        return x_jac_x.transpose(-1, -2), x_jac_u
 
     def dynamics_derivatives(self, state, action):
         """
@@ -282,8 +282,8 @@ class CartpoleDynamics(torch.nn.Module):
         x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
         x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, 0]
         if reshape_flag:
-            return x_jac_x.reshape(bsz, -1, self.nx), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x, x_jac_u
+            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1,-2), x_jac_u.reshape(bsz, -1, self.nu)
+        return x_jac_x.transpose(-1,-2), x_jac_u
 
 
 class CartpoleEnv(torch.nn.Module):
@@ -437,28 +437,30 @@ if __name__ == "__main__":
         "requires_grad": False,
     }
     nx = 6
-    dt = 0.01
+    dt = 0.05
     package = cartpole2l
     dynamics = CartpoleDynamics(nx=nx, dt=dt, package=package, kwargs=kwargs)
 
     # create some random states and actions
-    bsz = 2
-    state = torch.randn((bsz, nx), **kwargs)
-    action = torch.randn((bsz, 1), **kwargs)
+    bsz = 1
+    # state = torch.randn((bsz, nx), **kwargs)
+    # action = torch.randn((bsz, 1), **kwargs)
 
-    state = torch.tensor([[1.1, 2, 3, 1, 2, 3], [1., 2, 3, 1, 2, 3]], **kwargs)
-    action = torch.tensor([[2.0], [2.2]], **kwargs)
+    state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
+    action = torch.tensor([[3.6]], **kwargs)
 
     next_state = dynamics(state, action)
     jacobians = dynamics.derivatives(state, action)
     jacobians_fd = dynamics.finite_diff_derivatives(
-        state, action, eps=1e-8, kwargs=kwargs
+        state, action, eps=1e-5, kwargs=kwargs
     )
     next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
     print("next_state:", next_state)
-    print("jacobians:", jacobians)
-    print("jacobians_fd:", jacobians_fd)
+    print("jacobians[0]:", jacobians[0])
+    print("jacobians[1]:", jacobians[1])
+    print("jacobians_fd[0]:", jacobians_fd[0])
+    print("jacobians_fd[1]:", jacobians_fd[1])
 
     # calculate the error between jacobians and jacobians_fd
     error = np.zeros(2)
@@ -467,10 +469,10 @@ if __name__ == "__main__":
     print("error:", error)
 
     # create the environment
-    env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
-    env.state = state
-    next_state2 = env.step(to_numpy(action))
-    print("next_state:", next_state2)
+    # env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
+    # env.state = state
+    # next_state2 = env.step(to_numpy(action))
+    # print("next_state:", next_state2)
 
     #############################
     # Test vmap
