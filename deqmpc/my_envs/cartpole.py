@@ -5,13 +5,11 @@ import ipdb
 import time
 import sys
 
+import cartpole1l
 import cartpole2l
 
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
-
-
-
 
 class DynamicsFunction(Function):
     @staticmethod
@@ -41,15 +39,20 @@ class DynamicsFunction(Function):
 
 
 class CartpoleDynamics(torch.nn.Module):
-    def __init__(self, nx=None, dt=0.01, package=None, kwargs=None):
+    def __init__(self, nx=None, dt=0.01, kwargs=None):
         super().__init__()
         assert nx is not None
-        assert package is not None
+        if nx == 6:
+            self.package = cartpole2l
+        elif nx == 4:
+            self.package = cartpole1l
+        else:
+            raise NotImplementedError
+        
         self.nx = nx  # number of states
         self.nu = 1  # number of inputs
         self.nq = nx // 2  # number of generalized coordinates
         self.dt = dt  # time step
-        self.package = package  # the generated package
         self.kwargs = kwargs  # the arguments
 
     def forward(self, state, action):
@@ -132,7 +135,7 @@ class CartpoleDynamics(torch.nn.Module):
         x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
         x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, :1]
         if reshape_flag:
-            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1,-2), x_jac_u.reshape(bsz, -1, self.nu)
+            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
         return x_jac_x.transpose(-1, -2), x_jac_u
 
     def dynamics_derivatives(self, state, action):
@@ -282,8 +285,8 @@ class CartpoleDynamics(torch.nn.Module):
         x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
         x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, 0]
         if reshape_flag:
-            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1,-2), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x.transpose(-1,-2), x_jac_u
+            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
+        return x_jac_x.transpose(-1, -2), x_jac_u
 
 
 class CartpoleEnv(torch.nn.Module):
@@ -293,7 +296,7 @@ class CartpoleEnv(torch.nn.Module):
         if nx == 6:
             self.package = cartpole2l
         else:
-            raise NotImplementedError
+            self.package = cartpole1l
         self.nx = nx
         self.dynamics = CartpoleDynamics(
             nx=nx, dt=dt, package=self.package, kwargs=kwargs
@@ -431,22 +434,23 @@ class CartpoleEnv(torch.nn.Module):
 # if this is main then run the test
 if __name__ == "__main__":
     # create the dynamics model
+
     kwargs = {
         "dtype": torch.float64,
         "device": torch.device("cuda"),
         "requires_grad": False,
     }
-    nx = 6
+    nx = 4
     dt = 0.05
-    package = cartpole2l
-    dynamics = CartpoleDynamics(nx=nx, dt=dt, package=package, kwargs=kwargs)
+    dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
     bsz = 1
     # state = torch.randn((bsz, nx), **kwargs)
     # action = torch.randn((bsz, 1), **kwargs)
 
-    state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
+    # state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
+    state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
     action = torch.tensor([[3.6]], **kwargs)
 
     next_state = dynamics(state, action)
@@ -465,7 +469,8 @@ if __name__ == "__main__":
     # calculate the error between jacobians and jacobians_fd
     error = np.zeros(2)
     for i in range(len(jacobians)):
-        error[i] = torch.norm(jacobians[i] - jacobians_fd[i]) / torch.norm(jacobians[i])
+        error[i] = torch.norm(jacobians[i] - jacobians_fd[i]
+                              ) / torch.norm(jacobians[i])
     print("error:", error)
 
     # create the environment
@@ -486,7 +491,7 @@ if __name__ == "__main__":
 
     # def merit(x, u): return dx(
     #     x[:, :-1].reshape(-1, nx), u[:, :-1].reshape(-1, 1)).view(bsz, T - 1, nx)
-    
+
     # print("state:", merit(state, action).shape)
     # my_vmap = torch.vmap(merit)
     # next_state = my_vmap(state, action)
