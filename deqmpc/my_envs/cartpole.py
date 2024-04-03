@@ -1,13 +1,16 @@
-import cartpole2l
-from utils import *
 import torch
 from torch.autograd import Function
 import numpy as np
 import ipdb
 import time
-
 import sys
+
+import cartpole2l
+
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
+from utils import *
+
+
 
 
 class DynamicsFunction(Function):
@@ -22,7 +25,7 @@ class DynamicsFunction(Function):
 
     @staticmethod
     def vmap(info, in_dims, q_in, qdot_in, tau_in, h_in, my_func):
-        ipdb.set_trace()
+        # ipdb.set_trace()
         q_in_bdim, qdot_in_bdim, tau_in_bdim, _, _ = in_dims
         if (q_in.dim() == 3):
             # repeat h to match shape of (q_in.shape[0], q_in.shape[1], 1)
@@ -127,7 +130,7 @@ class CartpoleDynamics(torch.nn.Module):
         q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=1)
         qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=1)
         x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
-        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, 0]
+        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, :1]
         if reshape_flag:
             return x_jac_x.reshape(bsz, -1, self.nx), x_jac_u.reshape(bsz, -1, self.nu)
         return x_jac_x, x_jac_u
@@ -443,46 +446,46 @@ if __name__ == "__main__":
     state = torch.randn((bsz, nx), **kwargs)
     action = torch.randn((bsz, 1), **kwargs)
 
-    # state = torch.tensor([[1.1, 2, 3, 1, 2, 3], [1., 2, 3, 1, 2, 3]], **kwargs)
-    # action = torch.tensor([[2.0], [2.2]], **kwargs)
+    state = torch.tensor([[1.1, 2, 3, 1, 2, 3], [1., 2, 3, 1, 2, 3]], **kwargs)
+    action = torch.tensor([[2.0], [2.2]], **kwargs)
 
-    # next_state = dynamics(state, action)
-    # jacobians = dynamics.derivatives(state, action)
-    # jacobians_fd = dynamics.finite_diff_derivatives(
-    #     state, action, eps=1e-8, kwargs=kwargs
-    # )
-    # next_state, jacobians = dynamics.dynamics_derivatives(state, action)
+    next_state = dynamics(state, action)
+    jacobians = dynamics.derivatives(state, action)
+    jacobians_fd = dynamics.finite_diff_derivatives(
+        state, action, eps=1e-8, kwargs=kwargs
+    )
+    next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
-    # print("next_state:", next_state)
-    # print("jacobians:", jacobians)
-    # print("jacobians_fd:", jacobians_fd)
+    print("next_state:", next_state)
+    print("jacobians:", jacobians)
+    print("jacobians_fd:", jacobians_fd)
 
-    # # calculate the error between jacobians and jacobians_fd
-    # error = np.zeros(2)
-    # for i in range(len(jacobians)):
-    #     error[i] = torch.norm(jacobians[i] - jacobians_fd[i]) / torch.norm(jacobians[i])
-    # print("error:", error)
+    # calculate the error between jacobians and jacobians_fd
+    error = np.zeros(2)
+    for i in range(len(jacobians)):
+        error[i] = torch.norm(jacobians[i] - jacobians_fd[i]) / torch.norm(jacobians[i])
+    print("error:", error)
 
     # create the environment
-    # env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
-    # env.state = state
-    # next_state2 = env.step(to_numpy(action))
-    # print("next_state:", next_state2)
+    env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
+    env.state = state
+    next_state2 = env.step(to_numpy(action))
+    print("next_state:", next_state2)
 
     #############################
     # Test vmap
     #############################
-    ls = 10
-    T = 5
-    bsz = 2
-    state = torch.randn((ls, bsz, T, nx), **kwargs)
-    action = torch.randn((ls, bsz, T, 1), **kwargs)
-    dx = dynamics
+    # ls = 10
+    # T = 5
+    # bsz = 2
+    # state = torch.randn((ls, bsz, T, nx), **kwargs)
+    # action = torch.randn((ls, bsz, T, 1), **kwargs)
+    # dx = dynamics
 
-    def merit(x, u): return dx(
-        x[:, :-1].reshape(-1, nx), u[:, :-1].reshape(-1, 1)).view(bsz, T - 1, nx)
+    # def merit(x, u): return dx(
+    #     x[:, :-1].reshape(-1, nx), u[:, :-1].reshape(-1, 1)).view(bsz, T - 1, nx)
     
-    print("state:", merit(state, action).shape)
-    my_vmap = torch.vmap(merit)
-    next_state = my_vmap(state, action)
-    print("next_state:", next_state.shape)
+    # print("state:", merit(state, action).shape)
+    # my_vmap = torch.vmap(merit)
+    # next_state = my_vmap(state, action)
+    # print("next_state:", next_state.shape)

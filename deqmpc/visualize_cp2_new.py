@@ -70,9 +70,11 @@ def main():
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
         torque = torch.tensor([[5.0]], **kwargs)
+        # torque = torch.randn((1, 1), **kwargs) * 5
         Kinf = torch.tensor([[8.535, 231.96, 954.696, 31.6, 157.97, 123.608]], **kwargs)
         for i in range(200):
             # torque = -Kinf @ (state - desired_state).T
+            torque = torch.randn((1, 1), **kwargs) * 15
             state = env.dynamics(state, torque)
             state_hist = torch.cat((state_hist, state), dim=0)
         theta = state_hist[:, : env.nq]
@@ -108,10 +110,10 @@ def main():
         args.bsz = 1
         args.Q = torch.Tensor([10.0, 10.0, 10, 1.0, 1.0, 1.0])
         args.R = torch.Tensor([0.1])
-        args.solver_type = "al"
+        args.solver_type = "ip"
 
         # test controlled dynamics
-        state = torch.tensor([[1.0, np.pi+np.pi, 0.1, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, np.pi*0, 0.01, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -123,12 +125,12 @@ def main():
         torch.no_grad()
         # for i in range(170):
         x_ref = torch.zeros((args.bsz, args.T, 6), **kwargs)
-        u_ref = torch.zeros((args.bsz, args.T, 1), **kwargs)
+        u_ref = torch.ones((args.bsz, args.T, 1), **kwargs)*0.0
         xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
-        tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
+        # tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
         nominal_states, nominal_action = tracking_mpc(state, xu_ref, x_ref, u_ref)
-        print("nominal states\n", nominal_states)
-        print("nominal action\n", nominal_action)
+        # print("nominal states\n", nominal_states)
+        # print("nominal action\n", nominal_action)
         u = nominal_action[0, :, 0]
 
         # ipdb.set_trace()

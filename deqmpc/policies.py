@@ -484,16 +484,17 @@ class Tracking_MPC(torch.nn.Module):
 
         self.Q = args.Q.to(self.device)
         self.R = args.R.to(self.device)
+        self.dtype = torch.float64 if args.dtype=="double" else torch.float32
         # self.Qf = args.Qf
         if args.Q is None:
-            self.Q = torch.ones(self.nx, dtype=torch.float32, device=self.device)
+            self.Q = torch.ones(self.nx, dtype=self.dtype, device=self.device)
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
-            self.R = torch.ones(self.nu, dtype=torch.float32, device=self.device)
-        self.Q = torch.cat([self.Q, self.R], dim=0)
+            self.R = torch.ones(self.nu, dtype=self.dtype, device=self.device)
+        self.Q = torch.cat([self.Q, self.R], dim=0).to(self.dtype)
         self.Q = torch.diag(self.Q).repeat(self.bsz, self.T, 1, 1)
 
         self.u_init = torch.randn(
-            self.bsz, self.T, self.nu, dtype=torch.float32, device=self.device
+            self.bsz, self.T, self.nu, dtype=self.dtype, device=self.device
         )
         
         self.single_qp_solve = True if self.qp_iter == 1 else False
@@ -513,7 +514,7 @@ class Tracking_MPC(torch.nn.Module):
                 verbose=0,
                 u_init=self.u_init,
                 solver_type="dense",
-                dtype=torch.float64 if args.dtype=="double" else torch.float32,
+                dtype=self.dtype,
             )
         else:
             self.ctrl = ip_mpc.MPC(
@@ -528,7 +529,7 @@ class Tracking_MPC(torch.nn.Module):
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
-                u_init=self.u_init,
+                u_init=self.u_init.transpose(0,1),
                 grad_method=ip_mpc.GradMethods.AUTO_DIFF,
                 solver_type="dense",
                 single_qp_solve=self.single_qp_solve,
@@ -548,10 +549,14 @@ class Tracking_MPC(torch.nn.Module):
         if self.args.solver_type == "al":
             cost = al_utils.QuadCost(self.Q, self.p)
         else:
-            cost = ip_mpc.QuadCost(self.Q, self.p)
-            self.ctrl.u_init = self.u_init
+            cost = ip_mpc.QuadCost(self.Q.transpose(0,1), self.p.transpose(0,1))
+            self.ctrl.u_init = self.u_init.transpose(0,1)
+
         state = x0  # .unsqueeze(0).repeat(self.bsz, 1)
         nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn, self.dyn_jac)
+        if self.args.solver_type == "ip":
+            nominal_states = nominal_states.transpose(0, 1)
+            nominal_actions = nominal_actions.transpose(0, 1)
         # ipdb.set_trace()
         self.u_init = nominal_actions.clone().detach()
         return nominal_states, nominal_actions
@@ -571,7 +576,7 @@ class Tracking_MPC(torch.nn.Module):
     
     def reinitialize(self, x, mask):
         self.u_init = torch.randn(
-            self.T, self.bsz, self.nu, dtype=x.dtype, device=x.device
+            self.bsz, self.T, self.nu, dtype=x.dtype, device=x.device
         )
         self.x_init = None
         self.ctrl.reinitialize(x, mask)

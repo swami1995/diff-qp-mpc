@@ -168,7 +168,7 @@ def constraint_res_jac2_jit(
     constraint_jac = torch.cat((res_eq_jac, res_ineq_jac), dim=1)
     constraint_jac_clamp = torch.cat((res_eq_jac, res_ineq_jac_clamp), dim=1)
     constraint_hess = torch.bmm(
-        constraint_jac_clamp.permute(0, 2, 1), constraint_jac_clamp
+        constraint_jac.permute(0, 2, 1), constraint_jac
     )
     return res, res_clamp, constraint_jac, constraint_jac_clamp, constraint_hess
 
@@ -379,13 +379,13 @@ class NewtonAL(torch.autograd.Function):
         # Solve for newton steps on the augmented lagrangian
         nstep = 0
         old_dyn_res = torch.norm(dyn_res).item()
-        # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
+        print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
         while (
-            merit_delta > threshold and nstep < 4 and stepsz > 1e-8
-        ):  # and update_norm > 1e-3*init_update_norm:
+            merit_delta > threshold*1e-8 and nstep < 10):# and stepsz > 1e-8
+        # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
             # Compute the hessian and gradient of the augmented lagrangian
@@ -423,17 +423,17 @@ class NewtonAL(torch.autograd.Function):
                 ipdb.set_trace()
             dyn_res = dyn_fn(x_est)
             new_dyn_res = torch.norm(dyn_res).item()
-            # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
+            print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
             ## exit creteria
-            if (
-                abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
-                or new_dyn_res < 1e-3
-            ):
-                break
+            # if (
+            #     abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
+            #     or new_dyn_res < 1e-3
+            # ):
+            #     break
 
             old_dyn_res = new_dyn_res
-            merit_delta = ((new_merit - merit) / new_merit).abs().max().item()
+            merit_delta = 1000# ((new_merit - merit) / new_merit).abs().max().item()
             merit = new_merit
 
         try:
@@ -492,7 +492,8 @@ def line_search_newton(update, x_est, meritfnQ, merit):
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
     # ipdb.set_trace()
-    new2_objective = torch.vmap(meritfnQ)(x_next)
+    # new2_objective = torch.vmap(meritfnQ)(x_next)
+    new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(20)], dim=0)
     new2_objective_min = torch.min(new2_objective, dim=0)
     batch_idxs = torch.arange(x_est.shape[0], device=x_est.device)
     stepsz = stepszs[new2_objective_min.indices, batch_idxs]
