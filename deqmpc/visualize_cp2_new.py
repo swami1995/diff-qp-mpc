@@ -54,8 +54,8 @@ def main():
     args = parser.parse_args()
     args.device = "cpu"
     kwargs = {"dtype": torch.float64 if args.dtype == "double" else torch.float32, "device": args.device, "requires_grad": False}
-    nx = 6
-    dt = 0.05
+    nq = 3
+    nx = nq*2
     env = CartpoleEnv(nx=nx, dt=args.dt, stabilization=False, kwargs=kwargs)
 
     # enum of mode of operation
@@ -165,7 +165,7 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
-    utils.animate_cartpole2(utils.to_numpy(state_hist.T))
+    utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
 
 
 if __name__ == "__main__":

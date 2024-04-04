@@ -55,8 +55,8 @@ def main():
     args.device = "cpu"
     kwargs = {"dtype": torch.float64 if args.dtype ==
               "double" else torch.float32, "device": args.device, "requires_grad": False}
-    nx = 4
-    dt = 0.05
+    nq = 2
+    nx = nq*2
     env = CartpoleEnv(nx=nx, dt=args.dt, stabilization=False, kwargs=kwargs)
 
     # enum of mode of operation
@@ -67,7 +67,7 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, 0.01, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, 0.1, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
         torque = torch.tensor([[0.0]], **kwargs)
@@ -79,14 +79,15 @@ def main():
             state_hist = torch.cat((state_hist, state), dim=0)
         theta = state_hist[:, : env.nq]
         theta_dot = state_hist[:, env.nq:]
+        # ipdb.set_trace()
 
-        plt.figure()
-        print(state_hist.shape)
-        plt.plot(utils.to_numpy(theta), label="theta",
-                 linewidth=2.0, linestyle="-")
-        # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
-        # plt.legend()
-        plt.show()
+        # plt.figure()
+        # print(state_hist.shape)
+        # plt.plot(utils.to_numpy(theta), label="theta",
+        #          linewidth=2.0, linestyle="-")
+        # # plt.plot(theta_dot, label='theta_dot', color='blue', linewidth=2.0, linestyle='-')
+        # # plt.legend()
+        # plt.show()
 
     # ground truth trajectory
     if mode == 1:
@@ -170,8 +171,8 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
-    # utils.animate_cartpole2(utils.to_numpy(state_hist.T))
-    utils.anime_cartpole1(env, utils.to_numpy(state_hist.T))
+    utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
+    # utils.anime_cartpole1(utils.to_numpy(state_hist.T))
 
 
 if __name__ == "__main__":
