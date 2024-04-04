@@ -267,14 +267,16 @@ class MPC(Module):
         # ipdb.set_trace()
         x_old, u_old = x, u
         with torch.no_grad():
-            dyn_res_clamp_start = self.dyn_res(torch.cat((x, u), dim=2), dx, x0, res_type='clamp').view(self.n_batch, -1)
+            dyn_res_start, dyn_res_clamp_start = self.dyn_res(torch.cat((x, u), dim=2), dx, x0, res_type='both')#.view(self.n_batch, -1)
             cost_start = self.compute_cost(torch.cat((x, u), dim=2), cost.C.double(), cost.c.double())
             dyn_res_clamp = dyn_res_clamp_start = dyn_res_clamp_start.norm(dim=-1)
+            rho_hess = rho.repeat(1, self.neq+self.nineq)
             if not self.just_initialized:
                 cost_hist = torch.stack(self.cost_lam_hist[0][::-1], dim=0)
                 lamda_hist = torch.stack(self.cost_lam_hist[1][::-1], dim=0)
                 rho_hist = torch.stack(self.cost_lam_hist[2][::-1], dim=0)
                 lamda, rho = al_utils.warm_start_al(x, lamda, rho, cost_start, cost_hist, lamda_hist, rho_hist)        
+                rho_hess = torch.cat([rho.repeat(1, self.neq), torch.min(lamda/(dyn_res_start + 1e-8).abs(), rho)[:, self.neq:]], dim=1)
         rho_init = rho
         Q = cost.C.to(self.dtype)
         q = cost.c.to(self.dtype)
@@ -287,7 +289,7 @@ class MPC(Module):
             dyn_fn = lambda xi : self.dyn_res(xi, dx, x0)
             cost_fn = lambda xi, Qi, qi : self.compute_cost(xi, Qi, qi)
             merit_fn = lambda xi, Qi, qi, yi, x0i=x0, rhoi=rho, grad=False : self.merit_function(xi, Qi, qi, dx, x0i, yi, rhoi, grad)
-            merit_grad_hess = lambda xi, Q, q, lamda : self.merit_grad_hess(xi, Q, q, dx, dx_jac, x0, lamda, rho)
+            merit_grad_hess = lambda xi, Q, q, lamda : self.merit_grad_hess(xi, Q, q, dx, dx_jac, x0, lamda, rho, rho_hess)
             
             out = al_utils.NewtonAL.apply(merit_fn, dyn_fn, cost_fn, merit_grad_hess, xu, x0, lamda, rho, Q, q, 1e-3, 1e-6, True)
             x_new, u_new = out[0][:,:,:self.n_state], out[0][:,:,self.n_state:]
@@ -297,10 +299,11 @@ class MPC(Module):
             with torch.no_grad():
                 dyn_res, dyn_res_clamp = self.dyn_res(torch.cat((x_new, u_new), dim=2), dx, x0, res_type='both')
                 lamda = lamda + rho*dyn_res
-                lamda = torch.cat([lamda[:, :self.neq:], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
+                lamda = torch.cat([lamda[:, :self.neq], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
+                rho_hess = torch.cat([rho.repeat(1, self.neq), torch.min(lamda/(dyn_res + 1e-8).abs(), rho)[:, self.neq:]], dim=1)
                 cost_res = self.compute_cost(out[0], Q, q)
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
-                print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
+                # print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
                 
                 rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
                 cost_lam_hist[0].append(cost_res)
@@ -308,7 +311,7 @@ class MPC(Module):
                 cost_lam_hist[2].append(rho)
             # end3 = time.time()
             # print("outer time: ", end1 - start1, end2 - start2, end3 - end2)
-        ipdb.set_trace()
+        # ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
         self.rho_prev = rho
@@ -320,11 +323,11 @@ class MPC(Module):
     
     def merit_function(self, xu, Q, q, dx, x0, lamda, rho, grad=False):
         return al_utils.merit_function(xu, Q, q, dx, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
-    def merit_hessian(self, xu, Q, q, dx, dx_jac, x0, lamda, rho):
-        return al_utils.merit_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
+    def merit_hessian(self, xu, Q, q, dx, dx_jac, x0, lamda, rho, rho_hess):
+        return al_utils.merit_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, rho_hess, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
 
-    def merit_grad_hess(self, xu, Q, q, dx, dx_jac, x0, lamda, rho):
-        return al_utils.merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
+    def merit_grad_hess(self, xu, Q, q, dx, dx_jac, x0, lamda, rho, rho_hess):
+        return al_utils.merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, rho_hess, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
     def dyn_res_eq(self, x, u, dx, x0, mask=None):
         " split x into state and control and compute dynamics residual using dx"
         # ipdb.set_trace()

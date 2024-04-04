@@ -28,9 +28,13 @@ def merit_function(xu, Q, q, dx, x0, lamda, rho, x_lower, x_upper, u_lower, u_up
     res, res_clamp = dyn_res(xu, dx, x0, x_lower, x_upper, u_lower, u_upper)
     return cost_total + 0.5*rho[:,0]*(res_clamp*res_clamp).view(bsz, -1).sum(dim=1) + (lamda*res).view(bsz, -1).sum(dim=1)
 
-def merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, x_lower, x_upper, u_lower, u_upper, diag_cost=True):
+def merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, rho_hess, x_lower, x_upper, u_lower, u_upper, diag_cost=True):
     bsz = xu.size(0)
-    res, res_clamp, constraint_jac, constraint_jac_clamp, constraint_hess = constraint_res_jac2(xu, x0, dx_jac, x_lower, x_upper, u_lower, u_upper)
+    res, res_clamp, constraint_jac, constraint_jac_clamp, clamp_idx = constraint_res_jac2(xu, x0, dx_jac, x_lower, x_upper, u_lower, u_upper)
+    
+    rho_hess = rho*clamp_idx + rho_hess*(1-clamp_idx)
+    constraint_hess = torch.bmm(constraint_jac.permute(0,2,1), constraint_jac*rho_hess[...,None])
+    # constraint_hess =torch.bmm(constraint_jac_clamp.permute(0,2,1), constraint_jac_clamp)
     # ipdb.set_trace()
     # res_1, res_clamp_1 = dyn_res(xu, dx, x0, x_lower, x_upper, u_lower, u_upper)
     # def dyn_res_in(xui, x0i):
@@ -47,10 +51,11 @@ def merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, x_lower, x_upper, u
     merit_grad = compute_cost_gradient(xu, Q, q, diag_cost).view(bsz, -1) + (lamda[...,None]*constraint_jac).sum(dim=-2) + rho*(res_clamp[...,None]*constraint_jac_clamp).sum(dim=-2)
     if diag_cost:
         Qfull = torch.diag_embed(Q.reshape(bsz, -1))
-    merit_hess = Qfull + rho[:,:,None]*constraint_hess
+    # merit_hess = Qfull + rho[:,:,None]*constraint_hess
+    merit_hess = Qfull + constraint_hess
     return merit_grad, merit_hess
 
-def merit_hessian(xu, Q, q, dx_jac, x0, lamda, rho, x_lower, x_upper, u_lower, u_upper, diag_cost=True):
+def merit_hessian(xu, Q, q, dx_jac, x0, lamda, rho, rho_hess, x_lower, x_upper, u_lower, u_upper, diag_cost=True):
     bsz = xu.size(0)
     res, res_clamp, constraint_jac, constraint_jac_clamp = constraint_res_jac2(xu, x0, dx_jac, x_lower, x_upper, u_lower, u_upper)
     constraint_hess = torch.bmm(constraint_jac_clamp.permute(0,2,1), constraint_jac_clamp)
@@ -97,12 +102,12 @@ def constraint_res_jac2(xu, x0, dx_jac, x_lower, x_upper, u_lower, u_upper):
     return constraint_res_jac2_jit(res_eq, res_ineq, res_eq_jac, res_ineq_jac, res_ineq_clamp, res_ineq_jac_clamp)
 
 def constraint_res_jac2_jit(res_eq, res_ineq, res_eq_jac, res_ineq_jac, res_ineq_clamp, res_ineq_jac_clamp):
+    clamp_idx = torch.cat((torch.ones_like(res_eq), (res_ineq_clamp > 0).float()), dim=-1)
     res = torch.cat((res_eq, res_ineq), dim=-1)
     res_clamp = torch.cat((res_eq, res_ineq_clamp), dim=-1)
     constraint_jac = torch.cat((res_eq_jac, res_ineq_jac), dim=1)
     constraint_jac_clamp = torch.cat((res_eq_jac, res_ineq_jac_clamp), dim=1)
-    constraint_hess = torch.bmm(constraint_jac.permute(0,2,1), constraint_jac)
-    return res, res_clamp, constraint_jac, constraint_jac_clamp, constraint_hess
+    return res, res_clamp, constraint_jac, constraint_jac_clamp, clamp_idx
 
 def dyn_res_eq(x: torch.Tensor, u: torch.Tensor, dx: torch.nn.Module, x0: torch.Tensor) -> torch.Tensor:
     " split x into state and control and compute dynamics residual using dx"
@@ -217,7 +222,7 @@ def dyn_res(xu, dx, x0, x_lower=None, x_upper=None, u_lower=None, u_upper=None):
     res_ineq, res_ineq_clamp = dyn_res_ineq(x, u, x0, x_lower, x_upper, u_lower, u_upper)
     return torch.cat((res_eq, res_ineq), dim=1), torch.cat((res_eq, res_ineq_clamp), dim=1)
 
-# @torch.jit.script
+@torch.jit.script
 def compute_cost(xu : torch.Tensor, Q : torch.Tensor, q : torch.Tensor, diag_cost : bool = True) -> torch.Tensor:
     C = Q
     c = q

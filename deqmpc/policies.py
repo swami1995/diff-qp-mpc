@@ -472,7 +472,8 @@ class Tracking_MPC(torch.nn.Module):
         self.dt = env.dt
         self.T = args.T
         self.dyn = env.dynamics
-        self.dyn_jac = env.dynamics.dynamics_derivatives
+        # self.dyn_jac = env.dynamics.dynamics_derivatives
+        self.dyn_jac = env.dynamics_derivatives
 
         # May comment out input constraints for now
         self.device = args.device
