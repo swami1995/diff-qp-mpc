@@ -1,3 +1,7 @@
+"""Description: Cartpole n-link environment.
+At upright position, all joint angles are at 0 radian. Positive angle is counter-clockwise.
+"""
+
 import torch
 from torch.autograd import Function
 import numpy as np

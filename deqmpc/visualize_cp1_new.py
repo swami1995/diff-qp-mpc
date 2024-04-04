@@ -57,20 +57,21 @@ def main():
               "double" else torch.float32, "device": args.device, "requires_grad": False}
     nq = 2
     nx = nq*2
+    nu = 1
     env = CartpoleEnv(nx=nx, dt=args.dt, stabilization=False, kwargs=kwargs)
 
     # enum of mode of operation
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 0
+    mode = 2
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, 0.1, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, np.pi, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
-        torque = torch.tensor([[0.0]], **kwargs)
+        torque = torch.tensor([[20.0]], **kwargs)
         # torque = torch.randn((1, 1), **kwargs) * 5
         for i in range(200):
             # torque = -Kinf @ (state - desired_state).T
@@ -109,15 +110,15 @@ def main():
     # test controlled dynamics
     torch.no_grad()
     if mode == 2:
-        args.T = 150
+        args.T = 50
         args.warm_start = True
         args.bsz = 1
-        args.Q = 10*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
+        args.Q = 100*torch.Tensor([1.0, 10.0, 1, 1.0])
         args.R = torch.Tensor([0.1])
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.1, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0., 0.1, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -128,25 +129,26 @@ def main():
 
         torch.no_grad()
         # for i in range(170):
-        x_ref = torch.zeros((args.bsz, args.T, 6), **kwargs)
-        u_ref = torch.rand((args.bsz, args.T, 1), **kwargs)*0.01
-        xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
+        x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
+        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.01
+        xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(
                 x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
 
         nominal_states, nominal_action = tracking_mpc(
             state, xu_ref, x_ref, u_ref)
+        state_hist = nominal_states.squeeze(0)  
         # print("nominal states\n", nominal_states)
         # print("nominal action\n", nominal_action)
 
         # ipdb.set_trace()
-        state_hist = state
-        for i in range(args.T):
-            state = env.dynamics(state, nominal_action[:, i])
-            # ipdb.set_trace()
-            state_hist = torch.cat((state_hist, state), dim=0)
-        print(state)
+        # state_hist = state
+        # for i in range(args.T):
+        #     state = env.dynamics(state, nominal_action[:, i])
+        #     # ipdb.set_trace()
+        #     state_hist = torch.cat((state_hist, state), dim=0)
+        # print(state)
 
         # state = env.dynamics(state, u)
         # state_hist = torch.cat((state_hist, state), dim=0)

@@ -56,6 +56,7 @@ def main():
     kwargs = {"dtype": torch.float64 if args.dtype == "double" else torch.float32, "device": args.device, "requires_grad": False}
     nq = 3
     nx = nq*2
+    nu = 1
     env = CartpoleEnv(nx=nx, dt=args.dt, stabilization=False, kwargs=kwargs)
 
     # enum of mode of operation
@@ -125,9 +126,9 @@ def main():
         
         torch.no_grad()
         # for i in range(170):
-        x_ref = torch.zeros((args.bsz, args.T, 6), **kwargs)
-        u_ref = torch.rand((args.bsz, args.T, 1), **kwargs)*0.01
-        xu_ref = torch.zeros((args.bsz, args.T, 7), **kwargs)
+        x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
+        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.01
+        xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
 
