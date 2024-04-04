@@ -313,7 +313,7 @@ class CartpoleEnv(torch.nn.Module):
         self.kwargs = kwargs
         self.stabilization = stabilization
         self.num_successes = 0
-        self.u_bounds = 10.0
+        self.u_bounds = 50.0
         # create observation space based on nx, position and velocity
         high = np.concatenate(
             (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))

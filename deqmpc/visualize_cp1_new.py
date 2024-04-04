@@ -113,7 +113,7 @@ def main():
         args.T = 50
         args.warm_start = True
         args.bsz = 1
-        args.Q = 100*torch.Tensor([1.0, 10.0, 1, 1.0])
+        args.Q = 1000*torch.Tensor([1.0, 10.0, 1, 1.0])
         args.R = torch.Tensor([0.1])
         # args.solver_type = "al"
 
@@ -140,15 +140,14 @@ def main():
             state, xu_ref, x_ref, u_ref)
         state_hist = nominal_states.squeeze(0)  
         # print("nominal states\n", nominal_states)
-        # print("nominal action\n", nominal_action)
+        print("nominal action\n", nominal_action)
 
-        # ipdb.set_trace()
-        # state_hist = state
-        # for i in range(args.T):
-        #     state = env.dynamics(state, nominal_action[:, i])
-        #     # ipdb.set_trace()
-        #     state_hist = torch.cat((state_hist, state), dim=0)
-        # print(state)
+        state_hist = state
+        for i in range(args.T):
+            state = env.dynamics(state, nominal_action[:, i])
+            # ipdb.set_trace()
+            state_hist = torch.cat((state_hist, state), dim=0)
+        print(state)
 
         # state = env.dynamics(state, u)
         # state_hist = torch.cat((state_hist, state), dim=0)
