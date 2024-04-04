@@ -210,7 +210,7 @@ class MPC(Module):
             self.G_slices_uu0 = torch.cat([torch.arange(n_ctrl) + (n_ctrl)*i for i in range(T)], dim=0).view(-1)         
         # return self.Qi, self.Gi, self.Ai
 
-    def forward(self, x0, cost, dx, dx_true=None):
+    def forward(self, x0, cost, dx, dx_jac, dx_true=None):
         # QuadCost.C: [T, n_batch, n_tau, n_tau]
         # QuadCost.c: [T, n_batch, n_tau]
         if dx_true is None:
@@ -289,13 +289,13 @@ class MPC(Module):
         best = None
         # ipdb.set_trace()
         if self.single_qp_solve:
-            x, u, cost_total = self.single_qp_ls(x, u, dx, x0, cost)
+            x, u, cost_total = self.single_qp_ls(x, u, dx, dx_jac, x0, cost)
         else:
             x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
         
         return (x, u)
     
-    def single_qp(self, x, u, dx, x0, cost):
+    def single_qp(self, x, u, dx, dx_jac, x0, cost):
         if isinstance(dx, LinDx):
             F, f = dx.F, dx.f
             if f is None:
@@ -303,7 +303,7 @@ class MPC(Module):
         else:
             # Linearize the dynamics around the current state and action.
             F, f = self.linearize_dynamics(
-                x, util.detach_maybe(u), dx, diff=False)
+                x, util.detach_maybe(u), dx, dx_jac, diff=False)
 
         # ipdb.set_trace()
         dyn_res_lam = lambda x: self.dyn_res(x, self.dx_true, x0)
@@ -312,6 +312,7 @@ class MPC(Module):
             A, b = self.compute_Ab_dense(F, f, x0)
             G, h = self.compute_Gh_dense(x0)
             # xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
+            ipdb.set_trace()
             xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b, dyn_res_lam)
         xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T, -1)
         x_hat = xhats_qpf[:, :, :self.n_state].transpose(0,1)
@@ -331,7 +332,8 @@ class MPC(Module):
             x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
             # x_next = x_next[:,:-1]
         else:
-            x_next = dx(x, u)[:,:-1]
+            # x_next = dx(x, u)[:,:-1]
+            x_next = dx(x.reshape(-1, self.n_state), u.reshape(-1, self.n_ctrl)).reshape(self.n_batch, self.T, self.n_state)[:,:-1]
             
         res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
         res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
@@ -399,12 +401,12 @@ class MPC(Module):
         u = u + delta_u * alpha        
         return x, u, cost_total
 
-    def single_qp_ls(self, x, u, dx, x0, cost):
+    def single_qp_ls(self, x, u, dx, dx_jac, x0, cost):
         best = None
         n_not_improved = 0
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
         cost_total = self.compute_cost(xhats_qpf, cost)
-        delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
+        delta_x, delta_u, _ = self.single_qp(x, u, dx, dx_jac, x0, cost)
         with torch.no_grad():
             _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
         x = x + delta_x * alpha
@@ -476,7 +478,7 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             return hessians, grads, costs
 
     # @profile
-    def linearize_dynamics(self, x, u, dynamics, diff):
+    def linearize_dynamics(self, x, u, dynamics, dx_jac, diff):
         # TODO: Cleanup variable usage.
 
         n_batch = x[0].size(0)
@@ -528,18 +530,19 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
                         if self.grad_method in [GradMethods.AUTO_DIFF,
                                                 GradMethods.ANALYTIC_CHECK]:
                             Rt, St = [], []
-                            for j in range(self.n_state):
-                                Rj, Sj = torch.autograd.grad(
-                                    new_x[:,j].sum(), [xt, ut],
-                                    retain_graph=True)
-                                if not diff:
-                                    Rj, Sj = Rj.data, Sj.data
-                                Rt.append(Rj)
-                                St.append(Sj)
-                            Rt = torch.stack(Rt, dim=1)
-                            St = torch.stack(St, dim=1)
-                            if torch.isnan(Rt).any() or torch.isnan(St).any():
-                                ipdb.set_trace()
+                            # for j in range(self.n_state):
+                            #     Rj, Sj = torch.autograd.grad(
+                            #         new_x[:,j].sum(), [xt, ut],
+                            #         retain_graph=True)
+                            #     if not diff:
+                            #         Rj, Sj = Rj.data, Sj.data
+                            #     Rt.append(Rj)
+                            #     St.append(Sj)
+                            # Rt = torch.stack(Rt, dim=1)
+                            # St = torch.stack(St, dim=1)
+                            # if torch.isnan(Rt).any() or torch.isnan(St).any():
+                            #     ipdb.set_trace()
+                            Rt, St = dx_jac(xt, ut)[1]
 
                             if self.grad_method == GradMethods.ANALYTIC_CHECK:
                                 assert False # Not updated

@@ -1,24 +1,61 @@
 import torch
+from torch.autograd import Function
 import numpy as np
 import ipdb
 import time
-
 import sys
+
+import cartpole1l
+import cartpole2l
+
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
-import cartpole2l
+
+
+class DynamicsFunction(Function):
+    @staticmethod
+    def forward(q_in, qdot_in, tau_in, h_in, my_func):
+        output = my_func(q_in, qdot_in, tau_in, h_in)
+        return output
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        pass
+
+    @staticmethod
+    def vmap(info, in_dims, q_in, qdot_in, tau_in, h_in, my_func):
+        # ipdb.set_trace()
+        q_in_bdim, qdot_in_bdim, tau_in_bdim, _, _ = in_dims
+        if (q_in.dim() == 3):
+            # repeat h to match shape of (q_in.shape[0], q_in.shape[1], 1)
+            h_in = h_in.repeat(q_in.shape[0], 1, 1)
+
+        q_in = q_in.movedim(q_in_bdim, 0)
+        qdot_in = qdot_in.movedim(qdot_in_bdim, 0)
+        tau_in = tau_in.movedim(tau_in_bdim, 0)
+
+        next_state = DynamicsFunction.apply(
+            q_in, qdot_in, tau_in, h_in, my_func)
+        return next_state, 0
 
 
 class CartpoleDynamics(torch.nn.Module):
-    def __init__(self, nx=None, dt=0.01, package=None, kwargs=None):
+    def __init__(self, nx=None, dt=0.01, kwargs=None):
         super().__init__()
         assert nx is not None
-        assert package is not None
+        if nx == 6:
+            self.package = cartpole2l
+            print("Using 2-link cartpole dynamics")
+        elif nx == 4:
+            self.package = cartpole1l
+            print("Using 1-link cartpole dynamics")
+        else:
+            raise NotImplementedError
+
         self.nx = nx  # number of states
         self.nu = 1  # number of inputs
         self.nq = nx // 2  # number of generalized coordinates
         self.dt = dt  # time step
-        self.package = package  # the generated package
         self.kwargs = kwargs  # the arguments
 
     def forward(self, state, action):
@@ -31,8 +68,10 @@ class CartpoleDynamics(torch.nn.Module):
             torch.Tensor bsz x nx: The next state.
         """
         # check sizes
+        # ipdb.set_trace()
         reshape_flag = False
         if state.dim() == 3:
+            ipdb.set_trace()
             reshape_flag = True
             state = state.reshape(-1, self.nx)
             action = action.reshape(-1, self.nu)
@@ -40,7 +79,7 @@ class CartpoleDynamics(torch.nn.Module):
         assert state.size(1) == self.nx
         assert action.dim() == 2
         assert action.size(1) == self.nu
-        # TODO the package only supports double precision for now
+        # TODO the package only supports double pr  ecision for now
         assert state.dtype == torch.float64
 
         bsz = state.size(0)
@@ -49,12 +88,12 @@ class CartpoleDynamics(torch.nn.Module):
         tau = torch.zeros_like(state[:, : self.nq])
         tau[:, 0] = action[:, 0]
         q = state[:, : self.nq].contiguous()
-        qdot = state[:, self.nq :].contiguous()
+        qdot = state[:, self.nq:].contiguous()
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
-        # ipdb.set_trace()
 
-        next_state = self.package.dynamics(q, qdot, tau, h)
-        next_state = torch.cat(next_state, dim=1)
+        next_state = DynamicsFunction.apply(
+            q, qdot, tau, h, self.package.dynamics)
+        next_state = torch.cat(next_state, dim=-1)
         if reshape_flag:
             return next_state.reshape(bsz, -1, self.nx)
         return next_state
@@ -86,22 +125,22 @@ class CartpoleDynamics(torch.nn.Module):
         tau = torch.zeros((bsz, self.nq), **self.kwargs)
         tau[:, 0] = action.squeeze(1)
         q = state[:, : self.nq].contiguous()
-        qdot = state[:, self.nq :].contiguous()
+        qdot = state[:, self.nq:].contiguous()
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
 
         q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau = (
-            self.package.derivatives(q, qdot, tau, h)
+            DynamicsFunction.apply(q, qdot, tau, h, self.package.derivatives)
         )
 
         # concat jacobians to get dx_dx and dx_du
-        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=1)
-        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=1)
-        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
-        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, 0]
+        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=-2)
+        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=-2)
+        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=-1)
+        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=-1)[:, :1, :]
         if reshape_flag:
-            return x_jac_x.reshape(bsz, -1, self.nx), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x, x_jac_u
-    
+            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
+        return x_jac_x.transpose(-1, -2), x_jac_u.transpose(-1, -2)
+
     def dynamics_derivatives(self, state, action):
         """
         Computes the dynamics and its derivatives with respect to the states and actions
@@ -163,19 +202,21 @@ class CartpoleDynamics(torch.nn.Module):
         qdot_out = qdot_out.reshape(-1, 2 * nqt, nqdot)
 
         # compute the jacobians
-        q_jac_q = -(q_out[:, :nq] - q_out[:, nqt : nq + nqt]) / (2 * eps)
+        q_jac_q = -(q_out[:, :nq] - q_out[:, nqt: nq + nqt]) / (2 * eps)
         q_jac_qdot = -(
-            q_out[:, nq : nq + nqdot] - q_out[:, nqt + nq : nqt + nq + nqdot]
+            q_out[:, nq: nq + nqdot] - q_out[:, nqt + nq: nqt + nq + nqdot]
         ) / (2 * eps)
-        q_jac_tau = -(q_out[:, nq + nqdot : nqt] - q_out[:, nqt + nq + nqdot :]) / (
+        q_jac_tau = -(q_out[:, nq + nqdot: nqt] - q_out[:, nqt + nq + nqdot:]) / (
             2 * eps
         )
-        qdot_jac_q = -(qdot_out[:, :nq] - qdot_out[:, nqt : nq + nqt]) / (2 * eps)
+        qdot_jac_q = -(qdot_out[:, :nq] -
+                       qdot_out[:, nqt: nq + nqt]) / (2 * eps)
         qdot_jac_qdot = -(
-            qdot_out[:, nq : nq + nqdot] - qdot_out[:, nqt + nq : nqt + nq + nqdot]
+            qdot_out[:, nq: nq + nqdot] -
+            qdot_out[:, nqt + nq: nqt + nq + nqdot]
         ) / (2 * eps)
         qdot_jac_tau = -(
-            qdot_out[:, nq + nqdot : nqt] - qdot_out[:, nqt + nq + nqdot :]
+            qdot_out[:, nq + nqdot: nqt] - qdot_out[:, nqt + nq + nqdot:]
         ) / (2 * eps)
 
         return q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau
@@ -197,7 +238,8 @@ class CartpoleDynamics(torch.nn.Module):
         )
 
         # evaluate the function
-        q_out, qdot_out = self.package.dynamics(q_total, qdot_total, tau_total, h_total)
+        q_out, qdot_out = self.package.dynamics(
+            q_total, qdot_total, tau_total, h_total)
 
         # compute the jacobians
         q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau = (
@@ -233,7 +275,7 @@ class CartpoleDynamics(torch.nn.Module):
         tau = torch.zeros((bsz, self.nq), **self.kwargs)
         tau[:, 0] = action.squeeze(1)
         q = state[:, : self.nq].contiguous()
-        qdot = state[:, self.nq :].contiguous()
+        qdot = state[:, self.nq:].contiguous()
         h = torch.full((bsz, 1), dt, **self.kwargs)
 
         q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau = (
@@ -241,27 +283,23 @@ class CartpoleDynamics(torch.nn.Module):
         )
 
         # concat jacobians to get dx_dx and dx_du
-        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=1)
-        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=1)
-        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=2)
-        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=1)[:, :, 0]
+        q_jac_x = torch.cat((q_jac_q, q_jac_qdot), dim=-2)
+        qdot_jac_x = torch.cat((qdot_jac_q, qdot_jac_qdot), dim=-2)
+        x_jac_x = torch.cat((q_jac_x, qdot_jac_x), dim=-1)
+        x_jac_u = torch.cat((q_jac_tau, qdot_jac_tau), dim=-1)[:, :1, :]
         if reshape_flag:
-            return x_jac_x.reshape(bsz, -1, self.nx), x_jac_u.reshape(bsz, -1, self.nu)
-        return x_jac_x, x_jac_u
+            return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
+        return x_jac_x.transpose(-1, -2), x_jac_u.transpose(-1, -2)
 
 
 class CartpoleEnv(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
         super().__init__()
         assert nx is not None
-        if nx == 6:
-            self.package = cartpole2l
-        else:
-            raise NotImplementedError
-        self.nx = nx
         self.dynamics = CartpoleDynamics(
-            nx=nx, dt=dt, package=self.package, kwargs=kwargs
+            nx=nx, dt=dt, kwargs=kwargs
         )
+        self.nx = nx
         self.spec_id = "Cartpole{}l-v0{}".format(
             nx // 2 - 1, "-stabilize" if stabilization else ""
         )
@@ -273,7 +311,8 @@ class CartpoleEnv(torch.nn.Module):
         self.num_successes = 0
         self.u_bounds = 10.0
         # create observation space based on nx, position and velocity
-        high = np.concatenate((np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
+        high = np.concatenate(
+            (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
         self.observation_space = Spaces(-high, high, (self.nx, 2))
         self.action_space = Spaces(
             np.full(self.nu, -self.u_bounds),
@@ -286,7 +325,7 @@ class CartpoleEnv(torch.nn.Module):
         return torch.clamp(action, -self.u_bounds, self.u_bounds)
 
     def state_clip(self, state):
-        state[..., 1 : self.nq] = angle_normalize_2pi(state[..., 1 : self.nq])
+        state[..., 1: self.nq] = angle_normalize_2pi(state[..., 1: self.nq])
         return state
 
     def seed(self, seed):
@@ -305,7 +344,8 @@ class CartpoleEnv(torch.nn.Module):
             numpy.ndarray: The initial state.
         """
         if self.stabilization:
-            high = np.concatenate((np.full(self.nq, 0.05), np.full(self.nq, 0.05)))
+            high = np.concatenate(
+                (np.full(self.nq, 0.05), np.full(self.nq, 0.05)))
             high[0], high[1] = 0.1, 0.1  # cart
             offset = torch.tensor([np.pi, 0.0] * self.nq, **self.kwargs)
             offset[0], offset[1] = 0.0, 0.0  # cart
@@ -324,7 +364,8 @@ class CartpoleEnv(torch.nn.Module):
                 np.random.uniform(low=-high, high=high), **self.kwargs
             )
 
-        self.state = torch.tensor([0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)  # fixed
+        self.state = torch.tensor(
+            [0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)  # fixed
 
         self.num_successes = 0
         return to_numpy(self.state)
@@ -359,7 +400,8 @@ class CartpoleEnv(torch.nn.Module):
         x = self.state[..., 0]
         theta = self.state[..., 1:2]
         desired_theta = torch.tensor([torch.pi, 0], **self.kwargs)
-        success = torch.norm(theta - desired_theta) < 0.05 and (torch.abs(x) < 0.05)
+        success = torch.norm(
+            theta - desired_theta) < 0.05 and (torch.abs(x) < 0.05)
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
 
@@ -391,43 +433,65 @@ class CartpoleEnv(torch.nn.Module):
 # if this is main then run the test
 if __name__ == "__main__":
     # create the dynamics model
+
     kwargs = {
         "dtype": torch.float64,
         "device": torch.device("cuda"),
         "requires_grad": False,
     }
     nx = 6
-    dt = 0.01
-    package = cartpole2l
-    dynamics = CartpoleDynamics(nx=nx, dt=dt, package=package, kwargs=kwargs)
+    dt = 0.05
+    dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
-    bsz = 2
-    state = torch.randn((bsz, nx), **kwargs)
-    action = torch.randn((bsz, 1), **kwargs)
+    bsz = 1
+    # state = torch.randn((bsz, nx), **kwargs)
+    # action = torch.randn((bsz, 1), **kwargs)
 
-    # state = torch.tensor([[1.1, 2, 3, 1, 2, 3], [1., 2, 3, 1, 2, 3]], **kwargs)
-    # action = torch.tensor([[2.0], [2.2]], **kwargs)
+    state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
+    # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
+    action = torch.tensor([[-1.1]], **kwargs)
 
-    # next_state = dynamics(state, action)
-    # jacobians = dynamics.derivatives(state, action)
-    # jacobians_fd = dynamics.finite_diff_derivatives(
-    #     state, action, eps=1e-8, kwargs=kwargs
-    # )
+    next_state = dynamics(state, action)
+    jacobians = dynamics.derivatives(state, action)
+    jacobians_fd = dynamics.finite_diff_derivatives(
+        state, action, eps=1e-5, kwargs=kwargs
+    )
     next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
     print("next_state:", next_state)
-    print("jacobians:", jacobians)
-    # print("jacobians_fd:", jacobians_fd)
+    print("jacobians[0]:", jacobians[0])
+    print("jacobians[1]:", jacobians[1])
+    print("jacobians_fd[0]:", jacobians_fd[0])
+    print("jacobians_fd[1]:", jacobians_fd[1])
 
-    # # calculate the error between jacobians and jacobians_fd
-    # error = np.zeros(2)
-    # for i in range(len(jacobians)):
-    #     error[i] = torch.norm(jacobians[i] - jacobians_fd[i]) / torch.norm(jacobians[i])
-    # print("error:", error)
+    # calculate the error between jacobians and jacobians_fd
+    error = np.zeros(2)
+    for i in range(len(jacobians)):
+        error[i] = torch.norm(jacobians[i] - jacobians_fd[i]
+                              ) / torch.norm(jacobians[i])
+    print("error:", error)
 
     # create the environment
-    env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
-    env.state = state
-    next_state2 = env.step(to_numpy(action))
-    print("next_state:", next_state2)
+    # env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
+    # env.state = state
+    # next_state2 = env.step(to_numpy(action))
+    # print("next_state:", next_state2)
+
+    #############################
+    # Test vmap
+    #############################
+    # ls = 10
+    # T = 5
+    # bsz = 2
+    # state = torch.randn((ls, bsz, T, nx), **kwargs)
+    # action = torch.randn((ls, bsz, T, 1), **kwargs)
+    # dx = dynamics
+
+    # def merit(x, u): return dx(
+    #     x[:, :-1].reshape(-1, nx), u[:, :-1].reshape(-1, 1)).view(bsz, T - 1, nx)
+
+    # print("state:", merit(state, action).shape)
+    # my_vmap = torch.vmap(merit)
+    # next_state = my_vmap(state, action)
+    # print("next_state:", next_state.shape)
