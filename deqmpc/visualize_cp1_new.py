@@ -118,7 +118,7 @@ def main():
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0., 0.1, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0., 0.05, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -142,12 +142,12 @@ def main():
         # print("nominal states\n", nominal_states)
         print("nominal action\n", nominal_action)
 
-        state_hist = state
-        for i in range(args.T):
-            state = env.dynamics(state, nominal_action[:, i])
-            # ipdb.set_trace()
-            state_hist = torch.cat((state_hist, state), dim=0)
-        print(state)
+        # state_hist = state
+        # for i in range(args.T):
+        #     state = env.dynamics(state, nominal_action[:, i])
+        #     # ipdb.set_trace()
+        #     state_hist = torch.cat((state_hist, state), dim=0)
+        # print(state)
 
         # state = env.dynamics(state, u)
         # state_hist = torch.cat((state_hist, state), dim=0)

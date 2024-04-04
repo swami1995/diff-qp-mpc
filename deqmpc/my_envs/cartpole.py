@@ -145,17 +145,6 @@ class CartpoleDynamics(torch.nn.Module):
             return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
         return x_jac_x.transpose(-1, -2), x_jac_u.transpose(-1, -2)
 
-    def dynamics_derivatives(self, state, action):
-        """
-        Computes the dynamics and its derivatives with respect to the states and actions
-        Args:
-            state (torch.Tensor bsz x nx): The current state.
-            action (torch.Tensor bsz x nu): The action to apply.
-        Returns:
-            Tuple of torch.Tensor: The next state and the derivatives of the dynamics with respect to the states and actions.
-        """
-        return self.forward(state, action), self.derivatives(state, action)
-
     @torch.jit.script
     def _finite_diff_pre_processing(nq: int, q, qdot, tau, h, q_id, qdot_id, tau_id):
         # ipdb.set_trace()
@@ -225,16 +214,16 @@ class CartpoleDynamics(torch.nn.Module):
 
         return q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau
 
-    def _finite_diff_derivatives(self, q, qdot, tau, h, eps=1e-8, kwargs=None):
+    def _finite_diff_derivatives(self, q, qdot, tau, h, eps=1e-8):
         nq = self.nq
         nqdot = nq
         ntau = nq
-        bsz = state.size(0)
+        bsz = q.size(0)
 
         # compute epsilon deltas
-        q_id = eps * torch.eye(nq, **kwargs)[None].repeat(bsz, 1, 1)
-        qdot_id = eps * torch.eye(nqdot, **kwargs)[None].repeat(bsz, 1, 1)
-        tau_id = eps * torch.eye(ntau, **kwargs)[None].repeat(bsz, 1, 1)
+        q_id = eps * torch.eye(nq, **self.kwargs)[None].repeat(bsz, 1, 1)
+        qdot_id = eps * torch.eye(nqdot, **self.kwargs)[None].repeat(bsz, 1, 1)
+        tau_id = eps * torch.eye(ntau, **self.kwargs)[None].repeat(bsz, 1, 1)
 
         # parallelize the input
         q_total, qdot_total, tau_total, h_total = self._finite_diff_pre_processing(
@@ -252,7 +241,7 @@ class CartpoleDynamics(torch.nn.Module):
 
         return q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau
 
-    def finite_diff_derivatives(self, state, action, eps=1e-8, kwargs=None):
+    def finite_diff_derivatives(self, state, action, eps=1e-8):
         """
         Computes the derivatives of the dynamics with respect to the states and actions using finite differences
         Args:
@@ -280,10 +269,10 @@ class CartpoleDynamics(torch.nn.Module):
         tau[:, 0] = action.squeeze(1)
         q = state[:, : self.nq].contiguous()
         qdot = state[:, self.nq:].contiguous()
-        h = torch.full((bsz, 1), dt, **self.kwargs)
+        h = torch.full((bsz, 1), self.dt, **self.kwargs)
 
         q_jac_q, q_jac_qdot, q_jac_tau, qdot_jac_q, qdot_jac_qdot, qdot_jac_tau = (
-            self._finite_diff_derivatives(q, qdot, tau, h, eps, kwargs)
+            self._finite_diff_derivatives(q, qdot, tau, h, eps)
         )
 
         # concat jacobians to get dx_dx and dx_du
@@ -295,7 +284,18 @@ class CartpoleDynamics(torch.nn.Module):
             return x_jac_x.reshape(bsz, -1, self.nx).tranpose(-1, -2), x_jac_u.reshape(bsz, -1, self.nu)
         return x_jac_x.transpose(-1, -2), x_jac_u.transpose(-1, -2)
 
-
+    def dynamics_derivatives(self, state, action):
+        """
+        Computes the dynamics and its derivatives with respect to the states and actions
+        Args:
+            state (torch.Tensor bsz x nx): The current state.
+            action (torch.Tensor bsz x nu): The action to apply.
+        Returns:
+            Tuple of torch.Tensor: The next state and the derivatives of the dynamics with respect to the states and actions.
+        """
+        # return self.forward(state, action), self.derivatives(state, action)
+        return self.forward(state, action), self.finite_diff_derivatives(state, action)
+    
 class CartpoleEnv(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
         super().__init__()
