@@ -24,11 +24,11 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="pendulum")
-    parser.add_argument("--np", type=int, default=1)  # TODO configurations
-    parser.add_argument("--T", type=int, default=5)
-    parser.add_argument('--dt', type=float, default=0.05)
+    parser.add_argument("--np", type=int, default=2)  # TODO configurations
+    parser.add_argument("--T", type=int, default=100)
+    parser.add_argument('--dt', type=float, default=0.02)
     parser.add_argument("--qp_iter", type=int, default=1)
-    parser.add_argument("--eps", type=float, default=1e-2)
+    parser.add_argument("--eps", type=float, default=1e-5)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
@@ -110,7 +110,6 @@ def main():
     # test controlled dynamics
     torch.no_grad()
     if mode == 2:
-        args.T = 50
         args.warm_start = True
         args.bsz = 1
         args.Q = 10*torch.Tensor([1.0, 10.0, 1, 1.0])
@@ -118,7 +117,7 @@ def main():
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0., 0.05, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0., 0.2, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 

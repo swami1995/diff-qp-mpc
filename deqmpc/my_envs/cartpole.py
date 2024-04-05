@@ -293,8 +293,8 @@ class CartpoleDynamics(torch.nn.Module):
         Returns:
             Tuple of torch.Tensor: The next state and the derivatives of the dynamics with respect to the states and actions.
         """
-        # return self.forward(state, action), self.derivatives(state, action)
-        return self.forward(state, action), self.finite_diff_derivatives(state, action)
+        return self.forward(state, action), self.derivatives(state, action)
+        # return self.forward(state, action), self.finite_diff_derivatives(state, action)
     
 class CartpoleEnv(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
@@ -313,7 +313,7 @@ class CartpoleEnv(torch.nn.Module):
         self.kwargs = kwargs
         self.stabilization = stabilization
         self.num_successes = 0
-        self.u_bounds = 50.0
+        self.u_bounds = 100.0
         # create observation space based on nx, position and velocity
         high = np.concatenate(
             (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
