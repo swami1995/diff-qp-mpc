@@ -36,7 +36,7 @@ int eval_forward_dynamics_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_in
 #define eval_forward_dynamics_SZ_ARG 4
 #define eval_forward_dynamics_SZ_RES 2
 #define eval_forward_dynamics_SZ_IW 0
-#define eval_forward_dynamics_SZ_W 32
+#define eval_forward_dynamics_SZ_W 28
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -531,7 +531,7 @@ class Tracking_MPC(torch.nn.Module):
                 backprop=False,
                 verbose=0,
                 u_init=self.u_init.transpose(0,1),
-                grad_method=ip_mpc.GradMethods.AUTO_DIFF,
+                grad_method=ip_mpc.GradMethods.ANALYTIC,
                 solver_type="dense",
                 single_qp_solve=self.single_qp_solve,
             )

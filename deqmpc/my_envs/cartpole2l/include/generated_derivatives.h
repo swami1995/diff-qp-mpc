@@ -36,7 +36,7 @@ int eval_forward_derivatives_work(casadi_int *sz_arg, casadi_int* sz_res, casadi
 #define eval_forward_derivatives_SZ_ARG 4
 #define eval_forward_derivatives_SZ_RES 6
 #define eval_forward_derivatives_SZ_IW 0
-#define eval_forward_derivatives_SZ_W 244
+#define eval_forward_derivatives_SZ_W 235
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

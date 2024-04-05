@@ -501,7 +501,7 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
                 _x = _x.data
                 _u = _u.data
 
-            R, S = dynamics.grad_input(_x, _u)
+            R, S = dx_jac(_x, _u)[1]
 
             f = _new_x - util.bmv(R, _x) - util.bmv(S, _u)
             f = f.view(self.T-1, n_batch, self.n_state)
