@@ -113,7 +113,7 @@ def main():
         args.T = 50
         args.warm_start = True
         args.bsz = 1
-        args.Q = 1000*torch.Tensor([1.0, 10.0, 1, 1.0])
+        args.Q = 10*torch.Tensor([1.0, 10.0, 1, 1.0])
         args.R = torch.Tensor([0.1])
         # args.solver_type = "al"
 

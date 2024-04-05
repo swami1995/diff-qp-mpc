@@ -83,7 +83,7 @@ class CartpoleDynamics(torch.nn.Module):
         assert state.size(1) == self.nx
         assert action.dim() == 2
         assert action.size(1) == self.nu
-        # TODO the package only supports double pr  ecision for now
+        # TODO the package only supports double precision for now
         assert state.dtype == torch.float64
 
         bsz = state.size(0)
@@ -443,7 +443,8 @@ if __name__ == "__main__":
         "device": torch.device("cuda"),
         "requires_grad": False,
     }
-    nx = 6
+    nq = 3
+    nx = nq * 2
     dt = 0.05
     dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
@@ -453,14 +454,12 @@ if __name__ == "__main__":
     # action = torch.randn((bsz, 1), **kwargs)
 
     state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
-    # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
-    action = torch.tensor([[-1.1]], **kwargs)
+    # state = torch.tensor([[0.2, 1.2, 4.2, 1.8]], **kwargs)
+    action = torch.tensor([[-4.1]], **kwargs)
 
     next_state = dynamics(state, action)
-    jacobians = dynamics.derivatives(state, action)
-    jacobians_fd = dynamics.finite_diff_derivatives(
-        state, action, eps=1e-5, kwargs=kwargs
-    )
+    # jacobians = dynamics.derivatives(state, action)
+    jacobians_fd = dynamics.finite_diff_derivatives(state, action, eps=1e-5)
     next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
     print("next_state:", next_state)
