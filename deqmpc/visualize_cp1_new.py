@@ -25,8 +25,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--np", type=int, default=2)  # TODO configurations
-    parser.add_argument("--T", type=int, default=100)
-    parser.add_argument('--dt', type=float, default=0.02)
+    parser.add_argument("--T", type=int, default=50)
+    parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-5)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -68,10 +68,10 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, np.pi, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, np.pi*0+1, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
-        torque = torch.tensor([[20.0]], **kwargs)
+        torque = torch.tensor([[0.0]], **kwargs)
         # torque = torch.randn((1, 1), **kwargs) * 5
         for i in range(200):
             # torque = -Kinf @ (state - desired_state).T
@@ -117,7 +117,7 @@ def main():
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0., 0.2, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0., 0.1, 0.0, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -129,7 +129,7 @@ def main():
         torch.no_grad()
         # for i in range(170):
         x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
-        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.01
+        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*1
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(
