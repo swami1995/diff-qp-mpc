@@ -291,7 +291,7 @@ class MPC(Module):
         if self.single_qp_solve:
             x, u, cost_total = self.single_qp_ls(x, u, dx, dx_jac, x0, cost)
         else:
-            x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
+            x, u, cost_total = self.solve_nonlin(x, u, dx, dx_jac, x0, cost)
         
         return (x, u)
     
@@ -312,7 +312,7 @@ class MPC(Module):
             A, b = self.compute_Ab_dense(F, f, x0)
             G, h = self.compute_Gh_dense(x0)
             # xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
-            ipdb.set_trace()
+            # ipdb.set_trace()
             xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b, dyn_res_lam)
         xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T, -1)
         x_hat = xhats_qpf[:, :, :self.n_state].transpose(0,1)
@@ -345,7 +345,7 @@ class MPC(Module):
         return res
 
 
-    def solve_nonlin(self, x, u, dx, x0, cost):
+    def solve_nonlin(self, x, u, dx, dx_jac, x0, cost):
         best = None
         n_not_improved = 0
         xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
@@ -355,7 +355,7 @@ class MPC(Module):
         with torch.no_grad():
             for i in range(self.qp_iter):
                 u_prev = u.clone()
-                delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
+                delta_x, delta_u, _ = self.single_qp(x, u, dx, dx_jac, x0, cost)
                 # ipdb.set_trace()
 
                 x, u, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
@@ -394,7 +394,7 @@ class MPC(Module):
                     break
         
         x, u = torch.cat(best['x'], dim=1), torch.cat(best['u'], dim=1)
-        delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
+        delta_x, delta_u, _ = self.single_qp(x, u, dx, dx_jac, x0, cost)
         with torch.no_grad():
             _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
         x = x + delta_x * alpha

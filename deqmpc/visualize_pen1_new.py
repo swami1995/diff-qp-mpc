@@ -24,10 +24,10 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="pendulum")
-    parser.add_argument("--np", type=int, default=2)  # TODO configurations
-    parser.add_argument("--T", type=int, default=50)
-    parser.add_argument('--dt', type=float, default=0.05)
-    parser.add_argument("--qp_iter", type=int, default=1)
+    parser.add_argument("--np", type=int, default=1)  # TODO configurations
+    parser.add_argument("--T", type=int, default=100)
+    parser.add_argument('--dt', type=float, default=0.03)
+    parser.add_argument("--qp_iter", type=int, default=10)
     parser.add_argument("--eps", type=float, default=1e-5)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
@@ -64,14 +64,14 @@ def main():
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 0
+    mode = 2
 
     # test uncontrolled dynamics
     if mode == 0:
         state = torch.tensor([[0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0]], **kwargs)
         state_hist = state
-        torque = torch.tensor([[0.0]], **kwargs)
+        torque = torch.tensor([[0.5]], **kwargs)
         # torque = torch.randn((1, 1), **kwargs) * 5
         for i in range(200):
             # torque = -Kinf @ (state - desired_state).T
@@ -80,7 +80,7 @@ def main():
             state_hist = torch.cat((state_hist, state), dim=0)
         theta = state_hist[:, : env.nq]
         theta_dot = state_hist[:, env.nq:]
-        # ipdb.set_trace()
+        ipdb.set_trace()
 
         # plt.figure()
         # print(state_hist.shape)
@@ -112,12 +112,13 @@ def main():
     if mode == 2:
         args.warm_start = True
         args.bsz = 1
-        args.Q = 10*torch.Tensor([1.0, 10.0, 1, 1.0])
+        args.Q = 1000*torch.Tensor([10.0, 1.0])
         args.R = torch.Tensor([0.1])
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0., 0.1, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[np.pi+0.4, 0.5]], **kwargs)
+        xg = torch.tensor([[np.pi, 0.0]], **kwargs)
         # high = np.array([np.pi, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -128,8 +129,9 @@ def main():
 
         torch.no_grad()
         # for i in range(170):
-        x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
-        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*1
+        # create xref from xg
+        x_ref = xg.repeat(args.bsz, args.T, 1)
+        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.01
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(
@@ -138,15 +140,15 @@ def main():
         nominal_states, nominal_action = tracking_mpc(
             state, xu_ref, x_ref, u_ref)
         state_hist = nominal_states.squeeze(0)  
-        # print("nominal states\n", nominal_states)
+        print("nominal states\n", nominal_states)
         print("nominal action\n", nominal_action)
 
-        # state_hist = state
-        # for i in range(args.T):
-        #     state = env.dynamics(state, nominal_action[:, i])
-        #     # ipdb.set_trace()
-        #     state_hist = torch.cat((state_hist, state), dim=0)
-        # print(state)
+        state_hist = state
+        for i in range(args.T):
+            state = env.dynamics(state, nominal_action[:, i])
+            # ipdb.set_trace()
+            state_hist = torch.cat((state_hist, state), dim=0)
+        print(state)
 
         # state = env.dynamics(state, u)
         # state_hist = torch.cat((state_hist, state), dim=0)
@@ -170,7 +172,7 @@ def main():
         # plt.show()
 # 
     # utils.animate_pendulum(env, theta, torque)
-    utils.animate_pendulum(utils.to_numpy(state_hist.T), nq)
+    # utils.animate_pendulum(utils.to_numpy(state_hist.T), nq)
 
 
 if __name__ == "__main__":
