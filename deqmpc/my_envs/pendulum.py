@@ -1,5 +1,5 @@
 """Description: Pendulum n-link environment.
-At upright position, all joint angles are at 0 radian. Positive angle is counter-clockwise.
+At downward position, all joint angles are at 0 radian. Positive angle is counter-clockwise.
 """
 
 import torch
@@ -9,14 +9,13 @@ import ipdb
 import time
 import sys
 
-import cartpole1l
-import cartpole2l
+import pendulum1l
 
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
 from dynamics import DynamicsFunction, Dynamics
 
-class PendulumDynamics(torch.nn.Module):
+class PendulumDynamics(Dynamics):
     def __init__(self, nx=None, dt=0.01, kwargs=None):
         super().__init__(nx, dt, kwargs)
         assert nx is not None
@@ -43,7 +42,7 @@ class CartpoleEnv(torch.nn.Module):
             nx=nx, dt=dt, kwargs=kwargs
         )
         self.nx = nx
-        self.spec_id = "Cartpole{}l-v0{}".format(
+        self.spec_id = "Pendulum{}l-v0{}".format(
             nx // 2 - 1, "-stabilize" if stabilization else ""
         )
         self.nq = self.dynamics.nq
@@ -182,19 +181,18 @@ if __name__ == "__main__":
         "device": torch.device("cuda"),
         "requires_grad": False,
     }
-    nq = 3
+    nq = 1
     nx = nq * 2
     dt = 0.05
-    dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
+    dynamics = PendulumDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
     bsz = 1
     # state = torch.randn((bsz, nx), **kwargs)
     # action = torch.randn((bsz, 1), **kwargs)
 
-    state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
-    # state = torch.tensor([[0.2, 1.2, 4.2, 1.8]], **kwargs)
-    action = torch.tensor([[-4.1]], **kwargs)
+    state = torch.tensor([[np.pi/2, 0]], **kwargs)
+    action = torch.tensor([[-10.]], **kwargs)
 
     next_state = dynamics(state, action)
     # jacobians = dynamics.derivatives(state, action)
