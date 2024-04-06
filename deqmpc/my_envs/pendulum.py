@@ -13,6 +13,7 @@ import pendulum1l
 
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
+sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc/my_envs")
 from dynamics import DynamicsFunction, Dynamics
 
 class PendulumDynamics(Dynamics):
@@ -34,11 +35,11 @@ class PendulumDynamics(Dynamics):
         self.dt = dt  # time step
         self.kwargs = kwargs  # the arguments
 
-class CartpoleEnv(torch.nn.Module):
+class PendulumEnv(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
         super().__init__()
         assert nx is not None
-        self.dynamics = CartpoleDynamics(
+        self.dynamics = PendulumDynamics(
             nx=nx, dt=dt, kwargs=kwargs
         )
         self.nx = nx

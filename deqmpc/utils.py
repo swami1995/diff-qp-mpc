@@ -27,7 +27,7 @@ def animate_pendulum(env, theta, torque):
         x = [0, -length * np.sin(angle)]
         y = [0, length * np.cos(angle)]
         ax.plot(x, y, marker='o', markersize=10, color='blue', linewidth=4)
-        ax.arrow(0, -1, torque[frame]/env.max_torque, 0, color='green', width=0.05)
+        # ax.arrow(0, -1, torque[frame]/env.max_torque, 0, color='green', width=0.05)
         
         # Set plot limits
         ax.set_xlim(-length*1.5, length*1.5)
