@@ -4,48 +4,114 @@ from matplotlib.animation import FuncAnimation
 import ipdb
 
 
-def animate_pendulum(env, theta, torque):
-    """
-    Animate the pendulum using matplotlib
-    Args:
-        env: pendulum environment
-        theta: list of pendulum angles
-        torque: list of pendulum torques
-    """
+# def animate_pendulum(env, theta, torque):
+#     """
+#     Animate the pendulum using matplotlib
+#     Args:
+#         env: pendulum environment
+#         theta: list of pendulum angles
+#         torque: list of pendulum torques
+#     """
 
-    # Animation function
-    def update(frame):
-        ax.clear()
+#     # Animation function
+#     def update(frame):
+#         ax.clear()
         
-        # Set up pendulum parameters
-        length = 1.0  # Length of the pendulum (meters)
+#         # Set up pendulum parameters
+#         length = 1.0  # Length of the pendulum (meters)
         
-        # Calculate pendulum position
-        angle = theta[frame] 
+#         # Calculate pendulum position
+#         angle = theta[frame] 
         
-        # Plot pendulum
-        x = [0, -length * np.sin(angle)]
-        y = [0, length * np.cos(angle)]
-        ax.plot(x, y, marker='o', markersize=10, color='blue', linewidth=4)
-        # ax.arrow(0, -1, torque[frame]/env.max_torque, 0, color='green', width=0.05)
+#         # Plot pendulum
+#         x = [0, -length * np.sin(angle)]
+#         y = [0, length * np.cos(angle)]
+#         ax.plot(x, y, marker='o', markersize=10, color='blue', linewidth=4)
+#         # ax.arrow(0, -1, torque[frame]/env.max_torque, 0, color='green', width=0.05)
         
-        # Set plot limits
-        ax.set_xlim(-length*1.5, length*1.5)
-        ax.set_ylim(-length*1.5, length*1.5)
+#         # Set plot limits
+#         ax.set_xlim(-length*1.5, length*1.5)
+#         ax.set_ylim(-length*1.5, length*1.5)
         
-        # Set plot aspect ratio to be equal
-        ax.set_aspect('equal')
+#         # Set plot aspect ratio to be equal
+#         ax.set_aspect('equal')
 
-    # Set up the plot
-    fig, ax = plt.subplots()
-    ani = FuncAnimation(fig, update, frames=len(theta), interval=30, repeat=True)
+#     # Set up the plot
+#     fig, ax = plt.subplots()
+#     ani = FuncAnimation(fig, update, frames=len(theta), interval=30, repeat=True)
 
-    plt.title('Simple Pendulum Animation')
-    plt.xlabel('X Position (m)')
-    plt.ylabel('Y Position (m)')
+#     plt.title('Simple Pendulum Animation')
+#     plt.xlabel('X Position (m)')
+#     plt.ylabel('Y Position (m)')
 
-    # Display the animation
-    plt.show()
+#     # Display the animation
+#     plt.show()
+
+def animate_pendulum(X, nq=1):
+    # get a random starting state between min state and max state
+    params = {"r_1": 1.0, "r_2": 1.0, "nq": nq}
+
+
+    x0 = X[:nq,1];  # first state at k = 1
+
+    # this function is defined below
+    # ipdb.set_trace()
+    [p_c, p_1, p_2] = dpc_endpositions_pendulum(tuple(x0), params)
+    
+
+    fig, ax = plt.subplots(1, 1)
+    ax.set_aspect('equal')
+    ax.set_xlim(-3, 3)
+    ax.set_ylim(-2, 2)
+    ax.set_title('Cartpole {}-Link Animation'.format(nq-1))
+    # plt.show()
+    # plt.draw()
+    # plt.pause(0.5)
+
+    # timer_handle = plt.text(-0.3, x_max[0], '0.00 s', fontsize=15);
+    cart_handle, = plt.plot(p_c[0], p_c[1], 'ks', markersize=20, linewidth=3);
+    pole_one_handle, = plt.plot([p_c[0], p_1[0]], [p_c[1], p_1[1]], color=np.array([38,124,185])/255, linewidth=8);
+    pole_two_handle, = plt.plot([p_1[0], p_2[0]], [p_1[1], p_2[1]], color=np.array([38,124,185])/255, linewidth=8);
+
+    joint_zero_handle, = plt.plot(p_c[0], p_c[1], 'ko', markersize=5)
+    joint_one_handle, = plt.plot(p_1[0], p_1[1], 'ko', markersize=5)
+    joint_two_handle, = plt.plot(p_2[0], p_2[1], 'ko', markersize=5)
+
+    for k in range(0, X.shape[1]):
+        tic = time.time()
+        x = X[:nq,k]
+
+        [p_c, p_1, p_2] = dpc_endpositions_pendulum(tuple(x), params)
+
+        # timer_handle.set_text('{:.2f} s'.format(tdata[k]))
+
+        cart_handle.set_data(x[0], 0)
+
+        pole_one_handle.set_data([p_c[0], p_1[0]], [p_c[1], p_1[1]])
+        pole_two_handle.set_data([p_1[0], p_2[0]], [p_1[1], p_2[1]])
+
+        joint_zero_handle.set_data(p_c[0], p_c[1]);
+        joint_one_handle.set_data(p_1[0], p_1[1]);
+        joint_two_handle.set_data(p_2[0], p_2[1]);
+
+        time.sleep(np.max([0.1, 0]))
+        plt.pause(0.0001)
+    plt.close(fig)
+
+def dpc_endpositions_pendulum(q, p):
+    # Returns the positions of cart, first joint, and second joint
+    # to draw the black circles
+    if p["nq"] == 1:
+        q_1 = q[0]
+        q_2 = 0.0
+    elif p["nq"] == 2:
+        q_1, q_2 = q
+    else:
+        raise NotImplementedError
+    p_c = np.array([0.0, 0]);
+    p_1 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)])
+    p_2 = p_c + p["r_1"] * np.array([-np.sin(q_1), np.cos(q_1)]) + p["r_2"] * np.array([-np.sin(q_1+q_2), np.cos(q_1+q_2)])
+    return p_c, p_1, p_2
 
 def animate_integrator(env, pos, acc):
     # animate 2d position and acceleration as arrow

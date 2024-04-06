@@ -168,9 +168,9 @@ def main():
         # plt.legend()
         # # plt.ylim(-env.max_acc*1.5, env.max_acc*1.5)
         # plt.show()
-
-    utils.animate_pendulum(env, theta, torque)
-    # utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
+# 
+    # utils.animate_pendulum(env, theta, torque)
+    utils.animate_pendulum(utils.to_numpy(state_hist.T), nq)
 
 
 if __name__ == "__main__":
