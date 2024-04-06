@@ -1,4 +1,4 @@
-"""Description: Cartpole n-link environment.
+"""Description: Pendulum n-link environment.
 At upright position, all joint angles are at 0 radian. Positive angle is counter-clockwise.
 """
 
@@ -16,19 +16,25 @@ sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
 from dynamics import DynamicsFunction, Dynamics
 
-
-class CartpoleDynamics(Dynamics):
+class PendulumDynamics(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, kwargs=None):
         super().__init__(nx, dt, kwargs)
-        if nx == 6:
-            self.package = cartpole2l
-            print("Using 2-link cartpole dynamics")
-        elif nx == 4:
-            self.package = cartpole1l
-            print("Using 1-link cartpole dynamics")
+        assert nx is not None
+        if nx == 4:
+            self.package = pendulum2l
+            print("Using 2-link pendulum dynamics")
+        elif nx == 2:
+            self.package = pendulum1l
+            print("Using 1-link pendulum dynamics")
         else:
             raise NotImplementedError
-    
+
+        self.nx = nx  # number of states
+        self.nu = 1  # number of inputs
+        self.nq = nx // 2  # number of generalized coordinates
+        self.dt = dt  # time step
+        self.kwargs = kwargs  # the arguments
+
 class CartpoleEnv(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
         super().__init__()

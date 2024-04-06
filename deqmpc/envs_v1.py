@@ -32,11 +32,11 @@ class OneLinkCartpoleDynamics(torch.nn.Module):
         '''
         super().__init__()
         self.dt = 0.01
-        self.max_force = 5.0        
+        self.max_force = 500.0        
         self.g = -9.81
         self.M = 0.5
         self.m = 0.2
-        self.l = 0.3 
+        self.l = 0.5
         self.n = 1
         self.nx = 2*self.n + 2
         self.nu = 1
@@ -131,17 +131,19 @@ class OneLinkCartpoleEnv:
         if reset_idxs is None:
             if self.stabilization:
                 high = np.concatenate((np.full(self.np, 0.1), np.full(self.np, 0.1)))[None].repeat(self.bsz, axis=0)
-                high[:,0], high[:,2] = 0.1, 0.1  # cart
+                high[:,0], high[:,2] = 0.01, 0.1  # cart
                 offset = torch.tensor([0, np.pi, 0, 0.0], dtype=torch.float32)[None, :]
                 self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32) + offset
                 self.state = self.state
+                # self.state = torch.Tensor([0.0, np.pi, 0.0, 0.0])[None].repeat(self.bsz, 1)
             else:
                 high = np.concatenate((np.full(self.np, np.pi), np.full(self.np, np.pi*5)))[None].repeat(self.bsz, axis=0)
                 high[:,0], high[:,2] = 1.0, 1.0  # cart
                 self.state = torch.tensor(np.random.uniform(low=-high, high=high), dtype=torch.float32)
             
-            self.state = torch.Tensor([0.0, np.pi-0.1, 0.0, 0.0])[None].repeat(self.bsz, 1)
+            self.state = torch.Tensor([0.0, np.pi+0.1, 0.0, 0.0])[None].repeat(self.bsz, 1)
             
+            print("reset state", self.state)
             self.num_successes = torch.zeros(self.bsz)
             self.num_steps = torch.zeros(self.bsz)
             return self.state.numpy()
@@ -165,8 +167,7 @@ class OneLinkCartpoleEnv:
         """
         Applies an action to the environment and steps it forward by one timestep.
         Args:
-            action (float): The action to apply.
-        Returns:
+            action (float): The action to apply.CartpoleExpert
             tuple: A tuple containing the new state, reward, done flag, and info dict.
         """
         # action = torch.tensor([action], dtype=torch.float32)

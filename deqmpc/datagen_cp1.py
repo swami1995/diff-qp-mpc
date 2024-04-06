@@ -28,13 +28,13 @@ class CartpoleExpert:
         self.type = type
 
         if self.type == "mpc":
-            self.T = 200
+            self.T = 100
             self.goal_state = torch.Tensor([0, np.pi, 0.0, 0])
-            self.goal_weights = torch.Tensor([1.0, 1.0, 1, 1])
-            self.ctrl_penalty = 0.000001
-            self.mpc_eps = 1e-3
+            self.goal_weights = torch.Tensor([1.0, 10.0, 1, 1])
+            self.ctrl_penalty = 0.0001
+            self.mpc_eps = 1e-5
             self.linesearch_decay = 0.2
-            self.max_linesearch_iter = 5
+            self.max_linesearch_iter = 10
             self.nx = env.observation_space.shape[0]
             self.nu = env.action_space.shape[0]
             self.bsz = 1
@@ -46,7 +46,7 @@ class CartpoleExpert:
                 env.action_space.high, dtype=torch.float32
             ).double()
 
-            self.qp_iter = 2
+            self.qp_iter = 20
             self.u_init = torch.zeros(self.T, self.bsz, self.nu).double()
             self.q = torch.cat(
                 (self.goal_weights, self.ctrl_penalty * torch.ones(self.nu))
@@ -70,14 +70,14 @@ class CartpoleExpert:
                 u_upper=self.u_upper,  # .double(),
                 qp_iter=self.qp_iter,
                 exit_unconverged=False,
-                eps=1e-2,
+                eps=1e-5,
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
                 u_init=self.u_init,  # .double(),
                 grad_method=mpc.GradMethods.AUTO_DIFF,
                 solver_type="dense",
-                add_goal_constraint=True,
+                add_goal_constraint=False,
                 x_goal = torch.stack([env.goal]*self.bsz, dim=0),
             )
             self.cost = mpc.QuadCost(self.Q, self.p)
@@ -93,7 +93,7 @@ class CartpoleExpert:
         )
         # ipdb.set_trace()
         # u = torch.clamp(nominal_actions[0], self.u_lower, self.u_upper)
-        return nominal_actions[0], nominal_actions  # Return the first action in the optimal sequence
+        return nominal_states, nominal_actions  # Return the first action in the optimal sequence
 
     def energy_shaping_action(self, state):
         """Compute the energy shaping action for the given state."""
@@ -359,27 +359,28 @@ def test_qp_mpc(env):
     mpc_controller = CartpoleExpert(env)
     trajectories = []
     state = env.reset()  # Reset environment to a new initial state
+    # state = np.array([0.0, np.pi+0.1, 0.0, 0.0])
     traj = []
     done = False
-    actions, states = mpc_controller.optimize_action(
+    states, actions = mpc_controller.optimize_action(
         torch.tensor(state, dtype=torch.float32).view(1, -1)
     )
     # ipdb.set_trace()
-    states = states.squeeze().detach().numpy()
+    states = (states-mpc_controller.goal_state).squeeze().detach().numpy()
     actions = actions.detach().numpy()
     traj = []
     trajectories = []
     ipdb.set_trace()
-    for i in range(len(states)):
-        traj.append((states[i], actions[i][0]))
-    trajectories.append(traj)
-    with open(f"data/expert_traj_mpc-{env.spec_id}.pkl", "wb") as f:
-        pickle.dump(trajectories, f)
+    # for i in range(len(states)):
+    #     traj.append((states[i], actions[i][0]))
+    # trajectories.append(traj)
+    # with open(f"data/expert_traj_mpc-{env.spec_id}.pkl", "wb") as f:
+    #     pickle.dump(trajectories, f)
 
 if __name__ == "__main__":
     print("Starting!")
     # ipdb.set_trace()
     env = OneLinkCartpoleEnv(stabilization=True)
     # env = IntegratorEnv()
-    save_expert_traj(env, 1, "mpc")
-    # test_qp_mpc(env)
+    # save_expert_traj(env, 1, "mpc")
+    test_qp_mpc(env)
