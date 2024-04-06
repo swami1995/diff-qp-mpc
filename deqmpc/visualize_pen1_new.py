@@ -112,7 +112,7 @@ def main():
     if mode == 2:
         args.warm_start = True
         args.bsz = 1
-        args.Q = 1000*torch.Tensor([10.0, 1.0])
+        args.Q = 100*torch.Tensor([10.0, 1.0])
         args.R = torch.Tensor([0.1])
         # args.solver_type = "al"
 

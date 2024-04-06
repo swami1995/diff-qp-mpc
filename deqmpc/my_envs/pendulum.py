@@ -123,7 +123,7 @@ class PendulumEnv(torch.nn.Module):
         """
         # action = torch.tensor([action], dtype=torch.float64)
         action = torch.tensor(action, **self.kwargs)
-        action = self.action_clip(action)
+        # action = self.action_clip(action)
         # ipdb.set_trace()
         self.state = self.dynamics(self.state, action)
         self.state = self.state_clip(self.state)
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     # action = torch.randn((bsz, 1), **kwargs)
 
     state = torch.tensor([[np.pi/2, 0]], **kwargs)
-    action = torch.tensor([[-10.]], **kwargs)
+    action = torch.tensor([[-2.]], **kwargs)
 
     next_state = dynamics(state, action)
     # jacobians = dynamics.derivatives(state, action)
@@ -214,10 +214,10 @@ if __name__ == "__main__":
     print("error:", error)
 
     # create the environment
-    # env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
-    # env.state = state
-    # next_state2 = env.step(to_numpy(action))
-    # print("next_state:", next_state2)
+    env = PendulumEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
+    env.state = state
+    next_state2 = env.step(to_numpy(action))
+    print("next_state:", next_state2)
 
     #############################
     # Test vmap
