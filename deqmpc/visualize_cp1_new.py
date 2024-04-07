@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--np", type=int, default=2)  # TODO configurations
     parser.add_argument("--T", type=int, default=50)
-    parser.add_argument('--dt', type=float, default=0.05)
+    parser.add_argument('--dt', type=float, default=0.04)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-5)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
 
     args = parser.parse_args()
-    args.device = "cpu"
+    args.device = "cuda"
     kwargs = {"dtype": torch.float64 if args.dtype ==
               "double" else torch.float32, "device": args.device, "requires_grad": False}
     nq = 2
@@ -64,19 +64,20 @@ def main():
     # 0: test uncontrolled dynamics
     # 1: test ground truth trajectory
     # 2: test controlled dynamics
-    mode = 2
+    mode = 0
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.tensor([[0.0, np.pi*0+1, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, 3.141592653589793, 0.0, 0.0]], **kwargs)
         desired_state = torch.tensor([[0.0, 0.0, 0.0, 0.0]], **kwargs)
         state_hist = state
-        torque = torch.tensor([[0.0]], **kwargs)
+        torque = torch.tensor([[49.99999999327998]], **kwargs)
         # torque = torch.randn((1, 1), **kwargs) * 5
-        for i in range(200):
+        for i in range(1):
             # torque = -Kinf @ (state - desired_state).T
             # torque = torch.randn((1, 1), **kwargs) * 15
             state = env.dynamics(state, torque)
+            print(state)
             state_hist = torch.cat((state_hist, state), dim=0)
         theta = state_hist[:, : env.nq]
         theta_dot = state_hist[:, env.nq:]
@@ -171,7 +172,7 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
-    utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
+    # utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
     # utils.anime_cartpole1(utils.to_numpy(state_hist.T))
 
 

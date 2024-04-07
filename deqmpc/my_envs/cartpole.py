@@ -14,6 +14,7 @@ import cartpole2l
 
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
 from utils import *
+sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc/my_envs")
 from dynamics import DynamicsFunction, Dynamics
 
 
@@ -173,12 +174,12 @@ if __name__ == "__main__":
 
     kwargs = {
         "dtype": torch.float64,
-        "device": torch.device("cuda"),
+        "device": torch.device("cpu"),
         "requires_grad": False,
     }
     nq = 2
     nx = nq * 2
-    dt = 0.05
+    dt = 0.04
     dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
@@ -187,8 +188,9 @@ if __name__ == "__main__":
     # action = torch.randn((bsz, 1), **kwargs)
 
     # state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
-    state = torch.tensor([[0.2, 1.2, 4.2, 1.8]], **kwargs)
-    action = torch.tensor([[-4.1]], **kwargs)
+    state = torch.tensor([[0.0, 3.141592653589793, 0.0, 0.0]], **kwargs)
+    # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
+    action = torch.tensor([[49.99999999327998]], **kwargs)
 
     next_state = dynamics(state, action)
     # jacobians = dynamics.derivatives(state, action)

@@ -188,12 +188,12 @@ if __name__ == "__main__":
     dynamics = PendulumDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
-    bsz = 1
-    # state = torch.randn((bsz, nx), **kwargs)
-    # action = torch.randn((bsz, 1), **kwargs)
+    bsz = 2
+    state = torch.randn((bsz, nx), **kwargs)
+    action = torch.randn((bsz, 1), **kwargs)
 
-    state = torch.tensor([[np.pi/2, 0]], **kwargs)
-    action = torch.tensor([[-2.]], **kwargs)
+    # state = torch.tensor([[np.pi/2, 0]], **kwargs)
+    # action = torch.tensor([[-2.]], **kwargs)
 
     next_state = dynamics(state, action)
     # jacobians = dynamics.derivatives(state, action)
