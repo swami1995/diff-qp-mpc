@@ -10,6 +10,7 @@ import time
 import sys
 
 import cartpole1l
+import cartpole1l_v2
 import cartpole2l
 
 sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
@@ -25,7 +26,7 @@ class CartpoleDynamics(Dynamics):
             self.package = cartpole2l
             print("Using 2-link cartpole dynamics")
         elif nx == 4:
-            self.package = cartpole1l
+            self.package = cartpole1l_v2
             print("Using 1-link cartpole dynamics")
         else:
             raise NotImplementedError
@@ -174,12 +175,12 @@ if __name__ == "__main__":
 
     kwargs = {
         "dtype": torch.float64,
-        "device": torch.device("cpu"),
+        "device": torch.device("cuda"),
         "requires_grad": False,
     }
-    nq = 3
+    nq = 2
     nx = nq * 2
-    dt = 0.04
+    dt = 0.01
     dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
@@ -187,10 +188,10 @@ if __name__ == "__main__":
     # state = torch.randn((bsz, nx), **kwargs)
     # action = torch.randn((bsz, 1), **kwargs)
 
-    state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
-    # state = torch.tensor([[0.0, 3.141592653589793, 0.0, 0.0]], **kwargs)
+    # state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
+    state = torch.tensor([[1.0, 0.0, 0.0, 0.0]], **kwargs)
     # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
-    action = torch.tensor([[49.99999999327998]], **kwargs)
+    action = torch.tensor([[10.0]], **kwargs)
 
     next_state = dynamics(state, action)
     # jacobians = dynamics.derivatives(state, action)

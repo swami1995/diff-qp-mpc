@@ -42,13 +42,13 @@ def main():
 
     # test uncontrolled dynamics
     if mode == 0:
-        state = torch.Tensor([[0.0, np.pi-0.4, 0.0, 0.0]])
+        state = torch.Tensor([[1.0, np.pi, 0.0, 0.0]])
         desired_state = torch.Tensor([[0.0, np.pi, 0.0, 0.0]])
         state_hist = state
-        torque = torch.Tensor([[0.]])
+        torque = torch.Tensor([[10.0]])
         Kinf = torch.Tensor([[-1.246, 15.896, -0.858, 2.598]])
-        for i in range(250):        
-            torque = -1*Kinf @ (state - desired_state).T
+        for i in range(2):        
+            # torque = -1*Kinf @ (state - desired_state).T
             print(state, torque)
             state = env.dynamics(state, torque)
             state_hist = torch.cat((state_hist, state), dim=0)
