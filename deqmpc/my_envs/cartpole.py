@@ -48,7 +48,7 @@ class CartpoleEnv(torch.nn.Module):
         self.kwargs = kwargs
         self.stabilization = stabilization
         self.num_successes = 0
-        self.u_bounds = 1000.0
+        self.u_bounds = 100.0
         # create observation space based on nx, position and velocity
         high = np.concatenate(
             (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
@@ -178,9 +178,9 @@ if __name__ == "__main__":
         "device": torch.device("cuda"),
         "requires_grad": False,
     }
-    nq = 2
+    nq = 3
     nx = nq * 2
-    dt = 0.01
+    dt = 0.03
     dynamics = CartpoleDynamics(nx=nx, dt=dt, kwargs=kwargs)
 
     # create some random states and actions
@@ -188,10 +188,10 @@ if __name__ == "__main__":
     # state = torch.randn((bsz, nx), **kwargs)
     # action = torch.randn((bsz, 1), **kwargs)
 
-    # state = torch.tensor([[0.5, 0.5, 0.3, 0.7, 2.2, 1.0]], **kwargs)
-    state = torch.tensor([[1.0, 0.0, 0.0, 0.0]], **kwargs)
+    state = torch.tensor([[0.0, np.pi, 0, 0, 0, 0.0]], **kwargs)
+    # state = torch.tensor([[0.0, 0.0, 0.0, 0.0]], **kwargs)
     # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
-    action = torch.tensor([[10.0]], **kwargs)
+    action = torch.tensor([[100.00000000012201]], **kwargs)
 
     next_state = dynamics(state, action)
     # jacobians = dynamics.derivatives(state, action)
