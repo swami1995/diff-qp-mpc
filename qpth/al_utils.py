@@ -168,7 +168,7 @@ def constraint_res_jac2_jit(
     constraint_jac = torch.cat((res_eq_jac, res_ineq_jac), dim=1)
     constraint_jac_clamp = torch.cat((res_eq_jac, res_ineq_jac_clamp), dim=1)
     constraint_hess = torch.bmm(
-        constraint_jac.permute(0, 2, 1), constraint_jac
+        constraint_jac_clamp.permute(0, 2, 1), constraint_jac_clamp
     )
     return res, res_clamp, constraint_jac, constraint_jac_clamp, constraint_hess
 
@@ -273,7 +273,7 @@ def dyn_res_ineq(x, u, x0, x_lower, x_upper, u_lower, u_upper):
     #         res = torch.cat((res,res_G), dim=2)
     res = res.reshape(bsz, -1)
     res_clamp = torch.clamp(res, min=0)
-    return res, res_clamp
+    return res*0, res_clamp*0
 
 
 def dyn_res_ineq_jac(x, u, x0, x_lower, x_upper, u_lower, u_upper):
@@ -292,7 +292,7 @@ def dyn_res_ineq_jac_jit(x, u, x0, x_lower, x_upper, u_lower, u_upper):
     bsz, T, x_size = x.shape
     u_size = u.shape[-1]
     res = None
-    res = torch.cat((u - u_upper, -u + u_lower), dim=2)
+    res = torch.cat((u - u_upper, -u + u_lower), dim=2)*0
     res = res.reshape(bsz, -1)
     res_clamp = torch.clamp(res, min=0)
     id_u = torch.eye(u_size, device=x.device).to(x)
@@ -384,7 +384,7 @@ class NewtonAL(torch.autograd.Function):
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
         while (
-            merit_delta > threshold*1e-8 and nstep < 10):# and stepsz > 1e-8
+            merit_delta > threshold*1e-8 and nstep < 20):# and stepsz > 1e-8
         # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
@@ -421,6 +421,7 @@ class NewtonAL(torch.autograd.Function):
                 x_est.isnan().sum() > 0 or x_est.isinf().sum() > 0
             ):  # or new_merit.isnan().sum() > 0 or new_merit.isinf().sum() > 0:
                 ipdb.set_trace()
+            cost = cost_fnQ(x_est)
             dyn_res = dyn_fn(x_est)
             new_dyn_res = torch.norm(dyn_res).item()
             print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)

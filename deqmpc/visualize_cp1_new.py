@@ -5,7 +5,10 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys
-sys.path.insert(0, "/home/khai/diff-qp-mpc")
+# sys.path.insert(0, "/home/khai/diff-qp-mpc")
+import os
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, project_dir)
 import utils
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import matplotlib.pyplot as plt
@@ -118,9 +121,9 @@ def main():
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0., 0.1, 0.0, 0.0]], **kwargs)
-        # high = np.array([np.pi, 1])
-        # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
+        # state = torch.tensor([[0., 0.1, 0.0, 0.0]], **kwargs)
+        high = np.array([1, np.pi, 1.0, 1.0])
+        state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
         state_hist = state
         torque_hist = [0.0]
@@ -130,7 +133,7 @@ def main():
         torch.no_grad()
         # for i in range(170):
         x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
-        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*1
+        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(

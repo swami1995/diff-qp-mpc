@@ -13,9 +13,14 @@ import cartpole1l
 import cartpole1l_v2
 import cartpole2l
 
-sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc")
+
+import os
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+deqmpc_dir = os.path.join(project_dir, 'deqmpc')
+sys.path.insert(0, deqmpc_dir)
 from utils import *
-sys.path.insert(0, "/home/khai/diff-qp-mpc/deqmpc/my_envs")
+env_dir = os.path.join(deqmpc_dir, 'my_envs')
+sys.path.insert(0, env_dir)
 from dynamics import DynamicsFunction, Dynamics
 
 

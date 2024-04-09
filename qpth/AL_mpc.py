@@ -297,7 +297,7 @@ class MPC(Module):
             with torch.no_grad():
                 dyn_res, dyn_res_clamp = self.dyn_res(torch.cat((x_new, u_new), dim=2), dx, x0, res_type='both')
                 lamda = lamda + rho*dyn_res
-                lamda = torch.cat([lamda[:, :self.neq:], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
+                lamda = torch.cat([lamda[:, :self.neq], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
                 cost_res = self.compute_cost(out[0], Q, q)
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
                 print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
