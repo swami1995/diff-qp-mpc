@@ -118,7 +118,7 @@ class MPC(Module):
             u_lower=None, u_upper=None,
             u_init=None,
             x_init=None,
-            al_iter=20,
+            al_iter=2,
             verbose=0,
             eps=1e-7,
             back_eps=1e-7,
@@ -302,13 +302,13 @@ class MPC(Module):
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
                 print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
                 
-                rho = rho*10#torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*1000000000000)
+                rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
                 cost_lam_hist[0].append(cost_res)
                 cost_lam_hist[1].append(lamda)
                 cost_lam_hist[2].append(rho)
             # end3 = time.time()
             # print("outer time: ", end1 - start1, end2 - start2, end3 - end2)
-        ipdb.set_trace()
+        # ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
         self.rho_prev = rho
