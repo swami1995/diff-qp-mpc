@@ -234,3 +234,12 @@ if __name__ == "__main__":
     # my_vmap = torch.vmap(merit)
     # next_state = my_vmap(state, action)
     # print("next_state:", next_state.shape)
+
+    traj = np.load('traj.npz')
+    x_traj = traj["X_np"]
+    u_traj = traj["U_np"]
+    x_traj = torch.tensor(x_traj, **kwargs)
+    u_traj = torch.tensor(u_traj, **kwargs)
+    ipdb.set_trace()
+    x_out = dynamics(x_traj[:-1], u_traj.reshape(-1,1))
+    
