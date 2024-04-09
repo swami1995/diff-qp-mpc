@@ -7,7 +7,10 @@ import torch.autograd as autograd
 
 import sys
 
-sys.path.insert(0, "/home/khai/diff-qp-mpc")
+# sys.path.insert(0, "/home/khai/diff-qp-mpc")
+import os
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, project_dir)
 import qpth.qp_wrapper as mpc
 import ipdb
 from my_envs.cartpole import CartpoleEnv
@@ -25,7 +28,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--np", type=int, default=3)  # TODO configurations
-    parser.add_argument("--T", type=int, default=100)
+    parser.add_argument("--T", type=int, default=200)
     parser.add_argument('--dt', type=float, default=0.02)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-5)
@@ -110,13 +113,13 @@ def main():
         args.warm_start = True
         args.bsz = 1
         args.Q = 10000*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
-        args.R = torch.Tensor([1.0])
+        args.R = torch.Tensor([0.0001])
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
-        # high = np.array([np.pi, 1])
-        # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
+        # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        high = np.array([1, np.pi, np.pi, 1, 1, 1])
+        state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
         state_hist = state
         torque_hist = [0.0]
@@ -139,8 +142,8 @@ def main():
         nominal_states, nominal_action = tracking_mpc(
             state, xu_ref, x_ref, u_ref)
         state_hist = nominal_states.squeeze(0)  
-        # print("nominal states\n", nominal_states)
-        print("nominal action\n", nominal_action)
+        print("nominal states\n", nominal_states)
+        print("nominal action\n", nominal_action.view(-1))
 
         # state_hist = state
         # for i in range(args.T):
@@ -172,7 +175,7 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
-    utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
+    # utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
 
 
 if __name__ == "__main__":
