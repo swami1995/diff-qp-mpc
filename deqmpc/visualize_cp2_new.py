@@ -112,14 +112,15 @@ def main():
     if mode == 2:
         args.warm_start = True
         args.bsz = 1
-        args.Q = 10000*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
-        args.R = torch.Tensor([0.0001])
+        args.Q = 100*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
+        args.R = torch.Tensor([1])
         # args.solver_type = "al"
 
         # test controlled dynamics
-        # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
-        high = np.array([1, np.pi, np.pi, 1, 1, 1])
-        state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
+        state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        # high = np.array([1, np.pi, np.pi, 1, 1, 1])
+        # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
         state_hist = state
         torque_hist = [0.0]
@@ -128,12 +129,12 @@ def main():
         
         torch.no_grad()
         # for i in range(170):
-        x_ref = torch.rand((args.bsz, args.T, nx), **kwargs)*0.001
-        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.001
+        x_ref = torch.rand((args.bsz, args.T, nx), **kwargs)*0.00#1
+        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.00#1
         for i in range(int(args.T/2)):
-            x_ref[:, i, :] = x_ref[:, i, :] + state
+            x_ref[:, i, :] = x_ref[:, i, :]*0.0# + state
         for i in range(int(args.T/2), args.T):
-            x_ref[:, i, :] = x_ref[:, i, :]
+            x_ref[:, i, :] = x_ref[:, i, :]*0.0
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
 
         if (args.solver_type == "al"):
