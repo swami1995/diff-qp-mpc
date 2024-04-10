@@ -270,7 +270,7 @@ def dyn_res_ineq(x, u, x0, x_lower, x_upper, u_lower, u_upper):
     #         res = torch.cat((res,res_G), dim=2)
     res = res.reshape(bsz, -1)
     res_clamp = torch.clamp(res, min=0)
-    return res*0, res_clamp*0
+    return res, res_clamp
 
 
 def dyn_res_ineq_jac(x, u, x0, x_lower, x_upper, u_lower, u_upper):
@@ -289,7 +289,7 @@ def dyn_res_ineq_jac_jit(x, u, x0, x_lower, x_upper, u_lower, u_upper):
     bsz, T, x_size = x.shape
     u_size = u.shape[-1]
     res = None
-    res = torch.cat((u - u_upper, -u + u_lower), dim=2)*0
+    res = torch.cat((u - u_upper, -u + u_lower), dim=2)
     res = res.reshape(bsz, -1)
     res_clamp = torch.clamp(res, min=0)
     id_u = torch.eye(u_size, device=x.device).to(x)
@@ -381,7 +381,7 @@ class NewtonAL(torch.autograd.Function):
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
         while (
-            merit_delta > threshold*1e-8 and nstep < 20):# and stepsz > 1e-8
+            merit_delta > threshold*1e-8 and nstep < 4):# and stepsz > 1e-8
         # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
