@@ -235,7 +235,7 @@ def unnormalize_states_pendulum(nominal_states):
         prev_angle = nominal_states[:, i, 0]
     return nominal_states
 
-def unnormalize_states_cartpole_nlink(nominal_states, env):
+def unnormalize_states_cartpole_nlink(nominal_states):
     nq = nominal_states.shape[2] // 2
     angle_0 = nominal_states[:, 0, 1:nq]
     prev_angle = angle_0
@@ -248,6 +248,7 @@ def unnormalize_states_cartpole_nlink(nominal_states, env):
                 + nominal_states[:, i, 1:nq]*mask.float()
             )
         prev_angle = nominal_states[:, i, 1:nq]
+    return nominal_states
 
 if __name__ == "__main__":
     main()

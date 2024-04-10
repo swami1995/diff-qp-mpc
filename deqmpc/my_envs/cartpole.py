@@ -69,6 +69,9 @@ class CartpoleEnv(torch.nn.Module):
             (self.nu,),
         )
         self.stabilization = stabilization
+        self.Qlqr = torch.ones(self.nx, **self.kwargs)
+        self.Rlqr = torch.ones(self.nu, **self.kwargs)
+
         self.saved_ckpt_name = "cgac_checkpoint_cartpole1link_swingupeplen200maxu100_initrew20finrew08"
 
     def action_clip(self, action):
