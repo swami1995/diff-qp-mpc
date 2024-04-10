@@ -118,7 +118,7 @@ class MPC(Module):
             u_lower=None, u_upper=None,
             u_init=None,
             x_init=None,
-            al_iter=20,
+            al_iter=2,
             verbose=0,
             eps=1e-7,
             back_eps=1e-7,

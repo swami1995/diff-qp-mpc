@@ -262,7 +262,7 @@ class DEQLayer(torch.nn.Module):
 
     def setup_input_layer(self):
         if self.layer_type == "mlp":
-            ipdb.set_trace()
+            # ipdb.set_trace()
             self.inp_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.nx + self.np * (self.T - 1), self.hdim),
                 torch.nn.LayerNorm(self.hdim),
