@@ -118,7 +118,7 @@ def main():
 
         # test controlled dynamics
         # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
-        state = torch.tensor([[0.0, np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.tensor([[0.0, -np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -129,14 +129,14 @@ def main():
         
         torch.no_grad()
         # for i in range(170):
-        x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
-        u_ref = torch.zeros((args.bsz, args.T, nu), **kwargs)
+        x_ref = torch.ones((args.bsz, args.T, nx), **kwargs) * 0.
+        u_ref = torch.ones((args.bsz, args.T, nu), **kwargs) * 0.
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         x_init = torch.rand((args.bsz, args.T, nx), **kwargs)
         for i in range(int(args.T/2)):
-            x_init[:, i, :] = x_ref[:, i, :] + state
+            x_init[:, i, :] = state
         for i in range(int(args.T/2), args.T):
-            x_init[:, i, :] = x_ref[:, i, :]
+            x_init[:, i, :] += x_ref[:, 0, :]
         
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(x_init, torch.ones(args.bsz, args.T, 1, **kwargs))

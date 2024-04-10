@@ -375,13 +375,14 @@ class NewtonAL(torch.autograd.Function):
 
         # Solve for newton steps on the augmented lagrangian
         nstep = 0
+        max_ls_steps = 20
         old_dyn_res = torch.norm(dyn_res).item()
         print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
         while (
-            merit_delta > threshold*1e-8 and nstep < 4):# and stepsz > 1e-8
+            merit_delta > threshold*1e-8 and nstep < max_ls_steps):# and stepsz > 1e-8
         # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
