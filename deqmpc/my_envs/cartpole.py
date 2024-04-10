@@ -31,7 +31,8 @@ class CartpoleDynamics(Dynamics):
             self.package = cartpole2l
             print("Using 2-link cartpole dynamics")
         elif nx == 4:
-            self.package = cartpole1l_v2
+            self.package = cartpole1l
+            # self.package = cartpole1l_v2
             print("Using 1-link cartpole dynamics")
         else:
             raise NotImplementedError
@@ -53,17 +54,21 @@ class CartpoleEnv(torch.nn.Module):
         self.kwargs = kwargs
         self.stabilization = stabilization
         self.num_successes = 0
-        self.u_bounds = 3000.0
+        self.u_bounds = 100.0
+        self.bsz = 1
+        self.T = 200
+        self.num_steps = 0
         # create observation space based on nx, position and velocity
         high = np.concatenate(
             (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
-        self.observation_space = Spaces(-high, high, (self.nx, 2))
+        self.observation_space = Spaces(-high, high, (self.nx,))
         self.action_space = Spaces(
             np.full(self.nu, -self.u_bounds),
             np.full(self.nu, self.u_bounds),
-            (self.nu, 2),
+            (self.nu,),
         )
         self.stabilization = stabilization
+        self.saved_ckpt_name = "cgac_checkpoint_cartpole1link_swingupeplen200maxu100_initrew20finrew08"
 
     def action_clip(self, action):
         return torch.clamp(action, -self.u_bounds, self.u_bounds)
@@ -116,6 +121,7 @@ class CartpoleEnv(torch.nn.Module):
         #     [0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)  # fixed
 
         self.num_successes = 0
+        self.num_steps = 0
         # return to_numpy(self.state)
         return self.state
 
@@ -134,11 +140,12 @@ class CartpoleEnv(torch.nn.Module):
         self.state = self.dynamics(self.state, action)
         self.state = self.state_clip(self.state)
         # ipdb.set_trace()
+        self.num_steps += 1
         done = self.is_done()
         reward = self.get_reward(
             action
         )  # Define your reward function based on the state and action
-        return to_numpy(self.state), reward, done, {}
+        return self.state, reward, done, {}
 
     def is_done(self):
         """
@@ -148,11 +155,12 @@ class CartpoleEnv(torch.nn.Module):
         """
         x = self.state[..., 0]
         theta = self.state[..., 1:2]
-        desired_theta = torch.tensor([torch.pi, 0], **self.kwargs)
-        success = torch.norm(
-            theta - desired_theta) < 0.05 and (torch.abs(x) < 0.05)
+        desired_theta1 = torch.tensor([0.0], **self.kwargs)
+        desired_theta2 = torch.tensor([2*np.pi], **self.kwargs) 
+        delta_theta = torch.minimum(torch.abs(theta - desired_theta1), torch.abs(theta - desired_theta2))
+        success = delta_theta < 0.05# and (torch.abs(x) < 0.05)
         self.num_successes = 0 if not success else self.num_successes + 1
-        return self.num_successes >= 10
+        return self.num_successes >= 10 or self.num_steps >= self.T
 
     def get_reward(self, action):
         """
@@ -168,8 +176,10 @@ class CartpoleEnv(torch.nn.Module):
         # theta, _ = self.state[0][0], self.state[0][1]
         x = self.state[..., 0]
         theta = self.state[..., 1:2]
-        desired_theta = torch.tensor([torch.pi, 0], **self.kwargs)
-        rw = torch.norm(theta - desired_theta) + (torch.abs(x))
+        desired_theta1 = torch.tensor([0.0], **self.kwargs)
+        desired_theta2 = torch.tensor([2*np.pi], **self.kwargs) 
+        delta_theta = torch.minimum(torch.abs(theta - desired_theta1), torch.abs(theta - desired_theta2))
+        rw = delta_theta + (torch.abs(x)) + (torch.abs(x) > 10).float() * 80
         return -rw
 
     def close(self):

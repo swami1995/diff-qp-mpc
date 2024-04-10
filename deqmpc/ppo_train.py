@@ -57,7 +57,7 @@ class RolloutBuffer:
         del self.is_terminals[:]
 
 class CGACRunningMeanStd(nn.Module):
-    def __init__(self, insize, epsilon=1e-05, per_channel=False, norm_only=False):
+    def __init__(self, insize, epsilon=1e-05, per_channel=False, norm_only=False, device='cpu'):
         super(CGACRunningMeanStd, self).__init__()
         print('RunningMeanStd: ', insize)
         self.insize = insize
@@ -77,9 +77,9 @@ class CGACRunningMeanStd(nn.Module):
             self.axis = [0]
             in_size = insize
 
-        self.register_buffer("running_mean", torch.zeros(in_size, dtype = torch.float64))
-        self.register_buffer("running_var", torch.ones(in_size, dtype = torch.float64))
-        self.register_buffer("count", torch.ones((), dtype = torch.float64))
+        self.register_buffer("running_mean", torch.zeros(in_size, dtype = torch.float64, device=device))
+        self.register_buffer("running_var", torch.ones(in_size, dtype = torch.float64, device=device))
+        self.register_buffer("count", torch.ones((), dtype = torch.float64, device=device))
 
     def _update_mean_var_count_from_moments(self, mean, var, count, batch_mean, batch_var, batch_count):
         delta = batch_mean - mean

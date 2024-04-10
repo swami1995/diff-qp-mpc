@@ -14,6 +14,7 @@ import ipdb
 import os
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from rex_quadrotor import RexQuadrotor
+from my_envs.cartpole import CartpoleEnv
 from ppo_train import PPO, GaussianPolicy, CGACGaussianPolicy, CGACRunningMeanStd
 import pickle
 from rexquad_utils import rk4
@@ -236,9 +237,9 @@ def get_pendulum_expert_traj_sac(env, num_traj):
 def get_expert_traj_cgac(env, num_traj):
     """
     Get expert trajectories for pendulum environment using the saved CGAC checkpoint."""
-    device = torch.device("cuda" if False else "cpu")
+    device = torch.device("cuda" if True else "cpu")
     policy = CGACGaussianPolicy(env.observation_space.shape[0], env.action_space.shape[0], [512,256], env.action_space, True).to(device)
-    rms_obs = CGACRunningMeanStd((env.observation_space.shape[0],)).to(device)
+    rms_obs = CGACRunningMeanStd((env.observation_space.shape[0],), device=device).to(device)
     # checkpoint = torch.load("/home/sgurumur/locuslab/pytorch-soft-actor-critic/checkpoints/sac_checkpoint_Pendulum-v0_bestT200")
     checkpoint = torch.load(f"ckpts/cgac/{env.saved_ckpt_name}")
     policy.load_state_dict(checkpoint["policy_state_dict"])
@@ -246,7 +247,7 @@ def get_expert_traj_cgac(env, num_traj):
     trajectories = []
     reward_trajs = []
     while len(trajectories) < num_traj:
-        state = env.reset()
+        state = env.reset().float()
         state_rms = rms_obs(state)
         traj = []
         done = False
@@ -255,11 +256,11 @@ def get_expert_traj_cgac(env, num_traj):
             action = policy.sample(state_rms)[2]
             next_state, reward, done, _ = env.step(action)
             traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
-            state = next_state
+            state = next_state.float()
             state_rms = rms_obs(state)
             reward_traj += reward
         print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
-        if reward_traj.item() < 100:
+        if reward_traj.item() < 100 and 'rexquadrotor' in env.spec_id:
             continue
         trajectories.append(traj)
         reward_trajs.append(reward_traj.item())
@@ -542,9 +543,12 @@ def seeding(seed=0):
 if __name__ == "__main__":
     seeding(2)
     print("Starting!")
+    device = "cuda:0"
+    kwargs = {"dtype": torch.float64, "device": device, "requires_grad": False}
     # ipdb.set_trace()
     # env = PendulumEnv(stabilization=False)
-    env = RexQuadrotor(bsz=1)
+    # env = RexQuadrotor(bsz=1)
+    env = CartpoleEnv(nx=4, dt=0.05, stabilization=False, kwargs=kwargs)
     # env = IntegratorEnv()
     # save_expert_traj(env, 300, "sac")
     # save_expert_traj(env, 2, "mpc")

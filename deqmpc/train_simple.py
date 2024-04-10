@@ -9,6 +9,7 @@ sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
+from my_envs.cartpole import CartpoleEnv
 from rex_quadrotor import RexQuadrotor
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
@@ -65,6 +66,7 @@ def main():
         args.name = args.name + f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_np{args.np}"
         writer = SummaryWriter("./logs/" + args.name)
 
+    kwargs = {"dtype": torch.float64, "device": args.device, "requires_grad": False}
     if args.env == "pendulum":
         env = PendulumEnv(stabilization=False)
         gt_trajs = get_gt_data(args, env, "sac")
@@ -79,6 +81,12 @@ def main():
         gt_trajs = get_gt_data(args, env, "sac")
     elif args.env == "cartpole-v0":
         env = CartpoleV0Env()
+        gt_trajs = get_gt_data(args, env, "cgac")
+    elif args.env == "cartpole1link":
+        env = CartpoleEnv(nx=4, dt=0.05, stabilization=False, kwargs=kwargs)
+        gt_trajs = get_gt_data(args, env, "cgac")
+    elif args.env == "cartpole2link":
+        env = CartpoleEnv(nx=6, dt=0.03, stabilization=False, kwargs=kwargs)
         gt_trajs = get_gt_data(args, env, "cgac")
 
     # gt_trajs = get_gt_data(args, env, "mpc")
@@ -112,7 +120,9 @@ def main():
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
 
         if args.env == "pendulum":
-            traj_sample["state"] = unnormalize_states(traj_sample["state"])
+            traj_sample["state"] = unnormalize_states_pendulum(traj_sample["state"])
+        elif args.env == "cartpole1link" or args.env == "cartpole2link":
+            traj_sample["state"] = unnormalize_states_cartpole_nlink(traj_sample["state"])
         iter_qp_solve = False if (i < 5000 and args.pretrain) else True
         qp_solve = iter_qp_solve and args.qp_solve # warm start only after 1000 iterations
         lastqp_solve = args.lastqp_solve and iter_qp_solve
@@ -209,7 +219,7 @@ def main():
 
     # torch.save(policy.state_dict(), "./model/bc_sac_pen")
 
-def unnormalize_states(nominal_states):
+def unnormalize_states_pendulum(nominal_states):
     # ipdb.set_trace()
     # check theta of the first state in nominal_states[:, 0][0] and make sure all the nominal_states are in the same phase (i.e in terms of angle normalization)
     angle_0 = nominal_states[:, 0, 0]
@@ -225,6 +235,19 @@ def unnormalize_states(nominal_states):
         prev_angle = nominal_states[:, i, 0]
     return nominal_states
 
+def unnormalize_states_cartpole_nlink(nominal_states, env):
+    nq = nominal_states.shape[2] // 2
+    angle_0 = nominal_states[:, 0, 1:nq]
+    prev_angle = angle_0
+    for i in range(nominal_states.shape[1]):
+        mask = torch.abs(nominal_states[:, i, 1:nq] - prev_angle) > np.pi / 2
+        mask_sign = torch.sign(nominal_states[:, i, 1:nq] - prev_angle)
+        if mask.any():
+            nominal_states[:, i, 1:nq] = (
+                (nominal_states[:, i, 1:nq] - mask_sign * 2 * np.pi)*(1-mask.float()) 
+                + nominal_states[:, i, 1:nq]*mask.float()
+            )
+        prev_angle = nominal_states[:, i, 1:nq]
 
 if __name__ == "__main__":
     main()
