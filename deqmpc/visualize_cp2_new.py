@@ -18,7 +18,7 @@ from datagen import get_gt_data, merge_gt_data, sample_trajectory
 import matplotlib.pyplot as plt
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import utils
-
+import pickle
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
 
@@ -178,6 +178,40 @@ def main():
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
     utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
+
+    if mode == 3:
+        type = "mpc"
+        num_trajs = 100
+        args.warm_start = True
+        args.bsz = num_trajs
+        args.Q = 100*torch.Tensor([10.0, 10.0, 10, 1.0, 1.0, 1.0])
+        args.R = torch.Tensor([1])
+        tracking_mpc = Tracking_MPC(args, env)
+        state = env.reset()
+        x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
+        u_ref = torch.zeros((args.bsz, args.T, nu), **kwargs)
+        xu_ref = torch.cat((x_ref, u_ref), dim=-1)
+        x_init = torch.rand((args.bsz, args.T, nx), **kwargs)
+        
+        if (args.solver_type == "al"):
+            tracking_mpc.reinitialize(x_init, torch.ones(args.bsz, args.T, 1, **kwargs))
+
+        nominal_states, nominal_action = tracking_mpc(
+            state, xu_ref, x_ref, u_ref)
+        
+        nominal_states = env.state_clip(nominal_states)
+
+        # save the trajectories
+        trajs = []
+        for i in range(num_trajs):
+            traj = []
+            for j in range(args.T):
+                traj.append((nominal_states[i, j], nominal_action[i, j]))
+            trajs.append(traj)
+        
+        with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "wb") as f:
+            pickle.dump(trajs, f)
+        
 
 
 if __name__ == "__main__":
