@@ -110,6 +110,7 @@ class CartpoleEnv(torch.nn.Module):
             self.state = torch.tensor(
                 np.random.uniform(low=-high, high=high), **self.kwargs
             )
+            self.state = self.state_clip(self.state)
 
         # self.state = torch.tensor(
         #     [0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)  # fixed
