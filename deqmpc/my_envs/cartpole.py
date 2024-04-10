@@ -81,7 +81,7 @@ class CartpoleEnv(torch.nn.Module):
         np.random.seed(seed)
         torch.manual_seed(seed)
 
-    def reset(self):
+    def reset(self, bsz=None):
         """
         Resets the environment to an initial state, which is a random angle and angular velocity.
         Returns:
@@ -101,18 +101,23 @@ class CartpoleEnv(torch.nn.Module):
             )
         else:
             high = np.concatenate(
-                (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5))
+                (np.full(self.nq, np.pi), np.full(self.nq, np.pi ))
             )
-            high[0], high[1] = 1.0, 1.0  # cart
+            if bsz is None:
+                bsz = self.bsz
+            # high[0], high[1] = 1.0, 1.0  # cart
+            high = high[None].repeat(self.bsz, 0)
             self.state = torch.tensor(
                 np.random.uniform(low=-high, high=high), **self.kwargs
             )
+            self.state = self.state_clip(self.state)
 
-        self.state = torch.tensor(
-            [0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)  # fixed
+        # self.state = torch.tensor(
+        #     [0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)  # fixed
 
         self.num_successes = 0
-        return to_numpy(self.state)
+        # return to_numpy(self.state)
+        return self.state
 
     def step(self, action):
         """
