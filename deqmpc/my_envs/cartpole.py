@@ -44,6 +44,7 @@ class CartpoleEnv(torch.nn.Module):
         self.dynamics = CartpoleDynamics(
             nx=nx, dt=dt, kwargs=kwargs
         )
+        self.dynamics_derivatives = self.dynamics.dynamics_derivatives
         self.nx = nx
         self.spec_id = "Cartpole{}l-v0{}".format(
             nx // 2 - 1, "-stabilize" if stabilization else ""
