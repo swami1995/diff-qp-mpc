@@ -41,11 +41,8 @@ def merit_function(
     cost_total = compute_cost(xu, Q, q)
     # ipdb.set_trace()
     res, res_clamp = dyn_res(xu, dx, x0, x_lower, x_upper, u_lower, u_upper)
-    return (
-        cost_total
-        + 0.5 * rho[:, 0] * (res_clamp * res_clamp).view(bsz, -1).sum(dim=1)
-        + (lamda * res).view(bsz, -1).sum(dim=1)
-    )
+    merit_value = cost_total + 0.5 * rho[:, 0] * (res_clamp * res_clamp).view(bsz, -1).sum(dim=1) + (lamda * res).view(bsz, -1).sum(dim=1)
+    return merit_value
 
 
 def merit_grad_hessian(
@@ -483,18 +480,18 @@ class NewtonAL(torch.autograd.Function):
 
 
 def line_search_newton(update, x_est, meritfnQ, merit):
+    n_ls = 20  #TODO: make this a parameter
     stepsz = torch.ones(x_est.shape[0], device=x_est.device) * 2
     mask = torch.ones(x_est.shape[0], device=x_est.device)
     stepszs = 2 ** (
-        -torch.arange(20, device=x_est.device)
+        -torch.arange(n_ls, device=x_est.device)
         .float()
         .unsqueeze(1)
-        .expand(20, x_est.shape[0])
+        .expand(n_ls, x_est.shape[0])
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
-    # ipdb.set_trace()
-    # new2_objective = torch.vmap(meritfnQ)(x_next)
-    new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(20)], dim=0)
+    # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
+    new2_objective = meritfnQ(x_next.reshape(-1, x_next.shape[2], x_next.shape[-1])).reshape(n_ls, 1)
     new2_objective_min = torch.min(new2_objective, dim=0)
     batch_idxs = torch.arange(x_est.shape[0], device=x_est.device)
     stepsz = stepszs[new2_objective_min.indices, batch_idxs]

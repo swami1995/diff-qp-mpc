@@ -1,5 +1,6 @@
 import torch
 from torch.autograd import Function
+import ipdb
 
 class DynamicsFunction(Function):
     @staticmethod
@@ -10,22 +11,6 @@ class DynamicsFunction(Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         pass
-
-    @staticmethod
-    def vmap(info, in_dims, q_in, qdot_in, tau_in, h_in, my_func):
-        # ipdb.set_trace()
-        q_in_bdim, qdot_in_bdim, tau_in_bdim, _, _ = in_dims
-        if (q_in.dim() == 3):
-            # repeat h to match shape of (q_in.shape[0], q_in.shape[1], 1)
-            h_in = h_in.repeat(q_in.shape[0], 1, 1)
-
-        q_in = q_in.movedim(q_in_bdim, 0)
-        qdot_in = qdot_in.movedim(qdot_in_bdim, 0)
-        tau_in = tau_in.movedim(tau_in_bdim, 0)
-
-        next_state = DynamicsFunction.apply(
-            q_in, qdot_in, tau_in, h_in, my_func)
-        return next_state, 0
 
 class Dynamics(torch.nn.Module):
     def __init__(self, nx=None, dt=0.01, kwargs=None):
@@ -71,7 +56,7 @@ class Dynamics(torch.nn.Module):
         q = state[:, : self.nq].contiguous()
         qdot = state[:, self.nq:].contiguous()
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
-
+        # ipdb.set_trace()
         next_state = DynamicsFunction.apply(
             q, qdot, tau, h, self.package.dynamics)
         next_state = torch.cat(next_state, dim=-1)

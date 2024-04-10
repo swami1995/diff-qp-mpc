@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--np", type=int, default=3)  # TODO configurations
     parser.add_argument("--T", type=int, default=200)
-    parser.add_argument('--dt', type=float, default=0.02)
+    parser.add_argument('--dt', type=float, default=0.03)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-5)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -112,12 +112,12 @@ def main():
     if mode == 2:
         args.warm_start = True
         args.bsz = 1
-        args.Q = 100*torch.Tensor([1.0, 10.0, 10, 1.0, 1.0, 1.0])
+        args.Q = 100*torch.Tensor([10.0, 10.0, 10, 1.0, 1.0, 1.0])
         args.R = torch.Tensor([1])
         # args.solver_type = "al"
 
         # test controlled dynamics
-        state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         state = torch.tensor([[0.0, np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
@@ -129,16 +129,17 @@ def main():
         
         torch.no_grad()
         # for i in range(170):
-        x_ref = torch.rand((args.bsz, args.T, nx), **kwargs)*0.00#1
-        u_ref = torch.rand((args.bsz, args.T, nu), **kwargs)*0.00#1
-        for i in range(int(args.T/2)):
-            x_ref[:, i, :] = x_ref[:, i, :]*0.0# + state
-        for i in range(int(args.T/2), args.T):
-            x_ref[:, i, :] = x_ref[:, i, :]*0.0
+        x_ref = torch.zeros((args.bsz, args.T, nx), **kwargs)
+        u_ref = torch.zeros((args.bsz, args.T, nu), **kwargs)
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
-
+        x_init = torch.rand((args.bsz, args.T, nx), **kwargs)
+        for i in range(int(args.T/2)):
+            x_init[:, i, :] = x_ref[:, i, :] + state
+        for i in range(int(args.T/2), args.T):
+            x_init[:, i, :] = x_ref[:, i, :]
+        
         if (args.solver_type == "al"):
-            tracking_mpc.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1, **kwargs))
+            tracking_mpc.reinitialize(x_init, torch.ones(args.bsz, args.T, 1, **kwargs))
 
         nominal_states, nominal_action = tracking_mpc(
             state, xu_ref, x_ref, u_ref)
@@ -176,7 +177,7 @@ def main():
 
     # utils.animate_pendulum(env, theta, torque)
     # utils.animate_integrator(env, theta, torque)
-    # utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
+    utils.animate_cartpole(utils.to_numpy(state_hist.T), nq)
 
 
 if __name__ == "__main__":

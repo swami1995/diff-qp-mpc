@@ -198,23 +198,23 @@ if __name__ == "__main__":
     # state = torch.tensor([[0.5, 0.5, 2.2, 1.0]], **kwargs)
     action = torch.tensor([[100.00000000012201]], **kwargs)
 
-    next_state = dynamics(state, action)
-    # jacobians = dynamics.derivatives(state, action)
-    jacobians_fd = dynamics.finite_diff_derivatives(state, action, eps=1e-5)
-    next_state, jacobians = dynamics.dynamics_derivatives(state, action)
+    # next_state = dynamics(state, action)
+    # # jacobians = dynamics.derivatives(state, action)
+    # jacobians_fd = dynamics.finite_diff_derivatives(state, action, eps=1e-5)
+    # next_state, jacobians = dynamics.dynamics_derivatives(state, action)
 
-    print("next_state:", next_state)
-    print("jacobians[0]:", jacobians[0])
-    print("jacobians[1]:", jacobians[1])
-    print("jacobians_fd[0]:", jacobians_fd[0])
-    print("jacobians_fd[1]:", jacobians_fd[1])
+    # print("next_state:", next_state)
+    # print("jacobians[0]:", jacobians[0])
+    # print("jacobians[1]:", jacobians[1])
+    # print("jacobians_fd[0]:", jacobians_fd[0])
+    # print("jacobians_fd[1]:", jacobians_fd[1])
 
-    # calculate the error between jacobians and jacobians_fd
-    error = np.zeros(2)
-    for i in range(len(jacobians)):
-        error[i] = torch.norm(jacobians[i] - jacobians_fd[i]
-                              ) / torch.norm(jacobians[i])
-    print("error:", error)
+    # # calculate the error between jacobians and jacobians_fd
+    # error = np.zeros(2)
+    # for i in range(len(jacobians)):
+    #     error[i] = torch.norm(jacobians[i] - jacobians_fd[i]
+    #                           ) / torch.norm(jacobians[i])
+    # print("error:", error)
 
     # create the environment
     # env = CartpoleEnv(nx=nx, dt=dt, stabilization=False, kwargs=kwargs)
@@ -225,26 +225,31 @@ if __name__ == "__main__":
     #############################
     # Test vmap
     #############################
-    # ls = 10
-    # T = 5
-    # bsz = 2
+    # ls = 2
+    # T = 3
+    # bsz = 4
     # state = torch.randn((ls, bsz, T, nx), **kwargs)
     # action = torch.randn((ls, bsz, T, 1), **kwargs)
     # dx = dynamics
 
-    # def merit(x, u): return dx(
-    #     x[:, :-1].reshape(-1, nx), u[:, :-1].reshape(-1, 1)).view(bsz, T - 1, nx)
+    # def merit(x, u): 
+    #     x_next = dx(x.reshape(-1, nx), u.reshape(-1, 1)).view(bsz, T, nx)
+    #     return x_next
 
-    # print("state:", merit(state, action).shape)
+    # # print("state:", merit(state[0], action[0]).shape)
     # my_vmap = torch.vmap(merit)
     # next_state = my_vmap(state, action)
-    # print("next_state:", next_state.shape)
+    # print("next_state:", next_state)
+    # ipdb.set_trace()
 
-    traj = np.load('traj.npz')
-    x_traj = traj["X_np"]
-    u_traj = traj["U_np"]
-    x_traj = torch.tensor(x_traj, **kwargs)
-    u_traj = torch.tensor(u_traj, **kwargs)
-    ipdb.set_trace()
-    x_out = dynamics(x_traj[:-1], u_traj.reshape(-1,1))
+    #############################
+    # Test saved trajectory
+    #############################
+    # traj = np.load('traj.npz')
+    # x_traj = traj["X_np"]
+    # u_traj = traj["U_np"]
+    # x_traj = torch.tensor(x_traj, **kwargs)
+    # u_traj = torch.tensor(u_traj, **kwargs)
+    # ipdb.set_trace()
+    # x_out = dynamics(x_traj[:-1], u_traj.reshape(-1,1))
     

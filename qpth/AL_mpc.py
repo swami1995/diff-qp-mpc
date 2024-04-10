@@ -308,7 +308,7 @@ class MPC(Module):
                 cost_lam_hist[2].append(rho)
             # end3 = time.time()
             # print("outer time: ", end1 - start1, end2 - start2, end3 - end2)
-        ipdb.set_trace()
+        # ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
         self.rho_prev = rho
