@@ -37,7 +37,18 @@ def warm_start_al(
 def merit_function(
     xu, Q, q, dx, x0, lamda, rho, x_lower, x_upper, u_lower, u_upper, diag_cost=True
 ):
-    bsz = xu.size(0)
+    
+    if xu.dim() == 4:
+        n_outs, bsz = xu.shape[:2]
+        x0 = x0[None].repeat(n_outs, 1, 1).view(n_outs * bsz, x0.shape[1])
+        xu = xu.view(n_outs * bsz, xu.shape[2], xu.shape[3])
+        Q = Q[None].repeat(n_outs, 1, 1, 1).view(n_outs * bsz, Q.shape[1], Q.shape[2])
+        q = q[None].repeat(n_outs, 1, 1, 1).view(n_outs * bsz, q.shape[1], q.shape[2])
+        rho = rho[None].repeat(n_outs, 1, 1).view(n_outs * bsz, rho.shape[1])
+        lamda = lamda[None].repeat(n_outs, 1, 1).view(n_outs * bsz, lamda.shape[1])
+        bsz = n_outs * bsz
+    else:
+        bsz = xu.size(0)
     cost_total = compute_cost(xu, Q, q)
     # ipdb.set_trace()
     res, res_clamp = dyn_res(xu, dx, x0, x_lower, x_upper, u_lower, u_upper)
@@ -323,6 +334,7 @@ def compute_cost(
 ) -> torch.Tensor:
     C = Q
     c = q
+    # ipdb.set_trace()
     if diag_cost:
         return (0.5 * (xu * C * xu).sum(-1) + (c * xu).sum(-1)).sum(dim=-1)
     return 0.5 * ((xu.unsqueeze(-1) * C).sum(dim=-2) * xu).sum(dim=-1).sum(dim=-1) + (
@@ -377,7 +389,7 @@ class NewtonAL(torch.autograd.Function):
         nstep = 0
         max_ls_steps = 4  # maximum number of line-search steps for each newton step
         old_dyn_res = torch.norm(dyn_res).item()
-        print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
+        # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
@@ -422,7 +434,7 @@ class NewtonAL(torch.autograd.Function):
             cost = cost_fnQ(x_est)
             dyn_res = dyn_fn(x_est)
             new_dyn_res = torch.norm(dyn_res).item()
-            print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
+            # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
             ## exit creteria
             # if (
@@ -492,7 +504,8 @@ def line_search_newton(update, x_est, meritfnQ, merit):
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
-    new2_objective = meritfnQ(x_next.reshape(-1, x_next.shape[2], x_next.shape[-1])).reshape(n_ls, 1)
+    # new2_objective = meritfnQ(x_next.reshape(-1, x_next.shape[2], x_next.shape[-1])).reshape(n_ls, 1)
+    new2_objective = meritfnQ(x_next).reshape(n_ls, -1)
     new2_objective_min = torch.min(new2_objective, dim=0)
     batch_idxs = torch.arange(x_est.shape[0], device=x_est.device)
     stepsz = stepszs[new2_objective_min.indices, batch_idxs]
