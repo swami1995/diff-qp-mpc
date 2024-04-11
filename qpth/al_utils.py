@@ -39,7 +39,6 @@ def merit_function(
 ):
     bsz = xu.size(0)
     cost_total = compute_cost(xu, Q, q)
-    # ipdb.set_trace()
     res, res_clamp = dyn_res(xu, dx, x0, x_lower, x_upper, u_lower, u_upper)
     merit_value = cost_total + 0.5 * rho[:, 0] * (res_clamp * res_clamp).view(bsz, -1).sum(dim=1) + (lamda * res).view(bsz, -1).sum(dim=1)
     return merit_value
@@ -375,14 +374,14 @@ class NewtonAL(torch.autograd.Function):
 
         # Solve for newton steps on the augmented lagrangian
         nstep = 0
-        max_ls_steps = 4  # maximum number of line-search steps for each newton step
+        max_newton_steps = 4  # maximum number of Newton steps for each AL step
         old_dyn_res = torch.norm(dyn_res).item()
         print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
         while (
-            merit_delta > threshold*1e-8 and nstep < max_ls_steps):# and stepsz > 1e-8
+            merit_delta > threshold*1e-8 and nstep < max_newton_steps):# and stepsz > 1e-8
         # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
@@ -492,6 +491,7 @@ def line_search_newton(update, x_est, meritfnQ, merit):
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
+    # new2_objective = torch.vmap(meritfnQ)(x_next)
     new2_objective = meritfnQ(x_next.reshape(-1, x_next.shape[2], x_next.shape[-1])).reshape(n_ls, 1)
     new2_objective_min = torch.min(new2_objective, dim=0)
     batch_idxs = torch.arange(x_est.shape[0], device=x_est.device)

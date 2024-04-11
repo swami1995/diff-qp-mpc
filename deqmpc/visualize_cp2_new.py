@@ -111,14 +111,15 @@ def main():
     torch.no_grad()
     if mode == 2:
         args.warm_start = True
-        args.bsz = 1
+        args.bsz = 2
         args.Q = 100*torch.Tensor([10.0, 10.0, 10, 1.0, 1.0, 1.0])
         args.R = torch.Tensor([1])
         # args.solver_type = "al"
 
         # test controlled dynamics
         # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
-        state = torch.tensor([[0.0, -np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        # state = torch.tensor([[0.0, -np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        state = torch.rand((args.bsz, nx), **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
