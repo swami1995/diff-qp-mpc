@@ -118,8 +118,8 @@ def main():
 
         # test controlled dynamics
         # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
-        # state = torch.tensor([[0.0, -np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
-        state = torch.rand((args.bsz, nx), **kwargs)
+        state = torch.tensor([[0.0, -np.pi, 0.0, 0.0, 0.0, 0.0],[0.0, np.pi, 0.0, 0.0, 0.0, 0.0]], **kwargs)
+        # state = torch.rand((args.bsz, nx), **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])
         # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
 
@@ -144,7 +144,7 @@ def main():
 
         nominal_states, nominal_action = tracking_mpc(
             state, xu_ref, x_ref, u_ref)
-        state_hist = nominal_states.squeeze(0)  
+        state_hist = nominal_states[1]
         print("nominal states\n", nominal_states)
         print("nominal action\n", nominal_action.view(-1))
 
