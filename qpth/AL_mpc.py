@@ -300,7 +300,7 @@ class MPC(Module):
                 lamda = torch.cat([lamda[:, :self.neq], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
                 cost_res = self.compute_cost(out[0], Q, q)
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
-                print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
+                # print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
                 
                 rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
                 # rho = rho * 10
