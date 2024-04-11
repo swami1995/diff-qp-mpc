@@ -191,7 +191,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 100 == 0:
+        if i % 10 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",
