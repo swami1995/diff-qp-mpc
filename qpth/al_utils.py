@@ -386,7 +386,7 @@ class NewtonAL(torch.autograd.Function):
 
         # Solve for newton steps on the augmented lagrangian
         nstep = 0
-        max_newton_steps = 4  # maximum number of Newton steps for each AL step
+        max_newton_steps = 20  # maximum number of Newton steps for each AL step
         old_dyn_res = torch.norm(dyn_res).item()
         # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
         stepsz = 1
@@ -504,7 +504,7 @@ def line_search_newton(update, x_est, meritfnQ, merit):
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
     # new2_objective = torch.vmap(meritfnQ)(x_next)
-    new2_objective = meritfnQ(x_next.reshape(-1, x_next.shape[2], x_next.shape[-1])).reshape(n_ls, 1)
+    new2_objective = meritfnQ(x_next).reshape(n_ls, -1)
     new2_objective_min = torch.min(new2_objective, dim=0)
     batch_idxs = torch.arange(x_est.shape[0], device=x_est.device)
     stepsz = stepszs[new2_objective_min.indices, batch_idxs]
