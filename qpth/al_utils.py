@@ -327,7 +327,7 @@ def dyn_res(xu, dx, x0, x_lower=None, x_upper=None, u_lower=None, u_upper=None):
     )
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_cost(
     xu: torch.Tensor, Q: torch.Tensor, q: torch.Tensor, diag_cost: bool = True
 ) -> torch.Tensor:
@@ -386,9 +386,9 @@ class NewtonAL(torch.autograd.Function):
 
         # Solve for newton steps on the augmented lagrangian
         nstep = 0
-        max_newton_steps = 20  # maximum number of Newton steps for each AL step
+        max_newton_steps = 4  # maximum number of Newton steps for each AL step
         old_dyn_res = torch.norm(dyn_res).item()
-        # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), merit.mean().item())
+        print(nstep, (dyn_res).mean().item(), (cost).mean().item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
@@ -433,7 +433,7 @@ class NewtonAL(torch.autograd.Function):
             cost = cost_fnQ(x_est)
             dyn_res = dyn_fn(x_est)
             new_dyn_res = torch.norm(dyn_res).item()
-            # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
+            print(nstep, (dyn_res).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
             ## exit creteria
             # if (
