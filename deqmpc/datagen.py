@@ -4,14 +4,16 @@ import time
 import numpy as np
 import torch
 import torch.autograd as autograd
+
 import sys
-# sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
-sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
+import os
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, project_dir)
+
 # import qpth.qp_wrapper as mpc
 import qpth.AL_mpc as mpc
 # import qpth.sl1qp_mpc as mpc
 import ipdb
-import os
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from rex_quadrotor import RexQuadrotor
 from my_envs.cartpole import CartpoleEnv

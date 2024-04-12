@@ -5,7 +5,8 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys, os, time
-sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, project_dir)
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
@@ -114,7 +115,7 @@ def main():
     time_diffs = []
 
     # run imitation learning using gt_trajs
-    for i in range(10000):
+    for i in range(20000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}

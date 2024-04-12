@@ -6,7 +6,9 @@ import torch
 import torch.autograd as autograd
 
 import sys
-sys.path.insert(0, '/home/swaminathan/Workspace/qpth/')
+import os
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+sys.path.insert(0, project_dir)
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs_v1 import TwoLinkCartpoleEnv, TwoLinkCartpoleDynamics
