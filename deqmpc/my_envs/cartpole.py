@@ -38,7 +38,7 @@ class CartpoleDynamics(Dynamics):
             raise NotImplementedError
     
 class CartpoleEnv(torch.nn.Module):
-    def __init__(self, nx=None, dt=0.01, stabilization=False, kwargs=None):
+    def __init__(self, nx=None, dt=0.03, stabilization=False, kwargs=None):
         super().__init__()
         assert nx is not None
         self.dynamics = CartpoleDynamics(
@@ -55,13 +55,13 @@ class CartpoleEnv(torch.nn.Module):
         self.kwargs = kwargs
         self.stabilization = stabilization
         self.num_successes = 0
-        self.u_bounds = 100.0
+        self.u_bounds = 300.0
         self.bsz = 1
         self.T = 200
         self.num_steps = 0
         # create observation space based on nx, position and velocity
         high = np.concatenate(
-            (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
+            (np.full(0.5, np.pi*2, np.pi*2, 0.5, 0.5, 0.5)))
         self.observation_space = Spaces(-high, high, (self.nx,))
         self.action_space = Spaces(
             np.full(self.nu, -self.u_bounds),
