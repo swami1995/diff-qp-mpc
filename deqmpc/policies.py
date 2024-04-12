@@ -402,12 +402,13 @@ class DEQMPCPolicy(torch.nn.Module):
                 [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
             )
             x_ref_tr = x_ref
-            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
+            u_ref_tr = u_gt#torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
             nominal_states = x_ref
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
             # end = time.time()
             # self.network_time.append(end-start)
+            dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), u_ref_tr.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
             if qp_solve:
                 # torch.cuda.synchronize()
                 # start = time.time()
@@ -427,7 +428,7 @@ class DEQMPCPolicy(torch.nn.Module):
         if lastqp_solve:
             nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
-        return trajs
+        return trajs, dyn_res
 
 class FFDNetwork(torch.nn.Module):
     """
@@ -553,7 +554,7 @@ class Tracking_MPC(torch.nn.Module):
         else:
             cost = ip_mpc.QuadCost(self.Q.transpose(0,1), self.p.transpose(0,1))
             self.ctrl.u_init = self.u_init.transpose(0,1)
-
+        # ipdb.set_trace()
         state = x0  # .unsqueeze(0).repeat(self.bsz, 1)
         nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn, self.dyn_jac)
         if self.args.solver_type == "ip":

@@ -230,6 +230,7 @@ class MPC(Module):
             x = self.rollout(x0, u, dx)#[:-1]
         else:
             x = self.x_init
+            # ipdb.set_trace()
             if x.ndimension() == 2:
                 x = x.unsqueeze(0).expand(n_batch, self.T, -1).clone()
         x = x.type_as(x0.data)
@@ -300,7 +301,7 @@ class MPC(Module):
                 lamda = torch.cat([lamda[:, :self.neq], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
                 cost_res = self.compute_cost(out[0], Q, q)
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
-                print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
+                # print("iter :", i, dyn_res_clamp.mean().item(), cost_res.mean().item(), rho.mean().item())
                 
                 rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
                 # rho = rho * 10
@@ -309,7 +310,7 @@ class MPC(Module):
                 cost_lam_hist[2].append(rho)
             # end3 = time.time()
             # print("outer time: ", end1 - start1, end2 - start2, end3 - end2)
-        ipdb.set_trace()
+        # ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
         self.rho_prev = rho

@@ -388,7 +388,7 @@ class NewtonAL(torch.autograd.Function):
         nstep = 0
         max_newton_steps = 4  # maximum number of Newton steps for each AL step
         old_dyn_res = torch.norm(dyn_res).item()
-        print(nstep, (dyn_res).mean().item(), (cost).mean().item(), merit.mean().item())
+        # print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
@@ -433,7 +433,7 @@ class NewtonAL(torch.autograd.Function):
             cost = cost_fnQ(x_est)
             dyn_res = dyn_fn(x_est)
             new_dyn_res = torch.norm(dyn_res).item()
-            print(nstep, (dyn_res).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
+            # print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
             ## exit creteria
             # if (
