@@ -91,7 +91,6 @@ def main():
         gt_trajs = get_gt_data(args, env, "cgac")
 
     # gt_trajs = get_gt_data(args, env, "mpc")
-    
     # gt_trajs = get_gt_data(args, env, "cgac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = env.Qlqr.to(args.device)
@@ -113,6 +112,7 @@ def main():
     losses = []
     losses_end = []
     time_diffs = []
+    dyn_resids = []
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -133,8 +133,11 @@ def main():
             # ipdb.set_trace()
             # policy.tracking_mpc.ctrl.dyn_res_eq(traj_sample["state"], traj_sample["action"], env.dynamics, traj_sample["state"][:,0])
             # ipdb.set_trace()
-            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"], traj_sample["action"], traj_sample["mask"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
+            trajs, dyn_res = policy(traj_sample["state"][:, 0], traj_sample["state"], traj_sample["action"], traj_sample["mask"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
             end = time.time()
+            dyn_resids.append(dyn_res)
+            # dyn_resid_gt = policy.tracking_mpc.dyn(traj_sample["state"].view(-1, policy.nx).double(), traj_sample["action"].view(-1, policy.nu).double()).view(args.bsz, 5, -1)[:,:-1,:] - traj_sample["state"].view(args.bsz, 5, -1)[:,1:,:]
+            # ipdb.set_trace()
             # set torch precision to 1e-3
             # torch.set_printoptions(precision=3, sci_mode=False)
             for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
@@ -192,7 +195,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-        if i % 10 == 0:
+        if i % 100 == 0:
             print("iter: ", i)
             print(
                 "grad norm: ",
@@ -204,7 +207,9 @@ def main():
                 "loss_end: ",
                 np.mean(losses_end),
                 "avg time: ",
-                np.mean(time_diffs)
+                np.mean(time_diffs),
+                "dyn res: ",
+                np.mean(dyn_resids),
             )
             if args.save:
                 torch.save(policy.state_dict(), "./model/" + args.name)
@@ -237,16 +242,17 @@ def unnormalize_states_pendulum(nominal_states):
     return nominal_states
 
 def unnormalize_states_cartpole_nlink(nominal_states):
-    nq = nominal_states.shape[2] // 2
+    nq = nominal_states.shape[2] // 2 + 1
     angle_0 = nominal_states[:, 0, 1:nq]
     prev_angle = angle_0
     for i in range(nominal_states.shape[1]):
         mask = torch.abs(nominal_states[:, i, 1:nq] - prev_angle) > np.pi / 2
         mask_sign = torch.sign(nominal_states[:, i, 1:nq] - prev_angle)
         if mask.any():
+            # ipdb.set_trace()
             nominal_states[:, i, 1:nq] = (
-                (nominal_states[:, i, 1:nq] - mask_sign * 2 * np.pi)*(1-mask.float()) 
-                + nominal_states[:, i, 1:nq]*mask.float()
+                (nominal_states[:, i, 1:nq] - mask_sign * 2 * np.pi)*mask.float()
+                + nominal_states[:, i, 1:nq]*(1-mask.float())
             )
         prev_angle = nominal_states[:, i, 1:nq]
     return nominal_states

@@ -249,8 +249,8 @@ def get_expert_traj_cgac(env, num_traj):
     trajectories = []
     reward_trajs = []
     while len(trajectories) < num_traj:
-        state = env.reset().float()
-        state_rms = rms_obs(state)
+        state = env.reset()#.float()
+        state_rms = rms_obs(state.float())
         traj = []
         done = False
         reward_traj = 0
@@ -258,8 +258,8 @@ def get_expert_traj_cgac(env, num_traj):
             action = policy.sample(state_rms)[2]
             next_state, reward, done, _ = env.step(action)
             traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
-            state = next_state.float()
-            state_rms = rms_obs(state)
+            state = next_state#.float()
+            state_rms = rms_obs(state.float())
             reward_traj += reward
         print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
         if reward_traj.item() < 100 and 'rexquadrotor' in env.spec_id:
