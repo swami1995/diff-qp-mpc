@@ -5,7 +5,9 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys
-sys.path.insert(0, "/home/khai/diff-qp-mpc")
+import os
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, project_dir)
 import utils
 from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy, Tracking_MPC
 import matplotlib.pyplot as plt
