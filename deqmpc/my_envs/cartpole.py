@@ -38,7 +38,7 @@ class CartpoleDynamics(Dynamics):
             raise NotImplementedError
     
 class CartpoleEnv(torch.nn.Module):
-    def __init__(self, nx=None, dt=0.03, stabilization=False, kwargs=None):
+    def __init__(self, nx=None, dt=0.05, stabilization=False, kwargs=None):
         super().__init__()
         assert nx is not None
         self.dynamics = CartpoleDynamics(
@@ -55,13 +55,18 @@ class CartpoleEnv(torch.nn.Module):
         self.kwargs = kwargs
         self.stabilization = stabilization
         self.num_successes = 0
-        self.u_bounds = 300.0
+        
         self.bsz = 1
-        self.T = 200
+        if nx == 6:
+            self.T = 300
+            self.u_bounds = 200.0
+        elif nx == 4:
+            self.T = 200
+            self.u_bounds = 100.0
         self.num_steps = 0
         # create observation space based on nx, position and velocity
         high = np.concatenate(
-            (np.full(0.5, np.pi*2, np.pi*2, 0.5, 0.5, 0.5)))
+            (np.full(self.nq, np.pi), np.full(self.nq, np.pi * 5)))
         self.observation_space = Spaces(-high, high, (self.nx,))
         self.action_space = Spaces(
             np.full(self.nu, -self.u_bounds),
@@ -71,8 +76,11 @@ class CartpoleEnv(torch.nn.Module):
         self.stabilization = stabilization
         self.Qlqr = torch.ones(self.nx, **self.kwargs)
         self.Rlqr = torch.ones(self.nu, **self.kwargs)
-
-        self.saved_ckpt_name = "cgac_checkpoint_cartpole1link_swingupeplen200maxu100_initrew20finrew08"
+        if nx == 6:
+            self.saved_ckpt_name = "cgac_checkpoint_cartpole2link_swingupeplen300maxu100_initrew1finrew5"
+        elif nx == 4:
+            self.saved_ckpt_name = "cgac_checkpoint_cartpole1link_swingupeplen200maxu100_initrew20finrew08"
+        
 
     def action_clip(self, action):
         return torch.clamp(action, -self.u_bounds, self.u_bounds)
@@ -192,6 +200,73 @@ class CartpoleEnv(torch.nn.Module):
         """
         pass
 
+class Cartpole2linkEnv(CartpoleEnv):
+    def __init__(self, dt=0.03, stabilization=False, kwargs=None):
+        super().__init__(nx=6, dt=dt, stabilization=stabilization, kwargs=kwargs)
+    
+    def reset(self, bsz=None):
+        """
+        Resets the environment to an initial state, which is a random angle and angular velocity.
+        Returns:
+            numpy.ndarray: The initial state.
+        """
+        if bsz is None:
+            bsz = self.bsz
+        if self.stabilization:
+            high = np.concatenate(
+                (np.full(self.nq, 0.05), np.full(self.nq, 0.05)))
+            high[0], high[1] = 0.1, 0.1
+            high = high[None].repeat(bsz, 0)
+            self.state = (
+                torch.tensor(
+                    np.random.uniform(low=-high, high=high), **self.kwargs
+                )
+            )
+        else:
+            high = np.concatenate(
+                (np.full(self.nq, np.pi), np.full(self.nq, 0.05))
+            )
+            high = high[None].repeat(bsz, 0)
+            self.state = self.state_clip(torch.tensor(
+                np.random.uniform(low=-high, high=high), **self.kwargs
+            ))
+
+        self.num_successes = 0
+        self.num_steps = 0
+        return self.state
+
+    def done(self, state):
+        x = state[..., 0]
+        theta = self.state[..., 1:3]
+        desired_theta1 = torch.tensor([0, 0], **self.kwargs)[None]
+        desired_theta2 = torch.tensor([2*np.pi]*2, **self.kwargs)[None]
+        desired_theta3 = torch.tensor([0, 2*np.pi], **self.kwargs)[None]
+        desired_theta4 = torch.tensor([2*np.pi, 0], **self.kwargs)[None]
+        # delta_theta = torch.minimum((theta - desired_theta1).norm(dim=-1), (theta - desired_theta2).norm(dim=-1))
+        delta_theta = torch.minimum(torch.minimum((theta - desired_theta1).norm(dim=-1), (theta - desired_theta2).norm(dim=-1)), torch.minimum((theta - desired_theta3).norm(dim=-1), (theta - desired_theta4).norm(dim=-1)))
+        # success = torch.logical_and(torch.norm(
+        #     theta - desired_theta) < 0.05 , (torch.abs(x) < 0.05))
+        success = delta_theta < 0.15
+        # self.num_successes = 0 if not success else self.num_successes + 1
+        self.num_successes = (self.num_successes + 1)*success.item()
+        # ipdb.set_trace()
+        # if (self.num_successes >= 15).any():
+        #     print(f'{(self.num_successes >= 15).sum().item()} successes')
+        # return torch.logical_or(torch.abs(x) > 20, self.num_steps >= self.T)
+        return self.num_successes >= 15 or self.num_steps >= self.T
+
+    def get_reward(self, action):
+        state = self.state
+        x = state[..., 0]
+        theta = state[..., 1:3]
+        desired_theta1 = torch.tensor([0, 0], **self.kwargs)[None]
+        desired_theta2 = torch.tensor([2*np.pi]*2, **self.kwargs)[None]
+        desired_theta3 = torch.tensor([0, 2*np.pi], **self.kwargs)[None]
+        desired_theta4 = torch.tensor([2*np.pi, 0], **self.kwargs)[None]
+        # delta_theta = torch.minimum((theta - desired_theta1).norm(dim=-1), (theta - desired_theta2).norm(dim=-1))
+        delta_theta = torch.minimum(torch.minimum((theta - desired_theta1).abs().sum(dim=-1), (theta - desired_theta2).abs().sum(dim=-1)), torch.minimum((theta - desired_theta3).abs().sum(dim=-1), (theta - desired_theta4).abs().sum(dim=-1)))
+        rw = delta_theta + (torch.abs(x))
+        return -rw
 
 # if this is main then run the test
 if __name__ == "__main__":

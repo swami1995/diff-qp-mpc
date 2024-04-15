@@ -402,13 +402,12 @@ class DEQMPCPolicy(torch.nn.Module):
                 [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
             )
             x_ref_tr = x_ref
-            u_ref_tr = u_gt#torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
+            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
             nominal_states = x_ref
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
             # end = time.time()
             # self.network_time.append(end-start)
-            dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), u_ref_tr.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
             if qp_solve:
                 # torch.cuda.synchronize()
                 # start = time.time()
@@ -423,6 +422,7 @@ class DEQMPCPolicy(torch.nn.Module):
             # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
             x_ref = nominal_states.reshape(bsz, -1).detach().clone()
         # print(f"Network time: {np.mean(self.network_time)} MPC time: {np.mean(self.mpc_time)}")
+        dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve:
