@@ -251,3 +251,39 @@ def from_numpy(*args, **kwargs):
 
 def to_numpy(tensor):
     return tensor.cpu().detach().numpy()
+
+
+def unnormalize_states_pendulum(nominal_states):
+    # ipdb.set_trace()
+    # check theta of the first state in nominal_states[:, 0][0] and make sure all the nominal_states are in the same phase (i.e in terms of angle normalization)
+    angle_0 = nominal_states[:, 0, 0]
+    prev_angle = angle_0
+    # ipdb.set_trace()
+    for i in range(nominal_states.shape[1]):
+        mask = torch.abs(nominal_states[:, i, 0] - prev_angle) > np.pi / 2
+        mask_sign = torch.sign(nominal_states[:, i, 0])
+        if mask.any():
+            nominal_states[mask, i, 0] = (
+                nominal_states[mask, i, 0] - mask_sign[mask] * 2 * np.pi
+            )
+        prev_angle = nominal_states[:, i, 0]
+    return nominal_states
+
+
+def unnormalize_states_cartpole_nlink(nominal_states):
+    nq = nominal_states.shape[2] // 2 + 1
+    angle_0 = nominal_states[:, 0, 1:nq]
+    prev_angle = angle_0
+    for i in range(nominal_states.shape[1]):
+        mask = torch.abs(nominal_states[:, i, 1:nq] - prev_angle) > np.pi / 2
+        mask_sign = torch.sign(nominal_states[:, i, 1:nq] - prev_angle)
+        if mask.any():
+            # ipdb.set_trace()
+            nominal_states[:, i, 1:nq] = (
+                (nominal_states[:, i, 1:nq] -
+                 mask_sign * 2 * np.pi)*mask.float()
+                + nominal_states[:, i, 1:nq]*(1-mask.float())
+            )
+        prev_angle = nominal_states[:, i, 1:nq]
+    return nominal_states
+
