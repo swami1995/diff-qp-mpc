@@ -5,7 +5,10 @@ import torch
 
 
 def corrupt_observation(states, noise_type, noise_std, noise_mean):
-    if noise_type == 1:
+    if noise_type == 0:
+        # no noise
+        return states
+    elif noise_type == 1:
         # gaussian noise
         noise = torch.randn_like(states) * noise_std + noise_mean
         return states + noise
@@ -13,9 +16,6 @@ def corrupt_observation(states, noise_type, noise_std, noise_mean):
         # uniform noise
         noise = 2*(torch.rand_like(states)-0.5) * noise_std + noise_mean
         return states + noise
-    elif noise_type == 0:
-        # no noise
-        return states
     elif noise_type == 3:
         # any state element can be dropped to 0
         mask = torch.rand_like(states) > noise_mean
@@ -39,7 +39,6 @@ def corrupt_observation(states, noise_type, noise_std, noise_mean):
     elif noise_type == 6:
         # any state vector can be dropped to previous value 
         mask = torch.rand(states.shape[:2]) > noise_mean
-        print(mask)
         mask = mask.unsqueeze(-1).repeat(1, 1, states.shape[2])
         masked_states = 1.0*states
         # only mask dimensions 0 and 1 of masked_states

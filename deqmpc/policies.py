@@ -1,4 +1,4 @@
-import numpy as np
+import numpy as nq
 import torch
 import torch.nn as nn
 import torch.autograd as autograd
@@ -10,6 +10,13 @@ import ipdb
 import torch.nn.functional as F
 # from policy_utils import SinusoidalPosEmb
 import time
+
+# POSSIBLE OUTPUT TYPES OF THE NETWORK
+# 0: horizon action
+# 1: horizon state
+# 2: horizon state + action
+# 3: horizon config (state no vel)
+
 
 class DEQPolicy(torch.nn.Module):
     def __init__(self, args, env):
@@ -32,7 +39,7 @@ class DEQPolicy(torch.nn.Module):
         self.reludeq2 = torch.nn.ReLU()
         self.lndeq3 = torch.nn.LayerNorm(self.hdim)
 
-        self.fc_out = torch.nn.Linear(self.hdim, self.np * self.T)
+        self.fc_out = torch.nn.Linear(self.hdim, self.nx * self.T)
 
         self.solver = self.anderson
 
@@ -48,14 +55,15 @@ class DEQPolicy(torch.nn.Module):
         z = torch.zeros(z_shape).to(xinp)
         z_out = self.deq_fixed_point(xinp, z)
         x_ref = self.fc_out(z_out)
-        x_ref = x_ref.view(-1, self.T, self.np)
-        x_ref = x_ref + x[:, None, : self.np] * 10
+        x_ref = x_ref.view(-1, self.T, self.nx)
+        x_ref = x_ref + x[:, None, : self.nx] * 10
         return x_ref
 
     def deq_fixed_point(self, x, z):
         # compute forward pass and re-engage autograd tape
         with torch.no_grad():
-            z, self.forward_res = self.solver(lambda z: self.f(z, x), z, **self.kwargs)
+            z, self.forward_res = self.solver(
+                lambda z: self.f(z, x), z, **self.kwargs)
         z = self.f(z, x)
 
         # set up Jacobian vector product (without additional forward calls)
@@ -64,7 +72,8 @@ class DEQPolicy(torch.nn.Module):
 
         def backward_hook(grad):
             g, self.backward_res = self.solver(
-                lambda y: autograd.grad(f0, z0, y, retain_graph=True)[0] + grad,
+                lambda y: autograd.grad(
+                    f0, z0, y, retain_graph=True)[0] + grad,
                 grad,
                 **self.kwargs
             )
@@ -97,12 +106,12 @@ class DEQPolicy(torch.nn.Module):
         for k in range(2, max_iter):
             n = min(k, m)
             G = F[:, :n] - X[:, :n]
-            H[:, 1 : n + 1, 1 : n + 1] = (
+            H[:, 1: n + 1, 1: n + 1] = (
                 torch.bmm(G, G.transpose(1, 2))
                 + lam * torch.eye(n, dtype=x0.dtype, device=x0.device)[None]
             )
             alpha = torch.solve(y[:, : n + 1], H[:, : n + 1, : n + 1])[0][
-                :, 1 : n + 1, 0
+                :, 1: n + 1, 0
             ]  # (bsz x n)
 
             X[:, k % m] = (
@@ -157,22 +166,22 @@ class DEQPolicy(torch.nn.Module):
 #           - or instead the noise as just a means of incorporating uncertainty in the optimization steps at each iteration.
 #           - The specific philosophy maybe doesn't matter too much - but it will probably guide the thinking. Some clarity on this would be nice!
 # More important questions are probably still 1, 5, 6, 7
-## TODOs:
+# TODOs:
 # 1. Make input flexible - x, xref, xref - x0, xref - xref_prev, xref - xref_prev - x0, xref - xref_prev - x0 + v, etc.
 # 2. Make outputs flexible - deltas, xref, xref - x0, etc. and also weights corresponding to the steps the network is not confident about.
 # 3. Make architecture flexible - GNN or FFN or whatever
 #       - Note : don't do parameter sharing between the nodes in gnn - the sequential order is important and maybe keeping the parameters somewhat separate is a good idea.
 #       - but with limited data - parameter sharing might be a good idea - so maybe some sort of hybrid?
 # 4. Make recurrence flexible - fixed point or whatever
-# 5. Options for diffing through only fixed point, computing fixed point and other losses. 
+# 5. Options for diffing through only fixed point, computing fixed point and other losses.
 #       - Only penalize the fixed point but train the network for the rest as well.
 #       - Anderson/Broyden based fixed point solves
-# 5. Figure out the collocation stuff 
+# 5. Figure out the collocation stuff
 #       - Is there a simpler/cleaner way to handle the initial deq iterations? - maybe we should try to satisfy the constraints exactly only if the network outputs are actually close enough to the constraint manifold
 # 6. Complexity analysis
 # 7. Write other solvers - Autmented lagrangian or ADMM or whatever
-# 8. Confidences for each knot point - for the Q cost coefficient. - There should again probably be some TD component to the cost coefficient too. 
-        
+# 8. Confidences for each knot point - for the Q cost coefficient. - There should again probably be some TD component to the cost coefficient too.
+
 
 class DEQLayer(torch.nn.Module):
     def __init__(self, args, env):
@@ -180,13 +189,13 @@ class DEQLayer(torch.nn.Module):
         self.args = args
         self.nu = env.nu
         self.nx = env.nx
-        self.np = args.np
+        self.nq = args.nq
         self.dt = env.dt
         self.T = args.T
         self.hdim = args.hdim
         self.layer_type = args.layer_type
         self.inp_type = ""  # args.inp_type
-        self.out_type = ""  # args.out_type
+        self.out_type = args.deq_out_type
         self.kernel_width = args.kernel_width
         self.pooling = args.pooling
         self.deq_expand = 4
@@ -203,11 +212,13 @@ class DEQLayer(torch.nn.Module):
         xinp = self.input_layer(x)
         z_out = self.deq_layer(xinp, z)
         dx_ref = self.output_layer(z_out)
-        dx_ref = dx_ref.view(-1, self.T - 1, self.np)
-        np = self.np//2
-        vel_ref = dx_ref[..., np:]
-        dx_ref = dx_ref[..., :np] * self.dt
-        x_ref = torch.cat([dx_ref + x[:,None,:np], vel_ref], dim=-1)
+        try:
+            dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
+        except:
+            ipdb.set_trace()
+        vel_ref = dx_ref[..., self.nq:]
+        dx_ref = dx_ref[..., :self.nq] * self.dt
+        x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
         return x_ref, z_out
 
     def input_layer(self, x):
@@ -217,24 +228,27 @@ class DEQLayer(torch.nn.Module):
             t = self.time_emb.unsqueeze(0).repeat(x.shape[0], 1, 1)
             x = x.reshape(-1, self.T, self.nx)
             x_emb = self.node_encoder(x)
-            x0_emb = self.x0_encoder(x[:,0]).unsqueeze(1).repeat(1, self.T, 1)
+            x0_emb = self.x0_encoder(x[:, 0]).unsqueeze(1).repeat(1, self.T, 1)
             inp = torch.cat([x_emb, x0_emb, t], dim=-1)
             inp = self.input_encoder(inp)
         elif self.layer_type == "gat":
             NotImplementedError
         return inp
+
     def deq_layer(self, x, z):
         if self.layer_type == "mlp":
             z = self.fcdeq1(z)
             z = self.reludeq1(z)
             z = self.lndeq1(z)
-            out = self.lndeq3(self.reludeq2(z + self.lndeq2(x + self.fcdeq2(z))))
+            out = self.lndeq3(self.reludeq2(
+                z + self.lndeq2(x + self.fcdeq2(z))))
         elif self.layer_type == "gcn":
             z = z.view(-1, self.T, self.hdim)
             z = self.convdeq1(z.permute(0, 2, 1))
             z = self.mishdeq1(z)
             z = self.gndeq1(z)
-            out = self.gndeq3(self.mishdeq2(z + self.gndeq2(x + self.convdeq2(z))))
+            out = self.gndeq3(self.mishdeq2(
+                z + self.gndeq2(x + self.convdeq2(z))))
             out = out.permute(0, 2, 1).view(-1, self.hdim)
         elif self.layer_type == "gat":
             NotImplementedError
@@ -264,14 +278,14 @@ class DEQLayer(torch.nn.Module):
         if self.layer_type == "mlp":
             # ipdb.set_trace()
             self.inp_layer = torch.nn.Sequential(
-                torch.nn.Linear(self.nx + self.np * (self.T - 1), self.hdim),
+                torch.nn.Linear(self.nx + self.nx * (self.T - 1), self.hdim),
                 torch.nn.LayerNorm(self.hdim),
                 # torch.nn.ReLU()
             )
-            # self.fc_inp = torch.nn.Linear(self.nx + self.np*self.T, self.hdim)
+            # self.fc_inp = torch.nn.Linear(self.nx + self.nq*self.T, self.hdim)
             # self.ln_inp = torch.nn.LayerNorm(self.hdim)
         elif self.layer_type == "gcn":
-            ## Get sinusoidal embeddings for the time steps
+            # Get sinusoidal embeddings for the time steps
             # self.time_encoder = nn.Sequential(
             #     SinusoidalPosEmb(self.hdim),
             #     nn.Linear(self.hdim, self.hdim*4),
@@ -280,27 +294,27 @@ class DEQLayer(torch.nn.Module):
             #     nn.LayerNorm(self.hdim)
             #     )
             self.time_emb = torch.nn.Parameter(torch.randn(self.T, self.hdim))
-            ## Get the node embeddings
+            # Get the node embeddings
             self.node_encoder = nn.Sequential(
                 nn.Linear(self.nx, self.hdim),
                 nn.LayerNorm(self.hdim),
                 nn.Mish()
-                )
-            
+            )
+
             self.x0_encoder = nn.Sequential(
                 nn.Linear(self.nx, self.hdim),
                 nn.LayerNorm(self.hdim),
                 nn.Mish()
-                )
-            
+            )
+
             self.input_encoder = nn.Sequential(
                 nn.Linear(self.hdim, self.hdim*4),
                 nn.Mish(),
                 nn.Linear(self.hdim*3, self.hdim),
                 nn.LayerNorm(self.hdim),
                 # nn.Mish()
-                )
-            
+            )
+
             self.global_pooling = {
                 "max": torch.max,
                 "mean": torch.mean,
@@ -321,42 +335,58 @@ class DEQLayer(torch.nn.Module):
             self.reludeq2 = torch.nn.ReLU()
             self.lndeq3 = torch.nn.LayerNorm(self.hdim)
         elif self.layer_type == "gcn":
-            self.convdeq1 = torch.nn.Conv1d(self.hdim, self.hdim*self.deq_expand, self.kernel_width)
-            self.convdeq2 = torch.nn.Conv1d(self.hdim*self.deq_expand, self.hdim, self.kernel_width)
+            self.convdeq1 = torch.nn.Conv1d(
+                self.hdim, self.hdim*self.deq_expand, self.kernel_width)
+            self.convdeq2 = torch.nn.Conv1d(
+                self.hdim*self.deq_expand, self.hdim, self.kernel_width)
             self.mishdeq1 = torch.nn.Mish()
             self.mishdeq2 = torch.nn.Mish()
-            self.gndeq1 = torch.nn.GroupNorm(self.num_groups, self.hdim*self.deq_expand)
+            self.gndeq1 = torch.nn.GroupNorm(
+                self.num_groups, self.hdim*self.deq_expand)
             self.gndeq2 = torch.nn.GroupNorm(self.num_groups, self.hdim)
             self.gndeq3 = torch.nn.GroupNorm(self.num_groups, self.hdim)
         elif self.layer_type == "gat":
             NotImplementedError
 
     def setup_output_layer(self):
+        if self.out_type == 0:
+            self.out_dim = self.nu * (self.T-1)
+        elif self.out_type == 1:
+            self.out_dim = self.nx * (self.T-1)
+        elif self.out_type == 2:
+            self.out_dim = (self.nx + self.nu) * (self.T-1)
+        elif self.out_type == 3:
+            self.out_dim = (self.nq) * (self.T-1)
+
         if self.layer_type == "mlp":
             self.out_layer = torch.nn.Sequential(
-                torch.nn.Linear(self.hdim, self.np * (self.T - 1))
+                torch.nn.Linear(self.hdim, self.out_dim)
             )
         elif self.layer_type == "gcn":
-            self.convout = torch.nn.Conv1d(self.hdim, self.hdim, self.kernel_width)
+            self.convout = torch.nn.Conv1d(
+                self.hdim, self.hdim, self.kernel_width)
             self.gnout = torch.nn.GroupNorm(self.num_groups, self.hdim)
             self.mishout = torch.nn.Mish()
-            self.final_layer = torch.nn.Conv1d(self.hdim, self.np, self.kernel_width_out)
+            self.final_layer = torch.nn.Conv1d(
+                self.hdim, self.nq, self.kernel_width_out)
         elif self.layer_type == "gat":
             NotImplementedError
-        
+
+
 class DEQMPCPolicy(torch.nn.Module):
     def __init__(self, args, env):
         super().__init__()
         self.args = args
         self.nu = env.nu
         self.nx = env.nx
-        self.np = args.np
+        self.nq = args.nq
         self.T = args.T
         self.dt = env.dt
         self.device = args.device
         self.deq_iter = args.deq_iter
         self.model = DEQLayer(args, env)
         self.model.to(self.device)
+        self.out_type = self.model.out_type # output type of DEQ model
         self.tracking_mpc = Tracking_MPC(args, env)
         self.mpc_time = []
         self.network_time = []
@@ -381,7 +411,6 @@ class DEQMPCPolicy(torch.nn.Module):
         bsz = x.shape[0]
         if self.args.solver_type == "al":
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
-        
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
@@ -389,20 +418,24 @@ class DEQMPCPolicy(torch.nn.Module):
             # start = time.time()
             # x_ref = (x_ref.view(bsz, self.T, -1)*mask[:, :, None]).view(bsz, -1)
             x_ref, z = self.model(x_ref, z)
-            x_ref = x_ref.view(-1, self.T-1, self.np)
-            x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
+            x_ref = x_ref.view(-1, self.T-1, self.nx)
+            try:
+                x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
+            except:
+                ipdb.set_trace()
             # nominal_states = x_ref.transpose(0, 1)
             # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # trajs.append((nominal_states, nominal_actions))
             # x_ref = x_ref.reshape(bsz, -1)
-            
+
             # ipdb.set_trace()
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
             xu_ref = torch.cat(
                 [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
             )
             x_ref_tr = x_ref
-            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
+            u_ref_tr = torch.zeros_like(
+                x_ref_tr[..., :self.nu])  # u_gt.transpose(0, 1)
             nominal_states = x_ref
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
@@ -412,23 +445,27 @@ class DEQMPCPolicy(torch.nn.Module):
                 # torch.cuda.synchronize()
                 # start = time.time()
                 # ipdb.set_trace()
-                nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
-                
+                nominal_states, nominal_actions = self.tracking_mpc(
+                    x, xu_ref, x_ref_tr, u_ref_tr)
+
                 # torch.cuda.synchronize()
                 # end = time.time()
                 # self.mpc_time.append(end-start)
-            nominal_states_net = x_ref#.transpose(0, 1)
+            nominal_states_net = x_ref  # .transpose(0, 1)
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
             # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
             x_ref = nominal_states.reshape(bsz, -1).detach().clone()
-        # print(f"Network time: {np.mean(self.network_time)} MPC time: {np.mean(self.mpc_time)}")
-        dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
+        # print(f"Network time: {nq.mean(self.network_time)} MPC time: {nq.mean(self.mpc_time)}")
+        dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
+        ), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve:
-            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
+            nominal_states, nominal_actions = self.tracking_mpc(
+                x, xu_ref, x_ref_tr, u_ref_tr)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs, dyn_res
+
 
 class FFDNetwork(torch.nn.Module):
     """
@@ -440,17 +477,17 @@ class FFDNetwork(torch.nn.Module):
         self.args = args
         self.nu = env.nu
         self.nx = env.nx
-        self.np = args.np
+        self.nq = args.nq
         self.T = args.T
 
-        ## define the network layers :
+        # define the network layers :
         self.fc1 = torch.nn.Linear(self.nx, 256)
         self.ln1 = torch.nn.LayerNorm(256)
         self.relu1 = torch.nn.ReLU()
         self.fc2 = torch.nn.Linear(256, 256)
         self.ln2 = torch.nn.LayerNorm(256)
         self.relu2 = torch.nn.ReLU()
-        self.fc3 = torch.nn.Linear(256, self.np * self.T)
+        self.fc3 = torch.nn.Linear(256, self.nq * self.T)
         self.net = torch.nn.Sequential(
             self.fc1, self.ln1, self.relu1, self.fc2, self.ln2, self.relu2, self.fc3
         )
@@ -460,8 +497,8 @@ class FFDNetwork(torch.nn.Module):
         compute the policy output for the given state x
         """
         dx_ref = self.net(x)
-        dx_ref = dx_ref.view(-1, self.T, self.np)
-        x_ref = dx_ref + x[:, None, : self.np]
+        dx_ref = dx_ref.view(-1, self.T, self.nq)
+        x_ref = dx_ref + x[:, None, : self.nq]
         return x_ref
 
 
@@ -471,6 +508,7 @@ class Tracking_MPC(torch.nn.Module):
         self.args = args
         self.nu = env.nu
         self.nx = env.nx
+        self.nq = env.nq
         self.dt = env.dt
         self.T = args.T
         self.dyn = env.dynamics
@@ -487,7 +525,7 @@ class Tracking_MPC(torch.nn.Module):
 
         self.Q = args.Q.to(self.device)
         self.R = args.R.to(self.device)
-        self.dtype = torch.float64 if args.dtype=="double" else torch.float32
+        self.dtype = torch.float64 if args.dtype == "double" else torch.float32
         # self.Qf = args.Qf
         if args.Q is None:
             self.Q = torch.ones(self.nx, dtype=self.dtype, device=self.device)
@@ -499,7 +537,7 @@ class Tracking_MPC(torch.nn.Module):
         self.u_init = torch.randn(
             self.bsz, self.T, self.nu, dtype=self.dtype, device=self.device
         )
-        
+
         self.single_qp_solve = True if self.qp_iter == 1 else False
 
         if args.solver_type == "al":
@@ -532,7 +570,7 @@ class Tracking_MPC(torch.nn.Module):
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
-                u_init=self.u_init.transpose(0,1),
+                u_init=self.u_init.transpose(0, 1),
                 grad_method=ip_mpc.GradMethods.ANALYTIC,
                 solver_type="dense",
                 single_qp_solve=self.single_qp_solve,
@@ -552,11 +590,13 @@ class Tracking_MPC(torch.nn.Module):
         if self.args.solver_type == "al":
             cost = al_utils.QuadCost(self.Q, self.p)
         else:
-            cost = ip_mpc.QuadCost(self.Q.transpose(0,1), self.p.transpose(0,1))
-            self.ctrl.u_init = self.u_init.transpose(0,1)
+            cost = ip_mpc.QuadCost(self.Q.transpose(
+                0, 1), self.p.transpose(0, 1))
+            self.ctrl.u_init = self.u_init.transpose(0, 1)
         # ipdb.set_trace()
         state = x0  # .unsqueeze(0).repeat(self.bsz, 1)
-        nominal_states, nominal_actions = self.ctrl(state, cost, self.dyn, self.dyn_jac)
+        nominal_states, nominal_actions = self.ctrl(
+            state, cost, self.dyn, self.dyn_jac)
         if self.args.solver_type == "ip":
             nominal_states = nominal_states.transpose(0, 1)
             nominal_actions = nominal_actions.transpose(0, 1)
@@ -576,13 +616,13 @@ class Tracking_MPC(torch.nn.Module):
         # ).sum(dim=-1)
         self.p = -(self.Q * x_ref.unsqueeze(-2)).sum(dim=-1)
         return self.p
-    
+
     def reinitialize(self, x, mask):
         self.u_init = torch.randn(
-            self.bsz, self.T, self.nu, dtype=x.dtype, device=x.device
-        )
+            self.bsz, self.T, self.nu, dtype=x.dtype, device=x.device)
         self.x_init = None
         self.ctrl.reinitialize(x, mask)
+
 
 class NNMPCPolicy(torch.nn.Module):
     """
@@ -594,7 +634,7 @@ class NNMPCPolicy(torch.nn.Module):
         self.args = args
         self.nu = env.nu
         self.nx = env.nx
-        self.np = args.np
+        self.nq = args.nq
         self.T = args.T
         self.dt = env.dt
         self.device = args.device
@@ -607,19 +647,9 @@ class NNMPCPolicy(torch.nn.Module):
         compute the policy output for the given state x
         """
         x_ref = self.model(x)
-        # x_ref = x_ref.view(-1, self.np)
-        x_ref = torch.cat(
-            [
-                x_ref,
-                torch.zeros(
-                    list(x_ref.shape[:-1])
-                    + [
-                        self.np,
-                    ]
-                ).to(self.args.device),
-            ],
-            dim=-1,
-        ).transpose(0, 1)
+        # x_ref = x_ref.view(-1, self.nq)
+        x_ref = torch.cat([x_ref, torch.zeros(list(
+            x_ref.shape[:-1]) + [self.nq,]).to(self.args.device),], dim=-1,).transpose(0, 1)
         nominal_states, nominal_actions = self.tracking_mpc(x, x_ref)
         return nominal_states, nominal_actions
 
@@ -634,16 +664,12 @@ class NNPolicy(torch.nn.Module):
         self.args = args
         self.nu = env.nu
         self.nx = env.nx
-        self.np = args.np
+        self.nq = args.nq
         self.T = args.T
         self.dt = env.dt
         self.device = args.device
         self.hdim = args.hdim
-        self.output_type = 0
-        # output_type = 0 : output only actions
-        # output_type = 1 : output only states
-        # output_type = 2 : output states and actions
-        # output_type = 3 : output only positions
+        self.out_type = args.deq_out_type
 
         # define the network layers :
         self.model = torch.nn.Sequential(
@@ -654,14 +680,14 @@ class NNPolicy(torch.nn.Module):
             torch.nn.LayerNorm(self.hdim),
             torch.nn.ReLU(),
         )
-        if self.output_type == 0:
+        if self.out_type == 0:
             self.out_dim = self.nu * self.T
-        elif self.output_type == 1:
+        elif self.out_type == 1:
             self.out_dim = self.nx * self.T
-        elif self.output_type == 2:
+        elif self.out_type == 2:
             self.out_dim = (self.nx + self.nu) * self.T
-        elif self.output_type == 3:
-            self.out_dim = (self.np) * self.T
+        elif self.out_type == 3:
+            self.out_dim = (self.nq) * self.T
 
         self.model.add_module("out", torch.nn.Linear(self.hdim, self.out_dim))
 
@@ -674,23 +700,62 @@ class NNPolicy(torch.nn.Module):
             states (tensor bsz x T x nx): nominal states or None
             actions (tensor bsz x T x nu): nominal actions or None
         """
-        if self.output_type == 0:
+        if self.out_type == 0:
             actions = self.model(x)
             actions = actions.view(-1, self.T, self.nu)
             states = None
-        elif self.output_type == 1:
+        elif self.out_type == 1:
             states = self.model(x)
             states = states.view(-1, self.T, self.nx)
             actions = None
-        elif self.output_type == 2:
+        elif self.out_type == 2:
             states = self.model(x)[:, : self.nx * self.T]
             states = states.view(-1, self.T, self.nx)
-            actions = self.model(x)[:, self.nx * self.T :]
+            actions = self.model(x)[:, self.nx * self.T:]
             actions = actions.view(-1, self.T, self.nu)
-        elif self.output_type == 3:
+        elif self.out_type == 3:
             pos = self.model(x)
             vel = (pos[:, 1:] - pos[:, :-1]) / self.dt
             vel = torch.cat([vel, vel[:, -1:]], dim=1)
             states = torch.cat([pos, vel], dim=-1).view(-1, self.T, self.nx)
             actions = None
         return states, actions
+
+
+def compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs):
+    loss = 0.0
+    # supervise each DEQMPC iteration
+    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
+        loss += add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    return loss, loss_end
+
+
+def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
+    nominal_states, nominal_actions = trajs
+    loss = add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = torch.Tensor([0.0])
+    return loss, loss_end
+
+def add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
+    loss = 0.0
+    if policy.out_type == 0 or policy.out_type == 2:
+        # supervise action
+        loss += torch.abs((nominal_actions - gt_actions)
+                          * gt_mask[:, :, None]).sum(dim=-1).mean()
+    if policy.out_type == 1 or policy.out_type == 2:
+        # supervise state
+        loss += torch.abs((nominal_states - gt_states) *
+                          gt_mask[:, :, None]).sum(dim=-1).mean()
+    if policy.out_type == 3:
+        # supervise configuration
+        loss += torch.abs((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
+                          gt_mask[:, :, None]).sum(dim=-1).mean()
+    return loss
+
+
+def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args):
+    if args.deq:
+        return compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs)
+    else:
+        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)
