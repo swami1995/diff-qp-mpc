@@ -158,6 +158,7 @@ class RexQuadrotor(torch.nn.Module):
         self.bsz = bsz
         self.nx = self.state_dim = self.dynamics.state_dim
         self.nu = self.control_dim = self.dynamics.control_dim
+        self.nq = 7
         self._max_episode_steps = max_steps
         self.num_steps = torch.zeros(bsz).to(device)
         # self.x = self.reset()
