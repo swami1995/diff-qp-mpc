@@ -165,7 +165,7 @@ class IntegratorDynamics(torch.nn.Module):
         self.max_vel = max_vel
         self.nx = nx
         self.nu = nu
-        self.np = int(self.nx / 2)
+        self.nq = int(self.nx / 2)
 
     def forward(self, state, action):
         """
@@ -178,8 +178,8 @@ class IntegratorDynamics(torch.nn.Module):
         """
         # semi-implicit euler integration
         this_shape = state.shape
-        pos = state[..., :self.np]
-        vel = state[..., self.np:]
+        pos = state[..., :self.nq]
+        vel = state[..., self.nq:]
         # ipdb.set_trace()
         vel_n = vel + action * self.dt
         pos_n = pos + vel_n * self.dt
@@ -188,6 +188,39 @@ class IntegratorDynamics(torch.nn.Module):
     
     def action_clip(self, action):
         return torch.clamp(action, -self.max_acc, self.max_acc)
+    
+    def derivatives(self, state, action):
+        """
+        Computes the derivatives of the state given the current state and action
+        Args:
+            state (torch.Tensor bsz x nx): The current state.
+            action (torch.Tensor bsz x nu): The action to apply.
+        Returns:
+            torch.Tensor bsz x nx: The derivatives of the state.
+        """
+        # state.requires_grad = True
+        # action.requires_grad = True
+        out = self(state, action)
+        state_grad, action_grad = torch.autograd.grad([out.sum()], [state, action])
+        return state_grad, action_grad
+    
+    def dynamics_derivatives(self, state, action):
+        """
+        Computes the derivatives of the dynamics given the current state and action
+        Args:
+            state (torch.Tensor bsz x nx): The current state.
+            action (torch.Tensor bsz x nu): The action to apply.
+        Returns:
+            tuple: A tuple containing the derivatives of the state and action.
+        """
+        # state.requires_grad = True
+        # action.requires_grad = True
+        state = state.unsqueeze(-2).repeat(1, self.nx, 1)
+        action = action.unsqueeze(-2).repeat(1, self.nu, 1)
+        out = self(state, action)*torch.eye(self.nx).to("cuda")[None]
+        jac = torch.autograd.grad([out.sum()], [state, action])
+        ipdb.set_trace()
+        return out, jac
 
 
 class Spaces:
@@ -207,14 +240,18 @@ class IntegratorEnv:
         self.state = None  # Will be initialized in reset
         self.nx = self.dynamics.nx
         self.nu = self.dynamics.nu
-        self.np = self.dynamics.np  
+        self.nq = self.dynamics.nq  
+        # ipdb.set_trace()
         self.max_acc = self.dynamics.max_acc
         self.max_vel = self.dynamics.max_vel
         self.dt = self.dynamics.dt
         self.num_successes = 0
+        self.Qlqr = torch.tensor([1.]*self.nx)
+        self.Rlqr = torch.tensor([1.]*self.nu)
+        self.dynamics_derivatives = self.dynamics.dynamics_derivatives
 
         # create observation space based on nx
-        low = np.concatenate((np.full(self.np, -np.inf), np.full(self.np, -self.max_vel)))
+        low = np.concatenate((np.full(self.nq, -np.inf), np.full(self.nq, -self.max_vel)))
         self.observation_space = Spaces(low, -low, (self.nx, 2))
         self.action_space = Spaces(-np.full(self.nu, self.max_acc), np.full(self.nu, self.max_acc), (self.nu, 2))
 
@@ -233,7 +270,7 @@ class IntegratorEnv:
         Returns:
             numpy.ndarray: The initial state.
         """
-        low = np.concatenate((np.full(self.np, -2.0), np.full(self.np, -self.max_vel)))
+        low = np.concatenate((np.full(self.nq, -2.0), np.full(self.nq, -self.max_vel)))
         # self.state = torch.tensor(np.array([2.0, 0]), dtype=torch.float32)
         self.state = torch.tensor(np.random.uniform(low=low, high=-low), dtype=torch.float32)
         self.num_successes = 0
@@ -267,7 +304,7 @@ class IntegratorEnv:
         # ipdb.set_trace()
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        pos = self.state[..., : self.np]
+        pos = self.state[..., : self.nq]
         success = torch.norm(pos) < 0.01
         self.num_successes = 0 if not success else self.num_successes + 1
         return self.num_successes >= 10
@@ -284,7 +321,7 @@ class IntegratorEnv:
         # as a reward, so the closer to upright (0 rad), the higher the reward.
         # theta, _ = self.state.unbind()
         # theta, _ = self.state[0][0], self.state[0][1]
-        pos, vel = self.state[..., : self.np], self.state[..., self.np:]
+        pos, vel = self.state[..., : self.nq], self.state[..., self.nq:]
         reward = -torch.norm(pos) - torch.norm(vel) - torch.norm(action)
         return reward
 

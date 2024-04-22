@@ -9,7 +9,7 @@ from policies import NNMPCPolicy, DEQPolicy, DEQMPCPolicy, NNPolicy
 from datagen import get_gt_data, merge_gt_data, sample_trajectory
 from rex_quadrotor import RexQuadrotor
 from my_envs.cartpole import CartpoleEnv
-from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
+from envs import PendulumEnv, IntegratorEnv
 from envs_v1 import OneLinkCartpoleEnv
 import ipdb
 import qpth.qp_wrapper as mpc
@@ -87,7 +87,7 @@ def main():
         gt_trajs = get_gt_data(args, env, "sac")
     elif args.env == "integrator":
         env = IntegratorEnv()
-        gt_trajs = get_gt_data(args, env, "sac")
+        gt_trajs = get_gt_data(args, env, "mpc")
     elif args.env == "rexquadrotor":
         env = RexQuadrotor(bsz=args.bsz, device=args.device)
         gt_trajs = get_gt_data(args, env, "cgac")
@@ -143,7 +143,7 @@ def main():
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
-        iter_qp_solve = False if (i < 500 and args.pretrain) else True
+        iter_qp_solve = False if (i < 300 and args.pretrain) else True
         # warm start only after 1000 iterations
         args.en_qp_solve = iter_qp_solve and args.qp_solve
         lastqp_solve = args.lastqp_solve and iter_qp_solve

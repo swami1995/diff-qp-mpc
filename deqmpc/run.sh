@@ -1,3 +1,3 @@
 #!/bin/bash
 echo Starting training...
-python train.py --deq --deq_iter 6 --nq 2 --bsz 256 --T 5 --name cartpole1link --solver_type al --env cartpole1link --qp_solve --test --pretrain
+python train.py --deq --deq_iter 6 --bsz 256 --T 5 --name rexquadrotor --solver_type al --env rexquadrotor --qp_solve --test --pretrain
