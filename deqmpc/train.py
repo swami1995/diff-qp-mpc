@@ -62,8 +62,8 @@ def main():
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--dtype", type=str, default="double")
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
-    parser.add_argument("--deq_out_type", type=int, default=2)  # previously 0
-    parser.add_argument("--policy_out_type", type=int, default=2)  # previously 2
+    parser.add_argument("--deq_out_type", type=int, default=1)  # previously 1
+    parser.add_argument("--policy_out_type", type=int, default=1)  # previously 1
     # check noise_utils.py for noise_type
     parser.add_argument("--data_noise_type", type=int, default=0)
     parser.add_argument("--data_noise_std", type=float, default=0.05)
@@ -143,7 +143,7 @@ def main():
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
-        iter_qp_solve = False if (i < 3000 and args.pretrain) else True
+        iter_qp_solve = False if (i < 500 and args.pretrain) else True
         # warm start only after 1000 iterations
         args.en_qp_solve = iter_qp_solve and args.qp_solve
         lastqp_solve = args.lastqp_solve and iter_qp_solve

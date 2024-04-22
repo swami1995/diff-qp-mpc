@@ -471,12 +471,15 @@ class DEQMPCPolicy(torch.nn.Module):
             # output of DEQ layer is state prediction of T-1 steps
             
             # estimate current state or not
+            # TODO more types of outputs
             if (self.model.out_type == 1):
                 # directly append the current state input
                 x_ref = x_ref.view(-1, self.T-1, self.nx)
                 x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
             elif (self.model.out_type == 2):
                 x_ref = x_ref.view(-1, self.T, self.nx)
+            else:
+                NotImplementedError
             # nominal_states = x_ref.transpose(0, 1)
             # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # trajs.append((nominal_states, nominal_actions))
