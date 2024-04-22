@@ -59,7 +59,7 @@ class CartpoleEnv(torch.nn.Module):
         self.bsz = 1
         if nx == 6:
             self.T = 300
-            self.u_bounds = 200.0
+            self.u_bounds = 250.0
         elif nx == 4:
             self.T = 200
             self.u_bounds = 100.0
@@ -75,9 +75,10 @@ class CartpoleEnv(torch.nn.Module):
         )
         self.stabilization = stabilization
         self.Qlqr = torch.ones(self.nx, **self.kwargs)
-        self.Rlqr = torch.ones(self.nu, **self.kwargs)
+        self.Rlqr = torch.ones(self.nu, **self.kwargs)*0.00000001
         if nx == 6:
-            self.saved_ckpt_name = "cgac_checkpoint_cartpole2link_swingupeplen300maxu100_initrew1finrew5"
+            # self.saved_ckpt_name = "cgac_checkpoint_cartpole2link_swingupeplen300maxu100_initrew1finrew5"
+            self.saved_ckpt_name = "cgac_checkpoint_cartpole2link_swingupeplen300dt005maxu250_initrew1finrew5_1"
         elif nx == 4:
             self.saved_ckpt_name = "cgac_checkpoint_cartpole1link_swingupeplen200maxu100_initrew20finrew08"
         
@@ -146,6 +147,7 @@ class CartpoleEnv(torch.nn.Module):
             tuple: A tuple containing the new state, reward, done flag, and info dict.
         """
         # action = torch.tensor([action], dtype=torch.float64)
+        # print("action:", action[0].norm().item(), "state:", self.state[0].norm().item())
         action = torch.tensor(action, **self.kwargs)
         action = self.action_clip(action)
         # ipdb.set_trace()
@@ -157,6 +159,8 @@ class CartpoleEnv(torch.nn.Module):
         reward = self.get_reward(
             action
         )  # Define your reward function based on the state and action
+        # print("action:", action[0].norm().item(), "state:", self.state[0].norm().item())
+        # ipdb.set_trace()
         return self.state, reward, done, {}
 
     def is_done(self):
@@ -201,7 +205,7 @@ class CartpoleEnv(torch.nn.Module):
         pass
 
 class Cartpole2linkEnv(CartpoleEnv):
-    def __init__(self, dt=0.03, stabilization=False, kwargs=None):
+    def __init__(self, dt=0.05, stabilization=False, kwargs=None):
         super().__init__(nx=6, dt=dt, stabilization=stabilization, kwargs=kwargs)
     
     def reset(self, bsz=None):
@@ -231,6 +235,8 @@ class Cartpole2linkEnv(CartpoleEnv):
                 np.random.uniform(low=-high, high=high), **self.kwargs
             ))
 
+        self.state = torch.tensor(
+                [0.0, np.pi / 2 + 0.01, 0.0, 0.0, 0.0, 0.0], **self.kwargs)[None].repeat(bsz, 1)
         self.num_successes = 0
         self.num_steps = 0
         return self.state
@@ -253,7 +259,7 @@ class Cartpole2linkEnv(CartpoleEnv):
         # if (self.num_successes >= 15).any():
         #     print(f'{(self.num_successes >= 15).sum().item()} successes')
         # return torch.logical_or(torch.abs(x) > 20, self.num_steps >= self.T)
-        return self.num_successes >= 15 or self.num_steps >= self.T
+        return self.num_successes >= 10 or self.num_steps >= self.T
 
     def get_reward(self, action):
         state = self.state

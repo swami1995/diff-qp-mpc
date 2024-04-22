@@ -17,7 +17,10 @@ class PendulumDynamics(torch.nn.Module):
         """
         Computes the next state given the current state and action
         """
-        
+        state = self.semi_implicit_euler(state, action)
+        return state
+    
+    def semi_implicit_euler(self, state, action):
         # semi-implicit euler integration
         thdot, thdotdot = self.dynamics(state, action)
         newthdot = thdot + thdotdot * self.dt
@@ -26,7 +29,7 @@ class PendulumDynamics(torch.nn.Module):
         # state = torch.stack((angle_normalize(newth), newthdot), dim=-1)
         state = torch.stack((newth, newthdot), dim=-1)
         return state
-    
+
     def dynamics(self, state, action):
         """
         Computes pendulum cont. dynamics with external torque input
@@ -62,10 +65,28 @@ class Spaces:
     def sample(self):
         return np.random.uniform(self.low, self.high)
 
+class PendulumDynamics_jac(PendulumDynamics):
+    def __init__(self,):
+        super(PendulumDynamics_jac, self).__init__()
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.identity = torch.eye(self.nx).to(device)
+    
+    def forward(self, x, u):
+        ## use vmap to compute jacobian using autograd.grad
+        x = x.unsqueeze(-2).repeat(1, self.nx, 1)
+        u = u.unsqueeze(-2).repeat(1, self.nx, 1)
+        out_rk4 = self.semi_implicit_euler(x, u)
+        out = out_rk4*self.identity[None]
+        jac_out = torch.autograd.grad([out.sum()], [x, u])
+        
+        return out_rk4[:, 0], jac_out
 
 class PendulumEnv:
     def __init__(self, stabilization=False):
         self.dynamics = PendulumDynamics()
+        self.dynamics_derivatives = PendulumDynamics_jac()
+        self.dynamics = torch.jit.script(self.dynamics)
+        self.dynamics_derivatives = torch.jit.script(self.dynamics_derivatives)
         self.spec_id = 'Pendulum-v0{}'.format('-stabilize' if stabilization else '')
         self.state = None  # Will be initialized in reset
         self.nx = self.dynamics.nx
@@ -167,6 +188,17 @@ class IntegratorDynamics(torch.nn.Module):
         self.nu = nu
         self.np = int(self.nx / 2)
 
+
+    def semi_implicit_euler(self, state, action):
+        this_shape = state.shape
+        pos = state[..., :self.np]
+        vel = state[..., self.np:]
+        # ipdb.set_trace()
+        vel_n = vel + action * self.dt
+        pos_n = pos + vel_n * self.dt
+        state = torch.stack((pos_n, vel_n), dim=-1)
+        return state.reshape(this_shape)
+
     def forward(self, state, action):
         """
         Computes the next state given the current state and action
@@ -177,17 +209,27 @@ class IntegratorDynamics(torch.nn.Module):
             torch.Tensor bsz x nx: The next state.
         """
         # semi-implicit euler integration
-        this_shape = state.shape
-        pos = state[..., :self.np]
-        vel = state[..., self.np:]
-        # ipdb.set_trace()
-        vel_n = vel + action * self.dt
-        pos_n = pos + vel_n * self.dt
-        state = torch.stack((pos_n, vel_n), dim=-1)
-        return state.reshape(this_shape)
-    
+        return self.semi_implicit_euler(state, action)
+
     def action_clip(self, action):
         return torch.clamp(action, -self.max_acc, self.max_acc)
+
+
+class IntegratorDynamics_jac(IntegratorDynamics):
+    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
+        super(IntegratorDynamics_jac, self).__init__( nx, nu, dt, max_acc, max_vel)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.identity = torch.eye(self.nx).to(device)
+    
+    def forward(self, x, u):
+        ## use vmap to compute jacobian using autograd.grad
+        x = x.unsqueeze(-2).repeat(1, self.nx, 1)
+        u = u.unsqueeze(-2).repeat(1, self.nx, 1)
+        out_rk4 = self.semi_implicit_euler(x, u)
+        out = out_rk4*self.identity[None]
+        jac_out = torch.autograd.grad([out.sum()], [x, u])
+        
+        return out_rk4[:, 0], jac_out
 
 
 class Spaces:
@@ -203,6 +245,9 @@ class Spaces:
 class IntegratorEnv:
     def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
         self.dynamics = IntegratorDynamics(nx, nu, dt, max_acc, max_vel)
+        self.dynamics_derivatives = IntegratorDynamics_jac(nx, nu, dt, max_acc, max_vel)
+        self.dynamics = torch.jit.script(self.dynamics)
+        self.dynamics_derivatives = torch.jit.script(self.dynamics_derivatives)
         self.spec_id = 'Integrator-v0'
         self.state = None  # Will be initialized in reset
         self.nx = self.dynamics.nx
@@ -217,6 +262,9 @@ class IntegratorEnv:
         low = np.concatenate((np.full(self.np, -np.inf), np.full(self.np, -self.max_vel)))
         self.observation_space = Spaces(low, -low, (self.nx, 2))
         self.action_space = Spaces(-np.full(self.nu, self.max_acc), np.full(self.nu, self.max_acc), (self.nu, 2))
+
+        self.Qlqr = torch.Tensor([10.0, 1.00])
+        self.Rlqr = torch.Tensor([0.00001])
 
     def seed(self, seed):
         """

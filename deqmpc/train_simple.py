@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
-    parser.add_argument("--hdim", type=int, default=512)
+    parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", type=str, default=None)
@@ -73,7 +73,8 @@ def main():
         gt_trajs = get_gt_data(args, env, "sac")
     elif args.env == "integrator":
         env = IntegratorEnv()
-        gt_trajs = get_gt_data(args, env, "sac")
+        gt_trajs = get_gt_data(args, env, "mpc")
+        # ipdb.set_trace()
     elif args.env == "rexquadrotor":
         env = RexQuadrotor(bsz=args.bsz, device=args.device)
         gt_trajs = get_gt_data(args, env, "cgac")
@@ -87,7 +88,7 @@ def main():
         env = CartpoleEnv(nx=4, dt=0.05, stabilization=False, kwargs=kwargs)
         gt_trajs = get_gt_data(args, env, "cgac")
     elif args.env == "cartpole2link":
-        env = CartpoleEnv(nx=6, dt=0.03, stabilization=False, kwargs=kwargs)
+        env = CartpoleEnv(nx=6, dt=0.05, stabilization=False, kwargs=kwargs)
         gt_trajs = get_gt_data(args, env, "cgac")
 
     # gt_trajs = get_gt_data(args, env, "mpc")
@@ -113,6 +114,8 @@ def main():
     losses_end = []
     time_diffs = []
     dyn_resids = []
+    losses_var = [[] for _ in range(args.deq_iter)]
+    losses_iter = [[] for _ in range(args.deq_iter)]
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -149,9 +152,21 @@ def main():
                         * traj_sample["mask"][:, :, None]
                     )
                     .sum(dim=-1)
-                    .mean()
                 )
+                loss_j_proxy = (
+                    torch.abs(
+                        (
+                            nominal_states_net - traj_sample["state"]
+                        )
+                        * traj_sample["mask"][:, :, None]
+                    )
+                    .sum(dim=-1)
+                )
+                losses_var[j].append(torch.var(loss_j_proxy).item())
+                loss_j = loss_j.mean()
                 loss += loss_j
+                losses_iter[j].append(loss_j_proxy.mean().item())
+                
                 # gt_state = traj_sample["state"]
                 # gt_mask = traj_sample["mask"]
                 # loss_print = torch.abs((nominal_states.transpose(0, 1) - gt_state) * gt_mask[:, :, None]).mean(dim=0)
@@ -215,11 +230,16 @@ def main():
                 torch.save(policy.state_dict(), "./model/" + args.name)
                 writer.add_scalar("losses/loss_avg", np.mean(losses) / args.deq_iter, i)
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
+                writer.add_scalar("losses/time", np.mean(time_diffs), i)
+                [writer.add_scalar(f"losses/loss{j}", np.mean(losses_iter[j]), i) for j in range(args.deq_iter)]
+                [writer.add_scalar(f"losses_var/var{j}", np.mean(losses_var[j]), i) for j in range(args.deq_iter)]
 
             
             losses = []
             losses_end = []
             time_diffs = []
+            losses_iter = [[] for _ in range(args.deq_iter)]
+            losses_var = [[] for _ in range(args.deq_iter)]
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)   
 

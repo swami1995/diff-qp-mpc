@@ -369,6 +369,7 @@ class NewtonAL(torch.autograd.Function):
         threshold,
         eps,
         ls,
+        verbose
     ):
         bsz, T, n_elem = xi.size()  # (bsz, T, xd+ud)
         dev = xi.device
@@ -388,7 +389,8 @@ class NewtonAL(torch.autograd.Function):
         nstep = 0
         max_newton_steps = 4  # maximum number of Newton steps for each AL step
         old_dyn_res = torch.norm(dyn_res).item()
-        # print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), merit.mean().item())
+        if verbose:
+            print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), merit.mean().item())
         stepsz = 1
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
@@ -420,7 +422,7 @@ class NewtonAL(torch.autograd.Function):
 
             if ls:
                 x_est, new_merit, stepsz, status = line_search_newton(
-                    update, x_est, meritfnQ, merit
+                    update, x_est, meritfnQ, merit, x0
                 )
             else:
                 x_est = x_est + update
@@ -433,7 +435,8 @@ class NewtonAL(torch.autograd.Function):
             cost = cost_fnQ(x_est)
             dyn_res = dyn_fn(x_est)
             new_dyn_res = torch.norm(dyn_res).item()
-            # print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
+            if verbose:
+                print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
             ## exit creteria
             # if (
@@ -488,11 +491,13 @@ class NewtonAL(torch.autograd.Function):
             None,
             None,
             None,
+            None
         )
 
 
-def line_search_newton(update, x_est, meritfnQ, merit):
+def line_search_newton(update, x_est, meritfnQ, merit, x0):
     n_ls = 20  #TODO: make this a parameter
+    xsize = x0.shape[-1]
     stepsz = torch.ones(x_est.shape[0], device=x_est.device) * 2
     mask = torch.ones(x_est.shape[0], device=x_est.device)
     stepszs = 2 ** (
@@ -502,6 +507,7 @@ def line_search_newton(update, x_est, meritfnQ, merit):
         .expand(n_ls, x_est.shape[0])
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
+    x_next[:, :, 0, :xsize] = x0[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
     # new2_objective = torch.vmap(meritfnQ)(x_next)
     new2_objective = meritfnQ(x_next).reshape(n_ls, -1)

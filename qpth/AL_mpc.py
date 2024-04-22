@@ -235,12 +235,12 @@ class MPC(Module):
                 x = x.unsqueeze(0).expand(n_batch, self.T, -1).clone()
         x = x.type_as(x0.data)
 
-        if self.verbose > 0:
-            print('Initial mean(cost): {:.4e}'.format(
-                torch.mean(util.get_cost(
-                    self.T, u, cost, dx, x_init=self.x_init
-                )).item()
-            ))
+        # if self.verbose > 0:
+        #     print('Initial mean(cost): {:.4e}'.format(
+        #         torch.mean(util.get_cost(
+        #             self.T, u, cost, dx, x_init=self.x_init
+        #         )).item()
+        #     ))
 
         best = None
         if self.diag_cost:
@@ -290,7 +290,7 @@ class MPC(Module):
             merit_fn = lambda xi, Qi, qi, yi, x0i=x0, rhoi=rho, grad=False : self.merit_function(xi, Qi, qi, dx, x0i, yi, rhoi, grad)
             merit_grad_hess = lambda xi, Q, q, lamda : self.merit_grad_hess(xi, Q, q, dx, dx_jac, x0, lamda, rho)
             
-            out = al_utils.NewtonAL.apply(merit_fn, dyn_fn, cost_fn, merit_grad_hess, xu, x0, lamda, rho, Q, q, 1e-3, 1e-6, True)
+            out = al_utils.NewtonAL.apply(merit_fn, dyn_fn, cost_fn, merit_grad_hess, xu, x0, lamda, rho, Q, q, 1e-3, 1e-6, True, self.verbose)
             x_new, u_new = out[0][:,:,:self.n_state], out[0][:,:,self.n_state:]
             # end2 = time.time()
             status = out[1]
@@ -301,16 +301,20 @@ class MPC(Module):
                 lamda = torch.cat([lamda[:, :self.neq], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
                 cost_res = self.compute_cost(out[0], Q, q)
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
+                if self.verbose > 0:
+                    print("iter :", i, dyn_res_clamp.mean().item(), cost_res.mean().item(), rho.mean().item())
                 # print("iter :", i, dyn_res_clamp.mean().item(), cost_res.mean().item(), rho.mean().item())
                 
-                # rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
-                rho = rho * 10
+                rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
+                # rho = rho * 10
                 cost_lam_hist[0].append(cost_res)
                 cost_lam_hist[1].append(lamda)
                 cost_lam_hist[2].append(rho)
             # end3 = time.time()
             # print("outer time: ", end1 - start1, end2 - start2, end3 - end2)
-        # ipdb.set_trace()
+        
+        # if self.verbose > 0:
+        #     ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
         self.rho_prev = rho
