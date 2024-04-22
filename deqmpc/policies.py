@@ -215,15 +215,52 @@ class DEQLayer(torch.nn.Module):
         """
         xinp = self.input_layer(x)
         z_out = self.deq_layer(xinp, z)
-        dx_ref = self.output_layer(z_out)
-        if self.out_type == 0:
+        
+        if self.out_type == 1:
+            # only state prediction
+            dx_ref = self.output_layer(z_out)
             dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
-        else:
+            vel_ref = dx_ref[..., self.nq:]
+            dx_ref = dx_ref[..., :self.nq] * self.dt
+            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
+            return x_ref, z_out
+        elif self.out_type == 2:
+            # state estimate + state prediction
+            dx_ref = self.output_layer(z_out)
             dx_ref = dx_ref.view(-1, self.T, self.nx)
-        vel_ref = dx_ref[..., self.nq:]
-        dx_ref = dx_ref[..., :self.nq] * self.dt
-        x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
-        return x_ref, z_out
+            vel_ref = dx_ref[..., self.nq:]
+            dx_ref = dx_ref[..., :self.nq] * self.dt
+            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
+            return x_ref, z_out
+        elif self.out_type == 3:
+            # state and control prediction
+            dxu_ref = self.output_layer(z_out)
+            dxu_ref = dxu_ref.view(-1, self.T - 1, self.nx + self.nu)
+            dx_ref = dxu_ref[..., :self.nx]
+            u_ref = dxu_ref[..., self.nx:]
+            vel_ref = dx_ref[..., self.nq:]
+            dx_ref = dx_ref[..., :self.nq] * self.dt
+            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
+            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
+            return xu_ref, z_out
+        elif self.out_type == 4:
+            # state estimate + state and control prediction
+            dxu_ref = self.output_layer(z_out)
+            dxu_ref = dxu_ref.view(-1, self.T, self.nx + self.nu)    
+            dx_ref = dxu_ref[..., :self.nx]    
+            u_ref = dxu_ref[..., self.nx:]    
+            vel_ref = dx_ref[..., self.nq:]
+            dx_ref = dx_ref[..., :self.nq] * self.dt
+            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
+            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
+            return xu_ref, z_out
+        elif self.out_type == 0:
+            # only control prediction
+            u_ref = self.output_layer(z_out)
+            u_ref = u_ref.view(-1, self.T, self.nu)
+            return u_ref, z_out
+        else: 
+            NotImplementedError
 
     def input_layer(self, x):
         if self.layer_type == "mlp":
@@ -232,7 +269,7 @@ class DEQLayer(torch.nn.Module):
             t = self.time_emb.unsqueeze(0).repeat(x.shape[0], 1, 1)
             x = x.reshape(-1, self.T, self.nx)
             x_emb = self.node_encoder(x)
-            x0_emb = self.x0_encoder(x[:, 0]).unsqueeze(1).repeat(1, self.T, 1)
+            x0_emb = self.x0_encoder(x[:, 0]).unsqueeze(1).repeat(1, self.T, 1)  #TODO switch case for out_type
             inp = torch.cat([x_emb, x0_emb, t], dim=-1)
             inp = self.input_encoder(inp)
         elif self.layer_type == "gat":
@@ -279,7 +316,17 @@ class DEQLayer(torch.nn.Module):
             NotImplementedError
 
     def setup_input_layer(self):
-        self.in_dim = self.nx + self.nx * (self.T - 1)
+        if self.out_type == 1 or self.out_type == 2:
+            # only state prediction, having current estimate or not
+            self.in_dim = self.nx + self.nx * (self.T - 1)
+        elif self.out_type == 3 or self.out_type == 4:
+            # state and control prediction, having current estimate or not
+            self.in_dim = self.nx + self.nx * (self.T - 1) + self.nu * self.T
+        elif self.out_type == 0:
+            # only control prediction
+            self.in_dim = self.nu * self.T
+        else:
+            NotImplementedError
         if self.layer_type == "mlp":
             # ipdb.set_trace()
             self.inp_layer = torch.nn.Sequential(
@@ -354,9 +401,9 @@ class DEQLayer(torch.nn.Module):
             NotImplementedError
 
     def setup_output_layer(self):
-        if self.out_type == 0:
+        if self.out_type == 1:
             self.out_dim = self.nx * (self.T-1)
-        elif self.out_type == 1:
+        elif self.out_type == 2:
             self.out_dim = self.nx + self.nx * (self.T-1)
         else:
             NotImplementedError
@@ -424,11 +471,11 @@ class DEQMPCPolicy(torch.nn.Module):
             # output of DEQ layer is state prediction of T-1 steps
             
             # estimate current state or not
-            if (self.model.out_type == 0):
+            if (self.model.out_type == 1):
                 # directly append the current state input
                 x_ref = x_ref.view(-1, self.T-1, self.nx)
                 x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
-            elif (self.model.out_type == 1):
+            elif (self.model.out_type == 2):
                 x_ref = x_ref.view(-1, self.T, self.nx)
             # nominal_states = x_ref.transpose(0, 1)
             # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
