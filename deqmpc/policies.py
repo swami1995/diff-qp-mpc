@@ -11,7 +11,11 @@ import torch.nn.functional as F
 # from policy_utils import SinusoidalPosEmb
 import time
 
-# POSSIBLE OUTPUT TYPES OF THE NETWORK
+# POSSIBLE OUTPUT TYPES OF DEQ LAYER
+# 0: state prediction x[1]->x[T-2]
+# 1: state estimate + state prediction x[0]->x[T-1]
+
+# POSSIBLE OUTPUT TYPES OF THE POLICY
 # 0: horizon action
 # 1: horizon state
 # 2: horizon state + action
@@ -212,10 +216,10 @@ class DEQLayer(torch.nn.Module):
         xinp = self.input_layer(x)
         z_out = self.deq_layer(xinp, z)
         dx_ref = self.output_layer(z_out)
-        try:
+        if self.out_type == 0:
             dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
-        except:
-            ipdb.set_trace()
+        else:
+            dx_ref = dx_ref.view(-1, self.T, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
         x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
@@ -275,10 +279,11 @@ class DEQLayer(torch.nn.Module):
             NotImplementedError
 
     def setup_input_layer(self):
+        self.in_dim = self.nx + self.nx * (self.T - 1)
         if self.layer_type == "mlp":
             # ipdb.set_trace()
             self.inp_layer = torch.nn.Sequential(
-                torch.nn.Linear(self.nx + self.nx * (self.T - 1), self.hdim),
+                torch.nn.Linear(self.in_dim, self.hdim),
                 torch.nn.LayerNorm(self.hdim),
                 # torch.nn.ReLU()
             )
@@ -350,13 +355,11 @@ class DEQLayer(torch.nn.Module):
 
     def setup_output_layer(self):
         if self.out_type == 0:
-            self.out_dim = self.nu * (self.T-1)
-        elif self.out_type == 1:
             self.out_dim = self.nx * (self.T-1)
-        elif self.out_type == 2:
-            self.out_dim = (self.nx + self.nu) * (self.T-1)
-        elif self.out_type == 3:
-            self.out_dim = (self.nq) * (self.T-1)
+        elif self.out_type == 1:
+            self.out_dim = self.nx + self.nx * (self.T-1)
+        else:
+            NotImplementedError
 
         if self.layer_type == "mlp":
             self.out_layer = torch.nn.Sequential(
@@ -386,7 +389,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.deq_iter = args.deq_iter
         self.model = DEQLayer(args, env)
         self.model.to(self.device)
-        self.out_type = self.model.out_type # output type of DEQ model
+        self.out_type = args.policy_out_type  # output type of DEQ model
         self.tracking_mpc = Tracking_MPC(args, env)
         self.mpc_time = []
         self.network_time = []
@@ -418,11 +421,15 @@ class DEQMPCPolicy(torch.nn.Module):
             # start = time.time()
             # x_ref = (x_ref.view(bsz, self.T, -1)*mask[:, :, None]).view(bsz, -1)
             x_ref, z = self.model(x_ref, z)
-            x_ref = x_ref.view(-1, self.T-1, self.nx)
-            try:
+            # output of DEQ layer is state prediction of T-1 steps
+            
+            # estimate current state or not
+            if (self.model.out_type == 0):
+                # directly append the current state input
+                x_ref = x_ref.view(-1, self.T-1, self.nx)
                 x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
-            except:
-                ipdb.set_trace()
+            elif (self.model.out_type == 1):
+                x_ref = x_ref.view(-1, self.T, self.nx)
             # nominal_states = x_ref.transpose(0, 1)
             # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # trajs.append((nominal_states, nominal_actions))
@@ -430,14 +437,15 @@ class DEQMPCPolicy(torch.nn.Module):
 
             # ipdb.set_trace()
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
+            # concatenate reference states and actions for the MPC
             xu_ref = torch.cat(
-                [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
-            )
+                [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1)
             x_ref_tr = x_ref
             u_ref_tr = torch.zeros_like(
                 x_ref_tr[..., :self.nu])  # u_gt.transpose(0, 1)
             nominal_states = x_ref
-            nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
+            nominal_actions = torch.zeros_like(
+                nominal_states[..., :self.nu])  # nominal actions are zeros now
             # torch.cuda.synchronize()
             # end = time.time()
             # self.network_time.append(end-start)
@@ -454,7 +462,9 @@ class DEQMPCPolicy(torch.nn.Module):
             nominal_states_net = x_ref  # .transpose(0, 1)
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
             # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
-            x_ref = nominal_states.reshape(bsz, -1).detach().clone()
+            x_ref = nominal_states.reshape(
+                bsz, -1).detach().clone()  # solution feeds DEQ again
+
         # print(f"Network time: {nq.mean(self.network_time)} MPC time: {nq.mean(self.mpc_time)}")
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
         ), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
@@ -669,7 +679,7 @@ class NNPolicy(torch.nn.Module):
         self.dt = env.dt
         self.device = args.device
         self.hdim = args.hdim
-        self.out_type = args.deq_out_type
+        self.out_type = args.policy_out_type
 
         # define the network layers :
         self.model = torch.nn.Sequential(
@@ -726,28 +736,45 @@ def compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs):
     loss = 0.0
     # supervise each DEQMPC iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss += add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+        # supervise the output of deq only (state prediction of T steps)
+        # hardcode the out_type to 1 because the output of DEQ is just state prediction atm
+        loss += add_loss_based_on_out_type(policy, 1, gt_states,
+                                           gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = add_loss_based_on_out_type(
+        policy, 1, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    return loss, loss_end
+
+
+def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
+    loss = 0.0
+    # supervise each DEQMPC iteration
+    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
+        loss += add_loss_based_on_out_type(policy, policy.out_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = add_loss_based_on_out_type(
+        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     return loss, loss_end
 
 
 def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
     nominal_states, nominal_actions = trajs
-    loss = add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss = add_loss_based_on_out_type(
+        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     loss_end = torch.Tensor([0.0])
     return loss, loss_end
 
-def add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
+
+def add_loss_based_on_out_type(policy, out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
     loss = 0.0
-    if policy.out_type == 0 or policy.out_type == 2:
+    if out_type == 0 or out_type == 2:
         # supervise action
-        loss += torch.abs((nominal_actions - gt_actions)
-                          * gt_mask[:, :, None]).sum(dim=-1).mean()
-    if policy.out_type == 1 or policy.out_type == 2:
+        loss += torch.abs((nominal_actions - gt_actions) *
+                          gt_mask[:, :, None]).sum(dim=-1).mean()
+    if out_type == 1 or out_type == 2:
         # supervise state
         loss += torch.abs((nominal_states - gt_states) *
                           gt_mask[:, :, None]).sum(dim=-1).mean()
-    if policy.out_type == 3:
+    if out_type == 3:
         # supervise configuration
         loss += torch.abs((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
                           gt_mask[:, :, None]).sum(dim=-1).mean()
@@ -756,6 +783,13 @@ def add_loss_based_on_out_type(policy, gt_states, gt_actions, gt_mask, nominal_s
 
 def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args):
     if args.deq:
-        return compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs)
+        # deq or deqmpc
+        if args.en_qp_solve:
+            # full deqmpc
+            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
+        else:
+            # deq -- pretrain
+            return compute_loss_deq(policy.model, gt_states, gt_actions, gt_mask, trajs)
     else:
+        # vanilla behavior cloning
         return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)

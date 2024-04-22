@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--eps", type=float, default=1e-2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=256)
+    parser.add_argument("--bsz", type=int, default=512)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
     parser.add_argument("--hdim", type=int, default=512)
@@ -62,11 +62,12 @@ def main():
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--dtype", type=str, default="double")
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
-    parser.add_argument("--deq_out_type", type=int, default=1)
+    parser.add_argument("--deq_out_type", type=int, default=1)  # previously 0
+    parser.add_argument("--policy_out_type", type=int, default=2)  # previously 2
     # check noise_utils.py for noise_type
     parser.add_argument("--data_noise_type", type=int, default=0)
-    parser.add_argument("--data_noise_std", type=float, default=0.01)
-    parser.add_argument("--data_noise_mean", type=float, default=0.0)
+    parser.add_argument("--data_noise_std", type=float, default=0.05)
+    parser.add_argument("--data_noise_mean", type=float, default=0.2)
 
     args = parser.parse_args()
     seeding(args.seed)
@@ -142,9 +143,9 @@ def main():
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
-        iter_qp_solve = False if (i < 5000 and args.pretrain) else True
+        iter_qp_solve = False if (i < 3000 and args.pretrain) else True
         # warm start only after 1000 iterations
-        qp_solve = iter_qp_solve and args.qp_solve
+        args.en_qp_solve = iter_qp_solve and args.qp_solve
         lastqp_solve = args.lastqp_solve and iter_qp_solve
 
         gt_states = noise_utils.corrupt_observation(
@@ -157,7 +158,7 @@ def main():
             start = time.time()
 
             trajs, dyn_res = policy(gt_state0, gt_states, gt_actions,
-                                    gt_mask, iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
+                                    gt_mask, iter=i, qp_solve=args.en_qp_solve , lastqp_solve=lastqp_solve)
             end = time.time()
             dyn_resids.append(dyn_res)
         else:
@@ -172,6 +173,8 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
+
+        # Printing
         if i % 100 == 0:
             print("iter: ", i)
             print(

@@ -3,7 +3,6 @@
 ####################
 import torch
 
-
 def corrupt_observation(states, noise_type, noise_std, noise_mean):
     if noise_type == 0:
         # no noise
