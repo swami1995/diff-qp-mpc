@@ -388,8 +388,8 @@ class DEQMPCPolicy(torch.nn.Module):
             # torch.cuda.synchronize()
             # start = time.time()
             # x_ref = (x_ref.view(bsz, self.T, -1)*mask[:, :, None]).view(bsz, -1)
-            # if iter == 000 or iter == 6000:
-            #     self.tracking_mpc.ctrl.verbose = 1
+            if iter == 1000 or iter == 1100 or iter == 1200 or iter== 1300:
+                self.tracking_mpc.ctrl.verbose = 1
             #     ipdb.set_trace()
             x_ref, z = self.model(x_ref, z)
             x_ref = x_ref.view(-1, self.T-1, self.np)
@@ -401,33 +401,39 @@ class DEQMPCPolicy(torch.nn.Module):
             # if iter == 000 or iter == 6000:
             #     self.tracking_mpc.ctrl.verbose = 1
             #     ipdb.set_trace()
-            if iter == 5001 or iter == 5101:
-                self.tracking_mpc.ctrl.verbose = 0
+            # if iter == 5001 or iter == 5101:
+            #     self.tracking_mpc.ctrl.verbose = 0
             # ipdb.set_trace()  
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
+            # x_gt = x_gt[0][None].repeat(bsz, 1, 1)
+            # u_gt = u_gt[0][None].repeat(bsz, 1, 1)
+            # x = x[0][None].repeat(bsz, 1)
             # x_ref = x_gt#
+            u_ref = torch.zeros_like(x_ref[..., :self.nu])
             xu_ref = torch.cat(
-                [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
+                [x_ref, u_ref], dim=-1
             )
             x_ref_tr = x_ref
-            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
+            u_ref_tr = u_ref#torch.zeros_like(x_ref_tr[..., :self.nu])#u_gt.transpose(0, 1)
             nominal_states = x_ref
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
             # end = time.time()
             # self.network_time.append(end-start)
+            # self.tracking_mpc.ctrl.verbose = 1
             if qp_solve:
                 # torch.cuda.synchronize()
                 # start = time.time()
                 # ipdb.set_trace()
+                # self.tracking_mpc.ctrl.al_iter = 2*(i+1)
                 nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
                 
                 # torch.cuda.synchronize()
                 # end = time.time()
                 # self.mpc_time.append(end-start)
-            if iter == 5000 or iter == 5100:
-                self.tracking_mpc.ctrl.verbose = 1
-                ipdb.set_trace()
+            # if iter == 5000 or iter == 5100:
+            #     self.tracking_mpc.ctrl.verbose = 0
+                # ipdb.set_trace()
             nominal_states_net = x_ref#.transpose(0, 1)
             if lastqp_solve:
                 trajs.append((nominal_states_net, nominal_states.detach().clone(), nominal_actions.detach().clone()))
@@ -439,8 +445,10 @@ class DEQMPCPolicy(torch.nn.Module):
             else:
                 x_ref = nominal_states.reshape(bsz, -1).detach().clone()
             # x_ref = x_ref.reshape(bsz, -1).detach().clone()
+        self.tracking_mpc.ctrl.verbose = 0
         # print(f"Network time: {np.mean(self.network_time)} MPC time: {np.mean(self.mpc_time)}")
-        dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), nominal_actions.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
+        dyn_res = (self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), nominal_actions.view(-1, self.nu).double()).view(bsz, self.T, -1)[:, :-1] - x_ref.view(bsz, self.T, -1)[:, 1:]).view(bsz, -1).norm(dim=1).mean().item()
+        # dyn_res = (self.tracking_mpc.dyn(x_gt.view(-1, self.nx).double(), u_gt.view(-1, self.nu).double()).view(bsz, 3, -1)[:, :-1] - x_gt[:, 1:]).view(bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve:

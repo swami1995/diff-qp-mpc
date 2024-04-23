@@ -98,7 +98,7 @@ class PendulumEnv:
         self.action_space = Spaces(-np.array([self.max_torque]), np.array([self.max_torque]), (self.nu, 2)) #np.array([[-2, 2]])                
         self.stabilization = stabilization
         self.Qlqr = torch.Tensor([10.0, 1.00])
-        self.Rlqr = torch.Tensor([0.01])
+        self.Rlqr = torch.Tensor([0.0000000])
 
     def seed(self, seed):
         """

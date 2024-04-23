@@ -127,7 +127,7 @@ def main():
             traj_sample["state"] = unnormalize_states_pendulum(traj_sample["state"])
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = unnormalize_states_cartpole_nlink(traj_sample["state"])
-        iter_qp_solve = False if (i < 5000 and args.pretrain) else True
+        iter_qp_solve = False if (i < 1000 and args.pretrain) else True
         qp_solve = iter_qp_solve and args.qp_solve # warm start only after 1000 iterations
         lastqp_solve = args.lastqp_solve and iter_qp_solve
         if args.deq:
