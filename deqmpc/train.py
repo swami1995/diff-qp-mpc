@@ -20,7 +20,7 @@ import torch
 import torch.autograd as autograd
 
 
-
+torch.set_default_device('cuda')
 # import tensorboard from pytorch
 
 # example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult

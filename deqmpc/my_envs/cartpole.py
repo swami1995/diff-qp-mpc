@@ -9,9 +9,9 @@ import ipdb
 import time
 import sys
 
-# import cartpole1l
-# import cartpole1l_v2
-# import cartpole2l
+import cartpole1l
+import cartpole1l_v2
+import cartpole2l
 
 
 import os

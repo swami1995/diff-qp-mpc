@@ -71,8 +71,6 @@ dependencies:
       - kiwisolver==1.4.5
       - labmaze==1.0.6
       - lit==17.0.6
-      - lltm-cpp==0.0.0
-      - lltm-cuda==0.0.0
       - lxml==5.1.0
       - markdown==3.6
       - markupsafe==2.1.4
