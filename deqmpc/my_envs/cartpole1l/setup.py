@@ -1,8 +1,11 @@
 import os.path as osp
+import os
 from setuptools import setup, find_packages
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 ROOT = osp.dirname(osp.abspath(__file__))
+os.environ["CC"] = "gcc-10"
+os.environ["CXX"] = "g++-10"
 
 setup(
     name='cartpole1l',
