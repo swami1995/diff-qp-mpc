@@ -43,10 +43,10 @@ def main():
     parser.add_argument("--eps", type=float, default=1e-2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=512)
+    parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
-    parser.add_argument("--hdim", type=int, default=512)
+    parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", type=str, default=None)
@@ -143,7 +143,7 @@ def main():
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
-        iter_qp_solve = False if (i < 300 and args.pretrain) else True
+        iter_qp_solve = False if (i < 1000 and args.pretrain) else True
         # warm start only after 1000 iterations
         args.en_qp_solve = iter_qp_solve and args.qp_solve
         lastqp_solve = args.lastqp_solve and iter_qp_solve
@@ -176,7 +176,7 @@ def main():
 
         # Printing
         if i % 100 == 0:
-            print("iter: ", i)
+            print("iter: ", i, "deqmpc" if args.en_qp_solve else "deq")
             print(
                 "grad norm: ",
                 torch.nn.utils.clip_grad_norm_(

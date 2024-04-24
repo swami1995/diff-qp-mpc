@@ -244,7 +244,7 @@ class Spaces:
 
 
 class IntegratorEnv:
-    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=1, max_vel=1):
+    def __init__(self, nx=2, nu=1, dt=0.1, max_acc=2, max_vel=2):
         self.dynamics = IntegratorDynamics(nx, nu, dt, max_acc, max_vel)
         self.dynamics_derivatives = IntegratorDynamics_jac(nx, nu, dt, max_acc, max_vel)
         self.dynamics = torch.jit.script(self.dynamics)
@@ -265,7 +265,7 @@ class IntegratorEnv:
         self.action_space = Spaces(-np.full(self.nu, self.max_acc), np.full(self.nu, self.max_acc), (self.nu, 2))
 
         self.Qlqr = torch.Tensor([10.0, 1.00])
-        self.Rlqr = torch.Tensor([0.000001])
+        self.Rlqr = torch.Tensor([0.01])
 
     def seed(self, seed):
         """

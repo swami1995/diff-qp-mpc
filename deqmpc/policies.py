@@ -453,6 +453,7 @@ class DEQMPCPolicy(torch.nn.Module):
         """
         # initialize trajectory with current state
         x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
+        nominal_actions = torch.zeros((x.shape[0], self.T, self.nu), device=self.device)
         # x_ref = x_gt.view(x_ref.shape)
         z = self.model.init_z(x.shape[0]).to(self.device)
 
@@ -489,13 +490,14 @@ class DEQMPCPolicy(torch.nn.Module):
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
             # concatenate reference states and actions for the MPC
             xu_ref = torch.cat(
-                [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1)
+                [x_ref, nominal_actions], dim=-1)
             x_ref_tr = x_ref
-            u_ref_tr = torch.zeros_like(
-                x_ref_tr[..., :self.nu])  # u_gt.transpose(0, 1)
+            # u_ref_tr = torch.zeros_like(
+            #     x_ref_tr[..., :self.nu])  # u_gt.transpose(0, 1)
+            u_ref_tr = nominal_actions
             nominal_states = x_ref
-            nominal_actions = torch.zeros_like(
-                nominal_states[..., :self.nu])  # nominal actions are zeros now
+            # nominal_actions = torch.zeros_like(
+            #     nominal_states[..., :self.nu])  # nominal actions are zeros now
             # torch.cuda.synchronize()
             # end = time.time()
             # self.network_time.append(end-start)
