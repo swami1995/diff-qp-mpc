@@ -16,7 +16,6 @@ from . import util
 # from .pnqp import pnqp
 # from .lqr_step import LQRStep
 # from .dynamics import CtrlPassthroughDynamics
-from .solvers.pdipm import SparseStructure as ss
 from . import qp
 import ipdb
 
@@ -84,7 +83,7 @@ class MPC(Module):
             These can either be floats or shaped as [T, n_batch, n_ctrl]
         u_init: The initial control sequence, useful for warm-starting:
             [T, n_batch, n_ctrl]
-        lqr_iter: The number of LQR iterations to perform.
+        qp_iter: The number of QP iterations to perform.
         grad_method: The method to compute the Jacobian of the dynamics.
             GradMethods.ANALYTIC: Use a manually-defined Jacobian.
                 + Fast and accurate, use this if possible
@@ -145,7 +144,9 @@ class MPC(Module):
             not_improved_lim=5,
             best_cost_eps=1e-4,
             solver_type='dense',
-            lqr_iter=10,
+            single_qp_solve=False,
+            add_goal_constraint=False,
+            x_goal=None
     ):
         super().__init__()
 
@@ -157,6 +158,7 @@ class MPC(Module):
         self.T = T
         self.u_lower = u_lower
         self.u_upper = u_upper
+        self.x_goal = x_goal
 
         if not isinstance(u_lower, float):
             self.u_lower = util.detach_maybe(self.u_lower)
@@ -185,7 +187,8 @@ class MPC(Module):
         self.slew_rate_penalty = slew_rate_penalty
         self.prev_ctrl = prev_ctrl
         self.solver_type = solver_type
-        self.lqr_iter = lqr_iter
+        self.single_qp_solve = single_qp_solve
+        self.add_goal_constraint = add_goal_constraint
 
         if solver_type == 'dense':
             idxs_1 = torch.arange(n_state + n_ctrl)
@@ -204,47 +207,20 @@ class MPC(Module):
             self.Q_slices_xu0 = torch.cat([idx_0 + (n_state+n_ctrl)*i for i in range(T)], dim=0).view(-1)
 
             self.G_slices_uu1 = torch.cat([torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(i) for i in range(T)], dim=0).view(-1)
-            self.G_slices_uu0 = torch.cat([torch.arange(n_ctrl) + (n_ctrl)*i for i in range(T)], dim=0).view(-1)
-        elif solver_type == 'sparse':            
-            Qrw_ptr = torch.arange(0, (n_state+n_ctrl)*(T)+1)
-            Qcol_ind = torch.arange(0, (n_state+n_ctrl)*(T))
-            Acol_ind = []
-            Arw_ptr = [0]
-            
-            for i in range(n_state*(T-1)):
-                i_ = i // n_state
-                j = i % n_state
-                Acol_ind.append(torch.arange(n_state + n_ctrl) + (n_state+n_ctrl)*(i_))
-                Acol_ind.append(torch.Tensor([j]).long() + (n_state+n_ctrl)*(i_+1))
-                Arw_ptr.append(Acol_ind[-2].shape[0] + Acol_ind[-1].shape[0] + Arw_ptr[-1])
-            Acol_ind.append(torch.arange(n_state))
-            Arw_ptr += list(Arw_ptr[-1] + np.arange(n_state) + 1)
-            # ipdb.set_trace()
-            Arw_ptr = torch.Tensor(Arw_ptr).long()
-            Acol_ind = torch.cat(Acol_ind, dim=0)
-            
-            if u_upper is None:
-                Grw_ptr = torch.arange(0, n_ctrl+1)
-                Gcol_ind = torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(T-1)
-            else:
-                Grw_ptr = torch.arange(0, n_ctrl*(T)*2+1)
-                Gcol_ind = torch.cat([torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(i) for i in range(T)], dim=0).view(-1)
-                Gcol_ind = torch.cat([Gcol_ind, Gcol_ind], dim=0)
-                # Gcol_ind = torch.arange(n_ctrl) + n_state + (n_state+n_ctrl)*(T-1)
-
-            self.Qi = ss.SparseStructure(Qrw_ptr, Qcol_ind)
-            self.Ai = ss.SparseStructure(Arw_ptr, Acol_ind, value=None, num_rows=n_state*T, num_cols=(n_state+n_ctrl)*T)
-            self.Gi = ss.SparseStructure(Grw_ptr, Gcol_ind)
-            self.QP = qp.SparseQPFunction(self.Qi, self.Gi, self.Ai, bsz=n_batch)
+            self.G_slices_uu0 = torch.cat([torch.arange(n_ctrl) + (n_ctrl)*i for i in range(T)], dim=0).view(-1)         
         # return self.Qi, self.Gi, self.Ai
 
-    def forward(self, x0, cost, dx):
+    def forward(self, x0, cost, dx, dx_jac, dx_true=None):
         # QuadCost.C: [T, n_batch, n_tau, n_tau]
         # QuadCost.c: [T, n_batch, n_tau]
+        if dx_true is None:
+            self.dx_true = dx
+        else:
+            self.dx_true = dx_true
         assert isinstance(cost, QuadCost) or \
             isinstance(cost, Module) or isinstance(cost, Function)
-        assert isinstance(dx, LinDx) or \
-            isinstance(dx, Module) or isinstance(dx, Function)
+        # assert isinstance(dx, LinDx) or \
+        #     isinstance(dx, Module) or isinstance(dx, Function)
 
         # TODO: Clean up inferences, expansions, and assumptions made here.
         if self.n_batch is not None:
@@ -282,6 +258,7 @@ class MPC(Module):
                 sys.exit(-1)
             cost = QuadCost(C, c)
 
+        # ipdb.set_trace()
         assert x0.ndimension() == 2 and x0.size(0) == n_batch
 
         if self.u_init is None:
@@ -293,7 +270,9 @@ class MPC(Module):
         u = u.type_as(x0.data)
 
         if self.x_init is None:
-            x = torch.zeros(self.T, n_batch, self.n_state).type_as(x0.data)
+            # x = torch.zeros(self.T, n_batch, self.n_state).type_as(x0.data)
+            x = self.rollout(x0, u, dx)#[:-1]
+            # ipdb.set_trace()
         else:
             x = self.x_init
             if x.ndimension() == 2:
@@ -303,52 +282,83 @@ class MPC(Module):
         if self.verbose > 0:
             print('Initial mean(cost): {:.4e}'.format(
                 torch.mean(util.get_cost(
-                    self.T, u, cost, dx, x_init=x_init
+                    self.T, u, cost, dx, x_init=self.x_init
                 )).item()
             ))
 
         best = None
         # ipdb.set_trace()
-        # x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
-        x, u, cost_total = self.solve_nonlin(x, u, dx, x0, cost)
+        if self.single_qp_solve:
+            x, u, cost_total = self.single_qp_ls(x, u, dx, dx_jac, x0, cost)
+        else:
+            x, u, cost_total = self.solve_nonlin(x, u, dx, dx_jac, x0, cost)
         
         return (x, u)
     
-    def single_qp(self, x, u, dx, x0, cost):
+    def single_qp(self, x, u, dx, dx_jac, x0, cost):
         if isinstance(dx, LinDx):
             F, f = dx.F, dx.f
             if f is None:
                 f = torch.zeros((self.T-1, self.n_batch, self.n_state)).to(x0)
         else:
+            # Linearize the dynamics around the current state and action.
             F, f = self.linearize_dynamics(
-                x, util.detach_maybe(u), dx, diff=False)
-        
+                x, util.detach_maybe(u), dx, dx_jac, diff=False)
 
         # ipdb.set_trace()
+        dyn_res_lam = lambda x: self.dyn_res(x, self.dx_true, x0)
         if self.solver_type == 'dense':
             Q, q = self.compute_Qq_dense(cost.C, cost.c)
             A, b = self.compute_Ab_dense(F, f, x0)
             G, h = self.compute_Gh_dense(x0)
             # xhats_qpf = qp.QPFunction()(Q, q, G, h, A, b)
-            xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b)
-        else:
-            Qv, q = self.compute_Qq_sparse(cost.C, cost.c)
-            Av, b = self.compute_Ab_sparse(F, f, x0)
-            Gv, h = self.compute_Gh_sparse(x0)
-            xhats_qpf = self.QP(Qv, q, Gv, h, Av, b)
+            # ipdb.set_trace()
+            xhats_qpf = qp.DenseQPFunction()(Q, q, G, h, A, b, dyn_res_lam)
         xhats_qpf = xhats_qpf.reshape(self.n_batch, self.T, -1)
-        x = xhats_qpf[:, :, :self.n_state].transpose(0,1)
-        u = xhats_qpf[:, :, self.n_state:].transpose(0,1)
+        x_hat = xhats_qpf[:, :, :self.n_state].transpose(0,1)
+        u_hat = xhats_qpf[:, :, self.n_state:].transpose(0,1)
         cost_total = self.compute_cost(xhats_qpf, cost)
-        return x, u, cost_total
+        delta_x = x_hat - x
+        delta_u = u_hat - u
+        # ipdb.set_trace()
+        return delta_x, delta_u, cost_total
 
-    def solve_nonlin(self, x, u, dx, x0, cost):
+    def dyn_res(self, x, dx, x0):
+        " split x into state and control and compute dynamics residual using dx"
+        # ipdb.set_trace()
+        x = x.reshape(self.n_batch, self.T, self.n_state+self.n_ctrl)
+        x, u = x[:,:,:self.n_state], x[:,:,self.n_state:]
+        if isinstance(dx, LinDx):
+            x_next = (dx.F.permute(1,0,2,3)*torch.cat((x, u), dim=2)[:,:-1,None,:]).sum(dim=-1) + dx.f.permute(1,0,2)
+            # x_next = x_next[:,:-1]
+        else:
+            # x_next = dx(x, u)[:,:-1]
+            x_next = dx(x.reshape(-1, self.n_state), u.reshape(-1, self.n_ctrl)).reshape(self.n_batch, self.T, self.n_state)[:,:-1]
+            
+        res = (x_next - x[:,1:,:]).reshape(self.n_batch, -1)
+        res_init = (x[:,0,:] - x0).reshape(self.n_batch, -1)
+        if self.add_goal_constraint:
+            res_goal = (x[:,-1,:] - self.x_goal).reshape(self.n_batch, -1)
+            res = torch.cat((res, res_init, res_goal), dim=1)
+        else:
+            res = torch.cat((res, res_init), dim=1)
+        return res
+
+
+    def solve_nonlin(self, x, u, dx, dx_jac, x0, cost):
         best = None
         n_not_improved = 0
+        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        cost_total = self.compute_cost(xhats_qpf, cost)
+        # ipdb.set_trace()
+        # print("init", cost_total.mean().item())
         with torch.no_grad():
-            for i in range(self.lqr_iter):
+            for i in range(self.qp_iter):
                 u_prev = u.clone()
-                x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
+                delta_x, delta_u, _ = self.single_qp(x, u, dx, dx_jac, x0, cost)
+                # ipdb.set_trace()
+
+                x, u, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
                 full_du_norm = (u - u_prev).norm()
 
 
@@ -377,16 +387,53 @@ class MPC(Module):
                 #         ('mean(alphas)', mean_alphas.item(), '{:.2e}'),
                 #         ('total_qp_iters', n_total_qp_iter),
                 #     ))
-                print(i, cost_total.mean().item(), full_du_norm)
+                # print(i, cost_total.mean().item(), full_du_norm)
 
                 if full_du_norm < self.eps or \
                 n_not_improved > self.not_improved_lim:
                     break
         
         x, u = torch.cat(best['x'], dim=1), torch.cat(best['u'], dim=1)
-        x, u, cost_total = self.single_qp(x, u, dx, x0, cost)
+        delta_x, delta_u, _ = self.single_qp(x, u, dx, dx_jac, x0, cost)
+        with torch.no_grad():
+            _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
+        x = x + delta_x * alpha
+        u = u + delta_u * alpha        
         return x, u, cost_total
 
+    def single_qp_ls(self, x, u, dx, dx_jac, x0, cost):
+        best = None
+        n_not_improved = 0
+        xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
+        cost_total = self.compute_cost(xhats_qpf, cost)
+        delta_x, delta_u, _ = self.single_qp(x, u, dx, dx_jac, x0, cost)
+        with torch.no_grad():
+            _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
+        x = x + delta_x * alpha
+        u = u + delta_u * alpha
+        return x, u, cost_total
+
+
+    def line_search(self, x, u, delta_x, delta_u, dx, x0, cost):
+        # ipdb.set_trace()
+        alpha_shape = [1, self.n_batch, 1]
+        alpha = torch.ones(alpha_shape).to(x0)
+        cost_total = self.compute_cost(torch.cat((x, u), dim=2).transpose(0,1), cost)
+        for j in range(self.max_linesearch_iter):
+            # x_new = x + delta_x * alpha
+            u_new = u + delta_u * alpha
+            x_new = self.rollout(x0, u_new, dx)#[:-1]
+            xhats_qpf = torch.cat((x_new, u_new), dim=2).transpose(0,1)
+            cost_total_new = self.compute_cost(xhats_qpf, cost)
+            if (cost_total_new < cost_total).all():
+                break
+            else:
+                mask = (cost_total_new >= cost_total).float()[None,:,None]
+                alpha = alpha * self.linesearch_decay * mask + (1-mask) * alpha
+            if j > self.max_linesearch_iter:
+                print("line search failed")
+                ipdb.set_trace()
+        return x_new, u_new, alpha, cost_total_new
 
     def approximate_cost(self, x, u, Cf, diff=True):
         with torch.enable_grad():
@@ -431,7 +478,7 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             return hessians, grads, costs
 
     # @profile
-    def linearize_dynamics(self, x, u, dynamics, diff):
+    def linearize_dynamics(self, x, u, dynamics, dx_jac, diff):
         # TODO: Cleanup variable usage.
 
         n_batch = x[0].size(0)
@@ -454,7 +501,7 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
                 _x = _x.data
                 _u = _u.data
 
-            R, S = dynamics.grad_input(_x, _u)
+            R, S = dx_jac(_x, _u)[1]
 
             f = _new_x - util.bmv(R, _x) - util.bmv(S, _u)
             f = f.view(self.T-1, n_batch, self.n_state)
@@ -483,18 +530,19 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
                         if self.grad_method in [GradMethods.AUTO_DIFF,
                                                 GradMethods.ANALYTIC_CHECK]:
                             Rt, St = [], []
-                            for j in range(self.n_state):
-                                Rj, Sj = torch.autograd.grad(
-                                    new_x[:,j].sum(), [xt, ut],
-                                    retain_graph=True)
-                                if not diff:
-                                    Rj, Sj = Rj.data, Sj.data
-                                Rt.append(Rj)
-                                St.append(Sj)
-                            Rt = torch.stack(Rt, dim=1)
-                            St = torch.stack(St, dim=1)
-                            if torch.isnan(Rt).any() or torch.isnan(St).any():
-                                ipdb.set_trace()
+                            # for j in range(self.n_state):
+                            #     Rj, Sj = torch.autograd.grad(
+                            #         new_x[:,j].sum(), [xt, ut],
+                            #         retain_graph=True)
+                            #     if not diff:
+                            #         Rj, Sj = Rj.data, Sj.data
+                            #     Rt.append(Rj)
+                            #     St.append(Sj)
+                            # Rt = torch.stack(Rt, dim=1)
+                            # St = torch.stack(St, dim=1)
+                            # if torch.isnan(Rt).any() or torch.isnan(St).any():
+                            #     ipdb.set_trace()
+                            Rt, St = dx_jac(xt, ut)[1]
 
                             if self.grad_method == GradMethods.ANALYTIC_CHECK:
                                 assert False # Not updated
@@ -550,22 +598,60 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
     def rollout(self, x, actions, dynamics):
         n_batch = x.size(0)
         x = [x]
-        for t in range(self.T):
+        for t in range(self.T-1):
             xt = x[t]
             ut = actions[t]
-            new_x = dynamics(xt, ut)
+            if isinstance(dynamics, LinDx):
+                # ipdb.set_trace()
+                new_x = util.bmv(dynamics.F[t], torch.cat([xt, ut], dim=-1)) + dynamics.f[t]
+            else:
+                new_x = dynamics(xt, ut)
+            # ipdb.set_trace()
             x.append(new_x)
         return torch.stack(x, 0)
-    
+
+
+    def rollout_lin(self, x, actions, F, f):
+        n_batch = x.size(0)
+        x = [x]
+        for t in range(self.T-1):
+            xt = x[t]
+            ut = actions[t]
+            Ft = F[t]
+            ft = f[t]
+            new_x = util.bmv(Ft, torch.cat([xt, ut], dim=-1)) + ft
+            x.append(new_x)
+        return torch.stack(x, 0)
+
+
+    # def compute_Ab_dense(self, F, f, x0):
+    #     T, n_batch, n_state, n_tau = F.size()
+    #     A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
+    #     b = torch.zeros(n_batch, (T+1)*n_state).to(F)
+    #     A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
+    #     A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
+    #     A[:, T*n_state:, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+    #     b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
+    #     b[:, T*n_state:] = x0
+    #     return A, b
+
     def compute_Ab_dense(self, F, f, x0):
         T, n_batch, n_state, n_tau = F.size()
-        A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
-        b = torch.zeros(n_batch, (T+1)*n_state).to(F)
+        n_control = n_tau - n_state
+        if self.add_goal_constraint:
+            A = torch.zeros(n_batch, (T+2)*n_state, (T+1)*n_tau).to(F)
+            b = torch.zeros(n_batch, (T+2)*n_state).to(F)
+        else:
+            A = torch.zeros(n_batch, (T+1)*n_state, (T+1)*n_tau).to(F)
+            b = torch.zeros(n_batch, (T+1)*n_state).to(F)
         A[:, self.A_slices_xu0, self.A_slices_xu1] = F.transpose(0,1).contiguous().view(n_batch, -1)
         A[:, self.A_slices_xx0, self.A_slices_xx1] = -1
-        A[:, T*n_state:, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+        A[:, T*n_state:(T+1)*n_state, :n_state] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+        if self.add_goal_constraint:
+            A[:, (T+1)*n_state:, -(n_tau):-(n_control)] += torch.eye(n_state).unsqueeze(0).to(F)#.expand(n_batch, n_state, n_state)
+            b[:, (T+1)*n_state:] = x0*0 # set to goal
         b[:, :T*n_state] = -f.transpose(0,1).contiguous().view(n_batch, -1)
-        b[:, T*n_state:] = x0
+        b[:, T*n_state:(T+1)*n_state] = x0
         return A, b
 
     def compute_Qq_dense(self, C, c):
@@ -588,8 +674,8 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             h = torch.ones(n_batch, 2*T*n_ctrl).to(x0)
             G[:, self.G_slices_uu0, self.G_slices_uu1] = 1.0
             G[:, self.G_slices_uu0+T*n_ctrl, self.G_slices_uu1] = -1.0
-            h[:, :T*n_ctrl] *= self.u_upper
-            h[:, T*n_ctrl:] = -self.u_lower
+            h[:, :T*n_ctrl] *= torch.cat([self.u_upper[None]]*T, dim=-1)
+            h[:, T*n_ctrl:] *= torch.cat([-self.u_lower[None]]*T, dim=-1)
         return G, h
 
     # def compute_Gh_dense(self):
@@ -600,36 +686,6 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
     #     G[:, torch.arange(n_ctrl), torch.arange(n_ctrl)+(T-1)*n_tau+n_state] = 1
     #     h[:, :] *= self.u_upper
     #     return G, h
-
-    def compute_Ab_sparse(self, F, f, x0):
-        T, n_batch, n_state, n_tau = F.size()
-        F = torch.cat([F, -torch.ones(T, n_batch, n_state, 1).to(F)], dim=-1)
-        Av = F.transpose(0,1).contiguous().view(n_batch, -1) 
-        Av = torch.cat([Av, torch.ones(n_batch, n_state).to(F)], dim=-1)
-        b = -f.transpose(0,1).contiguous().view(n_batch, -1)
-        b = torch.cat([b, x0], dim=-1)
-        # ipdb.set_trace()
-        return Av, b
-
-    def compute_Qq_sparse(self, C, c):
-        # ipdb.set_trace()
-        T, n_batch, n_tau, n_tau = C.size()
-        Qv = C.transpose(0,1).contiguous().diagonal(dim1=-2, dim2=-1).reshape(n_batch, -1)
-        q = c.transpose(0,1).contiguous().reshape(n_batch, -1)
-        return Qv, q
-
-    def compute_Gh_sparse(self, x0):
-        T, n_batch, n_state, n_ctrl = self.T, self.n_batch, self.n_state, self.n_ctrl
-        n_tau = n_state + n_ctrl
-        if self.u_upper is not None:
-            Gv = torch.ones((n_batch, 2*T*n_ctrl)).to(x0)
-            Gv[:, T*n_ctrl:] *= -1
-            h = torch.ones((n_batch, 2*T*n_ctrl)).to(x0)*self.u_upper
-            h[:, T*n_ctrl:] = -self.u_lower
-        else:
-            Gv = torch.ones((n_batch, n_ctrl)).to(x0)
-            h = torch.ones((n_batch, n_ctrl)).to(x0)
-        return Gv, h
 
     def compute_cost(self, xu, cost):
         C = cost.C.transpose(0,1)

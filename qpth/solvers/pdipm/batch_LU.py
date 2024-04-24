@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from enum import Enum
-from . import SparseStructure as ss
 # from block import block
 import ipdb
 
@@ -27,12 +26,12 @@ https://github.com/locuslab/qpth/issues/6
 class KKTSolvers(Enum):
     QR = 1
 
-def forward(K, Didx, Q, p, G, GT, h, A, AT, b,
+def forward(K, Didx, Q, p, G, GT, h, A, AT, b, dyn_res, cost_grad=None,
             eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20):
     '''
     A primal dual interior point method to solve the sparse QP given by the kkt system in Ki
     '''
-    
+    verbose = -1
     nineq, nz = G.shape[1], G.shape[2]
     neq = A.shape[1]
     nBatch = Q.shape[0]
@@ -66,6 +65,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b,
         #                             torch.cat([G, I1, torch.zeros(nBatch, nineq, neq+nineq).type_as(Q)], dim=-1),
         #                             torch.cat([A, torch.zeros(nBatch, neq, neq+nineq*2).type_as(Q)], dim=-1),
         #                         ], dim=-2)
+        # ipdb.set_trace()
         x, s, z, y = solve_kkt(K, Ktilde, p, torch.zeros(nBatch, nineq).to(p),
                                -h, -b if b is not None else None)
         # ipdb.set_trace()
@@ -85,12 +85,16 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b,
 
     for i in range(maxIter):
         # affine scaling direction
-        
-        rx = ((AT.bmm(y.unsqueeze(-1)).squeeze(-1) if neq > 0 else 0.) +
-                GT.bmm(z.unsqueeze(-1)).squeeze(-1) + Q.bmm(x.unsqueeze(-1)).squeeze(-1) + p)
+        if cost_grad is None:
+            rx = ((AT.bmm(y.unsqueeze(-1)).squeeze(-1) if neq > 0 else 0.) +
+                GT.bmm(z.unsqueeze(-1)).squeeze(-1) + 
+                Q.bmm(x.unsqueeze(-1)).squeeze(-1) + p)
+        else:
+            rx = ((AT.bmm(y.unsqueeze(-1)).squeeze(-1) if neq > 0 else 0.) +
+                GT.bmm(z.unsqueeze(-1)).squeeze(-1) + cost_grad(x))
         rs = s*z
         rz = (G.bmm(x.unsqueeze(-1)).squeeze(-1) + s - h)
-        ry = (A.bmm(x.unsqueeze(-1)).squeeze(-1) - b)
+        ry = dyn_res(x)#(A.bmm(x.unsqueeze(-1)).squeeze(-1) - b)
         mu = torch.abs((s * z).sum(1).squeeze() / nineq)
         z_resid = torch.norm(rz, 2, 1).squeeze()
         y_resid = torch.norm(ry, 2, 1).squeeze() if neq > 0 else 0
@@ -125,6 +129,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b,
                 nNotImproved = 0
             else:
                 nNotImproved += 1
+                # KKTeps /= 1000
             I_nz = I.repeat(nz, 1).t()
             I_nineq = I.repeat(nineq, 1).t()
             I_K = I.repeat(K.shape[2], K.shape[1], 1).transpose(0,2)
@@ -139,6 +144,7 @@ def forward(K, Didx, Q, p, G, GT, h, A, AT, b,
         if nNotImproved == notImprovedLim or best['resids'].max() < eps or mu.min() > 1e32:
             if best['resids'].max() > 1. and verbose >= 0:
                 print(INACC_ERR)
+            # ipdb.set_trace()
             return best['x'], best['y'], best['z'], best['s'], best['K']
 
         if solver == KKTSolvers.QR:
@@ -215,8 +221,10 @@ def solve_kkt(K, Ktilde,
     l = r.clone().detach()#torch.zeros_like(r) + r#torch.spbqrfactsolve(*([r] + Ktilde))
     # solver_ctx.factor(K) # need to check matrix type
     # ipdb.set_trace()
-    K_LU = torch.linalg.lu_factor(K)
+    K_LU = torch.linalg.lu_factor(Ktilde)
     l = torch.linalg.lu_solve(*K_LU, l.unsqueeze(-1)).squeeze(-1)
+
+    # Iterative refinement
     res = r - K.bmm(l.unsqueeze(-1)).squeeze(-1)
     for k in range(niter):
         # d = torch.spbqrfactsolve(*([res] + Ktilde))
@@ -227,6 +235,7 @@ def solve_kkt(K, Ktilde,
         # ipdb.set_trace()
         res = r - K.bmm(l.unsqueeze(-1)).squeeze(-1)
 
+    # print("solved")
     solx = l[:, :nz]
     sols = l[:, nz:nz + nineq]
     solz = l[:, nz + nineq:nz + 2 * nineq]

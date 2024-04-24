@@ -43,7 +43,7 @@ class KKTSolvers(Enum):
     IR_UNOPT = 3
 
 
-def forward(Q, p, G, h, A, b, Q_LU, S_LU, R, eps=1e-12, verbose=0, notImprovedLim=3,
+def forward(Q, p, G, h, A, b, Q_LU, S_LU, R, dyn_res, cost_grad, eps=1e-12, verbose=0, notImprovedLim=3,
             maxIter=20, solver=KKTSolvers.LU_PARTIAL):
     """
     Q_LU, S_LU, R = pre_factor_kkt(Q, G, A)
@@ -92,12 +92,14 @@ def forward(Q, p, G, h, A, b, Q_LU, S_LU, R, eps=1e-12, verbose=0, notImprovedLi
         # affine scaling direction
         rx = (torch.bmm(y.unsqueeze(1), A).squeeze(1) if neq > 0 else 0.) + \
             torch.bmm(z.unsqueeze(1), G).squeeze(1) + \
-            torch.bmm(x.unsqueeze(1), Q.transpose(1, 2)).squeeze(1) + \
-            p
+            cost_grad(x)
+            # torch.bmm(x.unsqueeze(1), Q.transpose(1, 2)).squeeze(1) + p
+            
         rs = z
         rz = torch.bmm(x.unsqueeze(1), G.transpose(1, 2)).squeeze(1) + s - h
-        ry = torch.bmm(x.unsqueeze(1), A.transpose(
-            1, 2)).squeeze(1) - b if neq > 0 else 0.0
+        # ry = torch.bmm(x.unsqueeze(1), A.transpose(
+        #     1, 2)).squeeze(1) - b if neq > 0 else 0.0
+        ry = dyn_res(x)
         mu = torch.abs((s * z).sum(1).squeeze() / nineq)
         z_resid = torch.norm(rz, 2, 1).squeeze()
         y_resid = torch.norm(ry, 2, 1).squeeze() if neq > 0 else 0
