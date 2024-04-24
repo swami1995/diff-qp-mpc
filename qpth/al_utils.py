@@ -37,21 +37,25 @@ def warm_start_al(
 def merit_function(
     xu, Q, q, dx, x0, lamda, rho, x_lower, x_upper, u_lower, u_upper, diag_cost=True
 ):
-    
+
     if xu.dim() == 4:
         n_outs, bsz = xu.shape[:2]
         x0 = x0[None].repeat(n_outs, 1, 1).view(n_outs * bsz, x0.shape[1])
         xu = xu.view(n_outs * bsz, xu.shape[2], xu.shape[3])
-        Q = Q[None].repeat(n_outs, 1, 1, 1).view(n_outs * bsz, Q.shape[1], Q.shape[2])
-        q = q[None].repeat(n_outs, 1, 1, 1).view(n_outs * bsz, q.shape[1], q.shape[2])
+        Q = Q[None].repeat(n_outs, 1, 1, 1).view(
+            n_outs * bsz, Q.shape[1], Q.shape[2])
+        q = q[None].repeat(n_outs, 1, 1, 1).view(
+            n_outs * bsz, q.shape[1], q.shape[2])
         rho = rho[None].repeat(n_outs, 1, 1).view(n_outs * bsz, rho.shape[1])
-        lamda = lamda[None].repeat(n_outs, 1, 1).view(n_outs * bsz, lamda.shape[1])
+        lamda = lamda[None].repeat(n_outs, 1, 1).view(
+            n_outs * bsz, lamda.shape[1])
         bsz = n_outs * bsz
     else:
         bsz = xu.size(0)
     cost_total = compute_cost(xu, Q, q)
     res, res_clamp = dyn_res(xu, dx, x0, x_lower, x_upper, u_lower, u_upper)
-    merit_value = cost_total + 0.5 * rho[:, 0] * (res_clamp * res_clamp).view(bsz, -1).sum(dim=1) + (lamda * res).view(bsz, -1).sum(dim=1)
+    merit_value = cost_total + 0.5 * rho[:, 0] * (res_clamp * res_clamp).view(
+        bsz, -1).sum(dim=1) + (lamda * res).view(bsz, -1).sum(dim=1)
     return merit_value
 
 
@@ -134,7 +138,8 @@ def constraint_res_jac1(xu, x0, dx, x_lower, x_upper, u_lower, u_upper):
     res_ineq = res_ineq.reshape(bsz, n_constr, n_ineq)
     res_ineq_clamp = res_ineq_clamp.reshape(bsz, n_constr, n_ineq)
     res = torch.cat((res_eq, res_ineq), dim=-1)
-    identity = torch.eye(n_constr, device=x.device)[None].to(x).repeat(bsz, 1, 1)
+    identity = torch.eye(n_constr, device=x.device)[
+        None].to(x).repeat(bsz, 1, 1)
     res = res * identity
     constraint_jac = torch.autograd.grad([res.sum()], [x, u])
     constraint_jac = torch.cat(
@@ -221,7 +226,8 @@ def dyn_res_eq_jac(x, u, dx_jac, x0):
     )
     dynamics_jacobian = torch.vmap(block_diag)(dynamics_jacobian)
     id_x = [
-        torch.cat([torch.eye(x_size), torch.zeros((x_size, u_size))], dim=1).to(x)
+        torch.cat([torch.eye(x_size), torch.zeros(
+            (x_size, u_size))], dim=1).to(x)
     ] * (T - 1)
     id_x = torch.block_diag(*id_x)
     return dyn_res_eq_jac_mat_filling(
@@ -246,10 +252,12 @@ def dyn_res_eq_jac_mat_filling(
     x_res_init = x[:, 0, :] - x0
     x_res_init = x_res_init.reshape(bsz, -1)
     res = torch.cat((x_res, x_res_init), dim=1)
-    constraint_jacobian = torch.zeros(bsz, T * x_size, T * (x_size + u_size)).to(x)
+    constraint_jacobian = torch.zeros(
+        bsz, T * x_size, T * (x_size + u_size)).to(x)
     id_x = id_x[None].repeat(bsz, 1, 1)
-    constraint_jacobian[:, :-x_size, x_size + u_size :] = id_x
-    constraint_jacobian[:, :-x_size, : -(x_size + u_size)] += -dynamics_jacobian
+    constraint_jacobian[:, :-x_size, x_size + u_size:] = id_x
+    constraint_jacobian[:, :-x_size, : -
+                        (x_size + u_size)] += -dynamics_jacobian
     constraint_jacobian[:, -x_size:, :x_size] = torch.eye(x_size).to(x)[None]
     return res, constraint_jacobian
 
@@ -373,9 +381,9 @@ class NewtonAL(torch.autograd.Function):
         bsz, T, n_elem = xi.size()  # (bsz, T, xd+ud)
         dev = xi.device
 
-        meritGHfnQ = lambda x: merit_grad_hessfn(x, Q, q, lam)
-        cost_fnQ = lambda x: cost_fn(x, Q, q)
-        meritfnQ = lambda x: meritfn(x, Q, q, lam, x0, rho)
+        def meritGHfnQ(x): return merit_grad_hessfn(x, Q, q, lam)
+        def cost_fnQ(x): return cost_fn(x, Q, q)
+        def meritfnQ(x): return meritfn(x, Q, q, lam, x0, rho)
         # meritfn_mean = lambda x, Qi, qi, yi, x0i, rhoi: meritfn(x.view((1,T,n_elem)), Qi[None].view((1,T,n_elem)), qi[None].view((1,T,n_elem)), yi[None], x0i[None], rhoi[None], grad=True).mean()
 
         x_est = xi  # (bsz, 2d, L')
@@ -393,8 +401,8 @@ class NewtonAL(torch.autograd.Function):
         cholesky_fail = torch.tensor(False)
         merit_delta = 1
         while (
-            merit_delta > threshold*1e-8 and nstep < max_newton_steps):# and stepsz > 1e-8
-        # ):  # and update_norm > 1e-3*init_update_norm:
+                merit_delta > threshold*1e-8 and nstep < max_newton_steps):  # and stepsz > 1e-8
+            # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
             # Compute the hessian and gradient of the augmented lagrangian
@@ -420,7 +428,7 @@ class NewtonAL(torch.autograd.Function):
 
             if ls:
                 x_est, new_merit, stepsz, status = line_search_newton(
-                    update, x_est, meritfnQ, merit
+                    update, x_est, meritfnQ, merit, x0
                 )
             else:
                 x_est = x_est + update
@@ -435,7 +443,7 @@ class NewtonAL(torch.autograd.Function):
             new_dyn_res = torch.norm(dyn_res).item()
             # print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
-            ## exit creteria
+            # exit creteria
             # if (
             #     abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
             #     or new_dyn_res < 1e-3
@@ -443,7 +451,8 @@ class NewtonAL(torch.autograd.Function):
             #     break
 
             old_dyn_res = new_dyn_res
-            merit_delta = 1000# ((new_merit - merit) / new_merit).abs().max().item()
+            # ((new_merit - merit) / new_merit).abs().max().item()
+            merit_delta = 1000
             merit = new_merit
 
         try:
@@ -491,8 +500,9 @@ class NewtonAL(torch.autograd.Function):
         )
 
 
-def line_search_newton(update, x_est, meritfnQ, merit):
-    n_ls = 20  #TODO: make this a parameter
+def line_search_newton(update, x_est, meritfnQ, merit, x0):
+    n_ls = 20  # TODO: make this a parameter
+    xsize = x0.shape[-1]
     stepsz = torch.ones(x_est.shape[0], device=x_est.device) * 2
     mask = torch.ones(x_est.shape[0], device=x_est.device)
     stepszs = 2 ** (
@@ -502,6 +512,7 @@ def line_search_newton(update, x_est, meritfnQ, merit):
         .expand(n_ls, x_est.shape[0])
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
+    x_next[:, :, 0, :xsize] = x0[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
     # new2_objective = torch.vmap(meritfnQ)(x_next)
     new2_objective = meritfnQ(x_next).reshape(n_ls, -1)
@@ -511,5 +522,6 @@ def line_search_newton(update, x_est, meritfnQ, merit):
     x_next = x_next[new2_objective_min.indices, batch_idxs]
     new2_objective = new2_objective_min.values
     status = (new2_objective < merit).float()
-    x_est = status[:, None, None] * x_next + (1 - status)[:, None, None] * x_est
+    x_est = status[:, None, None] * x_next + \
+        (1 - status)[:, None, None] * x_est
     return x_est, new2_objective, stepsz.mean().item(), status
