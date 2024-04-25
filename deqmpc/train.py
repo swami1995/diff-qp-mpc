@@ -143,10 +143,9 @@ def main():
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
-        iter_qp_solve = False if (i < 1000 and args.pretrain) else True
+        pretrain_done = False if (i < 1000 and args.pretrain) else True
         # warm start only after 1000 iterations
-        args.en_qp_solve = iter_qp_solve and args.qp_solve
-        lastqp_solve = args.lastqp_solve and iter_qp_solve
+        lastqp_solve = args.lastqp_solve and pretrain_done
 
         gt_states = noise_utils.corrupt_observation(
             traj_sample["state"], args.data_noise_type, args.data_noise_std, args.data_noise_mean)
@@ -156,15 +155,14 @@ def main():
         
         if args.deq:
             start = time.time()
-
             trajs, dyn_res = policy(gt_state0, gt_states, gt_actions,
-                                    gt_mask, iter=i, qp_solve=args.en_qp_solve , lastqp_solve=lastqp_solve)
+                                    gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=lastqp_solve)
             end = time.time()
             dyn_resids.append(dyn_res)
         else:
             trajs = policy(gt_state0)
         
-        loss, loss_end = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args)
+        loss, loss_end = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
         time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
@@ -176,7 +174,7 @@ def main():
 
         # Printing
         if i % 100 == 0:
-            print("iter: ", i, "deqmpc" if args.en_qp_solve else "deq")
+            print("iter: ", i, "deqmpc" if pretrain_done else "deq")
             print(
                 "grad norm: ",
                 torch.nn.utils.clip_grad_norm_(

@@ -187,6 +187,9 @@ class DEQPolicy(torch.nn.Module):
 # 8. Confidences for each knot point - for the Q cost coefficient. - There should again probably be some TD component to the cost coefficient too.
 
 class DEQLayer(torch.nn.Module):
+    '''
+    Base class for different DEQ architectures, child classes define `forward`, `setup_input_layer` and `setup_input_layer`
+    '''
     def __init__(self, args, env):
         super().__init__()
         self.args = args
@@ -208,6 +211,7 @@ class DEQLayer(torch.nn.Module):
         self.setup_deq_layer()
         self.setup_output_layer()
 
+    # TO BE OVERRIDEN
     def forward(self, in_obs_dict, in_aux_dict):
         """
         compute the policy output for the given observation input and feedback input 
@@ -226,14 +230,12 @@ class DEQLayer(torch.nn.Module):
         # only state prediction
         dx_ref = self.output_layer(z_out)
 
-        # ipdb.set_trace()
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
         x_ref = torch.cat([dx_ref + x_prev[..., :self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
-        # ipdb.set_trace()
         
         out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref}
         out_aux_dict = {"x": x_ref[:,1:], "u": u_ref, "z": z_out}
@@ -292,8 +294,9 @@ class DEQLayer(torch.nn.Module):
         elif self.layer_type == "gat":
             NotImplementedError
 
+    # TO BE OVERRIDEN
     def setup_input_layer(self):
-        self.in_dim = self.nx + self.nx * (self.T - 1)
+        self.in_dim = self.nx + self.nx * (self.T - 1) # current state and state prediction
         if self.layer_type == "mlp":
             # ipdb.set_trace()
             self.inp_layer = torch.nn.Sequential(
@@ -367,8 +370,9 @@ class DEQLayer(torch.nn.Module):
         elif self.layer_type == "gat":
             NotImplementedError
 
-    def setup_output_layer(self):
-        self.out_dim = self.nx * (self.T-1)
+    # TO BE OVERRIDEN
+    def setup_output_layer(self):  
+        self.out_dim = self.nx * (self.T-1)  # state prediction
         if self.layer_type == "mlp":
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.hdim, self.out_dim)
@@ -394,9 +398,9 @@ class DEQMPCPolicy(torch.nn.Module):
         self.dt = env.dt
         self.device = args.device
         self.deq_iter = args.deq_iter
-        self.model = DEQLayer(args, env)
+        self.model = DEQLayer(args, env)  #TODO different types
         self.model.to(self.device)
-        self.out_type = args.policy_out_type  # output type of DEQ model
+        self.out_type = args.policy_out_type  # output type of policy
         self.tracking_mpc = Tracking_MPC(args, env)
         self.mpc_time = []
         self.network_time = []
@@ -442,9 +446,9 @@ class DEQMPCPolicy(torch.nn.Module):
         ), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
-        if lastqp_solve:
+        if lastqp_solve and not qp_solve:
             nominal_states, nominal_actions = self.tracking_mpc(
-                x, xu_ref, x_ref_, u_ref)
+                x, xu_ref, x_ref, u_ref)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs, dyn_res
 
@@ -754,10 +758,10 @@ def add_loss_based_on_out_type(policy, out_type, gt_states, gt_actions, gt_mask,
     return loss
 
 
-def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args):
-    if args.deq:
+def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
+    if deq:
         # deq or deqmpc
-        if args.en_qp_solve:
+        if deqmpc:
             # full deqmpc
             return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
         else:
