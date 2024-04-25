@@ -41,7 +41,7 @@ def main():
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default=None)

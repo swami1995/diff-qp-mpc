@@ -186,7 +186,6 @@ class DEQPolicy(torch.nn.Module):
 # 7. Write other solvers - Autmented lagrangian or ADMM or whatever
 # 8. Confidences for each knot point - for the Q cost coefficient. - There should again probably be some TD component to the cost coefficient too.
 
-
 class DEQLayer(torch.nn.Module):
     def __init__(self, args, env):
         super().__init__()
@@ -209,58 +208,36 @@ class DEQLayer(torch.nn.Module):
         self.setup_deq_layer()
         self.setup_output_layer()
 
-    def forward(self, x, z):
+    def forward(self, in_obs_dict, in_aux_dict):
         """
-        compute the policy output for the given state x
+        compute the policy output for the given observation input and feedback input 
         """
-        xinp = self.input_layer(x)
-        z_out = self.deq_layer(xinp, z)
+        obs, x_prev, z = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"]
+        bsz = obs.shape[0]
+        _obs = obs.reshape(bsz,1,self.nx)
+        _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
+       
+        try:
+            _input1 = self.input_layer(_input)
+        except:
+            ipdb.set_trace()
+
+        z_out = self.deq_layer(_input1, z)
+        # only state prediction
+        dx_ref = self.output_layer(z_out)
+
+        # ipdb.set_trace()
+        dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
+        vel_ref = dx_ref[..., self.nq:]
+        dx_ref = dx_ref[..., :self.nq] * self.dt
+        x_ref = torch.cat([dx_ref + x_prev[..., :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([_obs, x_ref], dim=-2)
+        u_ref = torch.zeros_like(x_ref[..., :self.nu])
+        # ipdb.set_trace()
         
-        if self.out_type == 1:
-            # only state prediction
-            dx_ref = self.output_layer(z_out)
-            dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
-            vel_ref = dx_ref[..., self.nq:]
-            dx_ref = dx_ref[..., :self.nq] * self.dt
-            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
-            return x_ref, z_out
-        elif self.out_type == 2:
-            # state estimate + state prediction
-            dx_ref = self.output_layer(z_out)
-            dx_ref = dx_ref.view(-1, self.T, self.nx)
-            vel_ref = dx_ref[..., self.nq:]
-            dx_ref = dx_ref[..., :self.nq] * self.dt
-            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
-            return x_ref, z_out
-        elif self.out_type == 3:
-            # state and control prediction
-            dxu_ref = self.output_layer(z_out)
-            dxu_ref = dxu_ref.view(-1, self.T - 1, self.nx + self.nu)
-            dx_ref = dxu_ref[..., :self.nx]
-            u_ref = dxu_ref[..., self.nx:]
-            vel_ref = dx_ref[..., self.nq:]
-            dx_ref = dx_ref[..., :self.nq] * self.dt
-            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
-            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
-            return xu_ref, z_out
-        elif self.out_type == 4:
-            # state estimate + state and control prediction
-            dxu_ref = self.output_layer(z_out)
-            dxu_ref = dxu_ref.view(-1, self.T, self.nx + self.nu)    
-            dx_ref = dxu_ref[..., :self.nx]    
-            u_ref = dxu_ref[..., self.nx:]    
-            vel_ref = dx_ref[..., self.nq:]
-            dx_ref = dx_ref[..., :self.nq] * self.dt
-            x_ref = torch.cat([dx_ref + x[:, None, :self.nq], vel_ref], dim=-1)
-            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
-            return xu_ref, z_out
-        elif self.out_type == 0:
-            # only control prediction
-            u_ref = self.output_layer(z_out)
-            u_ref = u_ref.view(-1, self.T, self.nu)
-            return u_ref, z_out
-        else: 
-            NotImplementedError
+        out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref}
+        out_aux_dict = {"x": x_ref[:,1:], "u": u_ref, "z": z_out}
+        return out_mpc_dict, out_aux_dict
 
     def input_layer(self, x):
         if self.layer_type == "mlp":
@@ -316,17 +293,7 @@ class DEQLayer(torch.nn.Module):
             NotImplementedError
 
     def setup_input_layer(self):
-        if self.out_type == 1 or self.out_type == 2:
-            # only state prediction, having current estimate or not
-            self.in_dim = self.nx + self.nx * (self.T - 1)
-        elif self.out_type == 3 or self.out_type == 4:
-            # state and control prediction, having current estimate or not
-            self.in_dim = self.nx + self.nx * (self.T - 1) + self.nu * self.T
-        elif self.out_type == 0:
-            # only control prediction
-            self.in_dim = self.nu * self.T
-        else:
-            NotImplementedError
+        self.in_dim = self.nx + self.nx * (self.T - 1)
         if self.layer_type == "mlp":
             # ipdb.set_trace()
             self.inp_layer = torch.nn.Sequential(
@@ -401,13 +368,7 @@ class DEQLayer(torch.nn.Module):
             NotImplementedError
 
     def setup_output_layer(self):
-        if self.out_type == 1:
-            self.out_dim = self.nx * (self.T-1)
-        elif self.out_type == 2:
-            self.out_dim = self.nx + self.nx * (self.T-1)
-        else:
-            NotImplementedError
-
+        self.out_dim = self.nx * (self.T-1)
         if self.layer_type == "mlp":
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.hdim, self.out_dim)
@@ -421,7 +382,6 @@ class DEQLayer(torch.nn.Module):
                 self.hdim, self.nq, self.kernel_width_out)
         elif self.layer_type == "gat":
             NotImplementedError
-
 
 class DEQMPCPolicy(torch.nn.Module):
     def __init__(self, args, env):
@@ -453,9 +413,11 @@ class DEQMPCPolicy(torch.nn.Module):
         """
         # initialize trajectory with current state
         x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
+        x_ref = x_ref.view(-1, self.T, self.nx)
         nominal_actions = torch.zeros((x.shape[0], self.T, self.nu), device=self.device)
         # x_ref = x_gt.view(x_ref.shape)
         z = self.model.init_z(x.shape[0]).to(self.device)
+        out_aux_dict = {"z": z, "x": x_ref[:, 1:]}
 
         # initialize trajs list
         trajs = []
@@ -465,66 +427,24 @@ class DEQMPCPolicy(torch.nn.Module):
 
         # run the DEQ layer for deq_iter iterations
         for i in range(self.deq_iter):
-            # torch.cuda.synchronize()
-            # start = time.time()
-            # x_ref = (x_ref.view(bsz, self.T, -1)*mask[:, :, None]).view(bsz, -1)
-            x_ref, z = self.model(x_ref, z)
-            # output of DEQ layer is state prediction of T-1 steps
-            
-            # estimate current state or not
-            # TODO more types of outputs
-            if (self.model.out_type == 1):
-                # directly append the current state input
-                x_ref = x_ref.view(-1, self.T-1, self.nx)
-                x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
-            elif (self.model.out_type == 2):
-                x_ref = x_ref.view(-1, self.T, self.nx)
-            else:
-                NotImplementedError
-            # nominal_states = x_ref.transpose(0, 1)
-            # nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
-            # trajs.append((nominal_states, nominal_actions))
-            # x_ref = x_ref.reshape(bsz, -1)
-
-            # ipdb.set_trace()
-            # x_ref = x_gt + x_ref - x_ref.detach().clone()
-            # concatenate reference states and actions for the MPC
-            xu_ref = torch.cat(
-                [x_ref, nominal_actions], dim=-1)
-            x_ref_tr = x_ref
-            # u_ref_tr = torch.zeros_like(
-            #     x_ref_tr[..., :self.nu])  # u_gt.transpose(0, 1)
-            u_ref_tr = nominal_actions
-            nominal_states = x_ref
-            # nominal_actions = torch.zeros_like(
-            #     nominal_states[..., :self.nu])  # nominal actions are zeros now
-            # torch.cuda.synchronize()
-            # end = time.time()
-            # self.network_time.append(end-start)
+            in_obs_dict = {"o": x}
+            out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
+            x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
+            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
+            nominal_states = 1*x_ref
             if qp_solve:
-                # torch.cuda.synchronize()
-                # start = time.time()
-                # ipdb.set_trace()
-                nominal_states, nominal_actions = self.tracking_mpc(
-                    x, xu_ref, x_ref_tr, u_ref_tr)
-
-                # torch.cuda.synchronize()
-                # end = time.time()
-                # self.mpc_time.append(end-start)
-            nominal_states_net = x_ref  # .transpose(0, 1)
+                nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
+            nominal_states_net = 1*x_ref
+            x_ref = 1*nominal_states
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
-            # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
-            x_ref = nominal_states.reshape(
-                bsz, -1).detach().clone()  # solution feeds DEQ again
-
-        # print(f"Network time: {nq.mean(self.network_time)} MPC time: {nq.mean(self.mpc_time)}")
+            
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
         ), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve:
             nominal_states, nominal_actions = self.tracking_mpc(
-                x, xu_ref, x_ref_tr, u_ref_tr)
+                x, xu_ref, x_ref_, u_ref)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs, dyn_res
 
@@ -786,7 +706,7 @@ class NNPolicy(torch.nn.Module):
 
 def compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs):
     loss = 0.0
-    # supervise each DEQMPC iteration
+    # supervise each DEQ iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
         # supervise the output of deq only (state prediction of T steps)
         # hardcode the out_type to 1 because the output of DEQ is just state prediction atm
@@ -821,7 +741,8 @@ def add_loss_based_on_out_type(policy, out_type, gt_states, gt_actions, gt_mask,
     if out_type == 0 or out_type == 2:
         # supervise action
         loss += torch.abs((nominal_actions - gt_actions) *
-                          gt_mask[:, :, None]).sum(dim=-1).mean()
+                          gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
+        # ipdb.set_trace()
     if out_type == 1 or out_type == 2:
         # supervise state
         loss += torch.abs((nominal_states - gt_states) *
