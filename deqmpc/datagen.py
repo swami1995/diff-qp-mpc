@@ -354,31 +354,32 @@ def merge_gt_data(gt_trajs, num_trajs=2):
     )
     return merged_gt_traj
 
-
-def sample_trajectory(gt_trajs, bsz, T):
+def sample_trajectory(gt_trajs, bsz, H, T):
     """
     Sample a batch of trajectories from the ground truth data.
     Args:
         gt_trajs: A dictionary of "state", "action" and "mask" tensors with concatenated trajectories.
         bsz: Batch size.
-        T: Time horizon.
+        H: History length.
+        T: Lookahead horizon length.
     Returns:
-        A list of trajectories, each trajectory is a list of (state, action) tuples with length T.
+        A list of trajectories, each trajectory is a list of (obs, state, action) tuples (H, T, T).
     """
-    idxs = np.random.randint(0, len(gt_trajs["state"]), bsz*2)
-    trajs = {"state": [], "action": [], "mask": []}
+    idxs = np.random.randint(H-1, len(gt_trajs["state"]), bsz*2)
+    trajs = {"obs": [], "state": [], "action": [], "mask": []}
     i = 0
     j = 0
     while j < bsz:
         if gt_trajs["mask"][idxs[i]] == 0:
             i += 1
             continue
+        trajs["obs"].append(gt_trajs["state"][idxs[i]+1 - H : idxs[i]+1])
         if idxs[i] + T <= len(gt_trajs["state"]):
             trajs["state"].append(gt_trajs["state"][idxs[i] : idxs[i] + T])
             trajs["action"].append(gt_trajs["action"][idxs[i] : idxs[i] + T])
             trajs["mask"].append(gt_trajs["mask"][idxs[i] : idxs[i] + T])
         else:
-            padding = idxs[i] + T - len(gt_trajs["state"])
+            padding = idxs[i] + T - len(gt_trajs["state"])            
             trajs["state"].append(
                 torch.cat(
                     [gt_trajs["state"][idxs[i] :], gt_trajs["state"][:padding] * 0.0],
@@ -398,6 +399,7 @@ def sample_trajectory(gt_trajs, bsz, T):
             )
         i += 1
         j += 1
+    trajs["obs"] = torch.stack(trajs["obs"])
     trajs["state"] = torch.stack(trajs["state"])
     trajs["action"] = torch.stack(trajs["action"])
     trajs["mask"] = torch.stack(trajs["mask"])
@@ -406,7 +408,6 @@ def sample_trajectory(gt_trajs, bsz, T):
     # trajs["state"] = trajs["state"]*trajs["mask"][:, :, None]
     # trajs["action"] = trajs["action"]*trajs["mask"][:, :, None]
     return trajs
-
 
 def test_qp_mpc(env):
     mpc_controller = PendulumExpert(env)
