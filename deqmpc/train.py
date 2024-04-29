@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--nq", type=int, default=1)  # observation (configurations) for the policy
     parser.add_argument("--T", type=int, default=5)  # look-ahead horizon length (including current time step)
-    parser.add_argument("--H", type=int, default=2)  # observation history length (including current time step)
+    parser.add_argument("--H", type=int, default=1)  # observation history length (including current time step)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
@@ -179,8 +179,8 @@ def main():
         else:
             trajs = policy(obs_in)
         
-        if (i % 10000 == 0):
-            ipdb.set_trace()
+        # if (i % 10000 == 0):
+        #     ipdb.set_trace()
 
         loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
         loss = loss_dict["loss"]

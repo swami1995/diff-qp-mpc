@@ -10,8 +10,8 @@ import torch.nn.functional as F
 import time
 
 # POSSIBLE OUTPUT TYPES OF DEQ LAYER
-# 0: state prediction x[1]->x[T-1]
-# 1: state prediction x[0]->x[T-1]
+# 0: action prediction u[0]->u[T-1]
+# 1: state prediction x[0]->x[T-1], would be x[1]->x[T-1] only if using DEQLayer
 # 2: state prediction x[0]->x[T-1] and control prediction u[0]->u[T-1]
 
 class DEQLayer(torch.nn.Module):
@@ -46,17 +46,13 @@ class DEQLayer(torch.nn.Module):
         compute the policy output for the given observation input and feedback input 
         """
         obs, x_prev, z = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"]
+        if (x_prev.shape[1] != self.T - 1):  # handle the case of orginal DEQLayer not predicting current state
+            x_prev = x_prev[:, 1:]
         bsz = obs.shape[0]
         _obs = obs.reshape(bsz,1,self.nx)
         _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
-       
-        try:
-            _input1 = self.input_layer(_input)
-        except:
-            ipdb.set_trace()
-
+        _input1 = self.input_layer(_input)
         z_out = self.deq_layer(_input1, z)
-        # only state prediction
         dx_ref = self.output_layer(z_out)
 
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
