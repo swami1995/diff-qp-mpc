@@ -444,7 +444,7 @@ class NewtonAL(torch.autograd.Function):
                 # update = torch.round(update, decimals=2)
 
             if ls:
-                x_est, new_merit, stepsz, status = line_search_newton(
+                x_est1, new_merit, stepsz, status = line_search_newton(
                     update, x_est, meritfnQ, merit, x0
                 )
             else:
@@ -472,6 +472,7 @@ class NewtonAL(torch.autograd.Function):
             # 
             merit_delta = ((new_merit - merit) / new_merit).abs().max().item()#1000
             merit = new_merit
+            x_est = x_est1
 
         try:
             ctx.save_for_backward(Hess_clip, U, x_est, cholesky_fail)
