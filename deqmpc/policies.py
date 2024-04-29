@@ -185,23 +185,6 @@ class DEQMPCPolicyHistory(DEQMPCPolicy):
 # Loss computation
 ######################
 
-def compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs):
-    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
-    loss = 0.0
-    # supervise each DEQ iteration
-    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        # supervise the output of deq only (state prediction of T steps)
-        # hardcode the out_type to 1 because the output of DEQ is just state prediction atm
-        loss_j = add_loss_based_on_out_type(policy, policy.out_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states, nominal_actions)
-        loss += loss_j
-    loss_end = add_loss_based_on_out_type(
-        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    return_dict["loss"] = loss
-    return_dict["loss_end"] = loss_end
-    return return_dict
-
-
 def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
     loss = 0.0
@@ -257,10 +240,9 @@ def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
         if deqmpc:
             # full deqmpc
             return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
-            ipdb.set_trace()
         else:
             # deq -- pretrain
-            return compute_loss_deq(policy.model, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs)
     else:
         # vanilla behavior cloning
         return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)

@@ -30,6 +30,7 @@ class DEQLayer(torch.nn.Module):
         self.layer_type = args.layer_type
         self.inp_type = ""  # args.inp_type
         self.out_type = args.deq_out_type
+        self.deq_reg = args.deq_reg
         self.kernel_width = args.kernel_width
         self.pooling = args.pooling
         self.deq_expand = 4
