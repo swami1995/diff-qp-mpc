@@ -565,7 +565,7 @@ def Newton_AL(g, meritfn, dyn_fn, cost_fn, x0, z, threshold, eps, ls=False):
 
 class NewtonAL(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, g, meritfn, dyn_fn, cost_fn, merit_hess, xi, x0, z, lam, rho, Q, q, Hess, threshold, eps, ls):
+    def forward(ctx, g, meritfn, dyn_fn, cost_fn, merit_hess, xi, x0, z, lam, rho, Q, q, Hess, threshold, eps, ls, verbose):
         bsz, T, n_elem = xi.size() # (bsz, T, xd+ud)
         dev = xi.device
 
@@ -586,7 +586,9 @@ class NewtonAL(torch.autograd.Function):
         lowest_gx = gx
         lowest_step = 0
         old_dyn_res = torch.norm(dyn_res).item()
-        # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(gx).item())
+        if verbose:
+            # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), torch.norm(gx).item())
+            print(dyn_res.view(bsz, -1).norm(dim=-1).mean().item(), (cost).mean().item(), torch.norm(gx).item())
         init_update_norm = gx.norm().item()
         update_norm = init_update_norm
         Q_tr = Q.transpose(0,1)
@@ -620,44 +622,56 @@ class NewtonAL(torch.autograd.Function):
                 merit = meritfnQ(x_est)#, grad=True)
                 merit_mean = merit.sum()
                 grad = torch.autograd.grad(merit_mean, x_est)[0]
-                Hess = merit_hess(x_est)
+                Hess, Hess_clip = merit_hess(x_est)
                 # Hess = hessian(meritfn_mean, (x_est.reshape(bsz, -1)), vectorize=True)
                 # Hess = vmap(hessian(meritfn_mean))(x_est.reshape(bsz, -1), Q_tr, q_tr, lam, x0, rho_new)
             # Hess = Hess + torch.eye(total_hsize, device=dev).unsqueeze(0).expand(bsz, total_hsize, total_hsize) * eps
-            
+            # ipdb.set_trace()
             # Solve for the newton step
             stepsz = 0
             reg = 0#reg*10*(1-status) + status*1e-5
             # Hess = Hess.reshape(bsz, T*3,T*3)
             # eye = torch.eye(T*3, device=dev).to(Hess).unsqueeze(0).expand(bsz, T*3, T*3)
             # while stepsz < 1e-5:
+            # Hess_clip = Hess = torch.eye(Hess.shape[-1], device=Hess.device, dtype=Hess.dtype).repeat(bsz, 1, 1) 
             if not cholesky_fail:
                 U, info = torch.linalg.cholesky_ex(Hess)
                 update = -torch.cholesky_solve(grad.reshape(bsz, -1, 1), U).reshape(bsz,T,3)
             else:
-                update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(bsz,T,3)
+                U = Hess_clip
+                try:
+                    # update = -grad.reshape(bsz, T, 3) #
+                    update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(bsz,T,3)
+                    # update = torch.round(update, decimals=2)
+                except:
+                    ipdb.set_trace()
             if ls:
-                x_est, new2_objective, stepsz, status = line_search_newton(update, x_est, meritfnQ, merit)
+                x_est1, new2_objective, stepsz, status = line_search_newton(update, x_est, meritfnQ, merit)
             else:
-                x_est = x_est + update
+                x_est1 = x_est + update
                 new2_objective = meritfnQ(x_est).mean().item()
             # reg *= 10
             # x_est = x_est + stepsz * update
             # gx = gQ(x_est, z)
             # cost = cost_fnQ(x_est)
-            dyn_res = dyn_fn(x_est)
+            dyn_res = dyn_fn(x_est1)
             # update_norm = update.norm().item()
+            cost = cost_fnQ(x_est1) 
             new_dyn_res = torch.norm(dyn_res).item()
-            # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), new2_objective, torch.norm(gx).item(), torch.norm(update).item(), stepsz)
-
+            if verbose:
+                # print(nstep, torch.norm(dyn_res).item(), torch.norm(cost).item(), new2_objective, torch.norm(gx).item(), torch.norm(update).item(), stepsz)
+                print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new2_objective, stepsz)
+            # if nstep == 3:
+            #     ipdb.set_trace()
             ## exit creteria
             if abs(old_dyn_res- new_dyn_res)/new_dyn_res < 1e-3 or new_dyn_res < 1e-3:
                 break
                 
             old_dyn_res = new_dyn_res
+            x_est = x_est1
             # rho_new = rho*status[:,None] + rho_new/2*(1-status[:,None])#min(, rho_init*100)
         # print(nstep)
-        ctx.save_for_backward(Hess, U, x_est, cholesky_fail)
+        ctx.save_for_backward(Hess_clip, U, x_est, cholesky_fail)
         Us, VTs = None, None
         return x_est, gx, status
     
@@ -678,7 +692,7 @@ class NewtonAL(torch.autograd.Function):
         # Q_grad = torch.bmm(inp_grad, x.transpose(1,2)) # if Q is not diag
         q_grad = inp_grad
 
-        return None, None, None, None, None, None, None, None, None, None, Q_grad.transpose(0,1), q_grad.transpose(0,1), None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None, Q_grad.transpose(0,1), q_grad.transpose(0,1), None, None, None, None, None
 
 def line_search_newton(update, x_est, meritfnQ, merit):
     stepsz = torch.ones(x_est.shape[0], device=x_est.device)*2

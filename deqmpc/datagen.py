@@ -311,6 +311,48 @@ def merge_gt_data(gt_trajs, num_trajs=2):
     return merged_gt_traj
 
 
+# def sample_trajectory(gt_trajs, bsz, T):
+#     """
+#     Sample a batch of trajectories from the ground truth data.
+#     Args:
+#         gt_trajs: A dictionary of "state", "action" and "mask" tensors with concatenated trajectories.
+#         bsz: Batch size.
+#         T: Time horizon.
+#     Returns:
+#         A list of trajectories, each trajectory is a list of (state, action) tuples with length T.
+#     """
+#     idxs = np.random.randint(0, len(gt_trajs["state"]), bsz)
+#     trajs = {"state": [], "action": [], "mask": []}
+#     for i in range(bsz):
+#         if idxs[i] + T < len(gt_trajs["state"]):
+#             trajs["state"].append(gt_trajs["state"][idxs[i] : idxs[i] + T])
+#             trajs["action"].append(gt_trajs["action"][idxs[i] : idxs[i] + T])
+#             trajs["mask"].append(gt_trajs["mask"][idxs[i] : idxs[i] + T])
+#         else:
+#             padding = idxs[i] + T - len(gt_trajs["state"])
+#             trajs["state"].append(
+#                 torch.cat(
+#                     [gt_trajs["state"][idxs[i] :], gt_trajs["state"][:padding] * 0.0],
+#                     dim=0,
+#                 )
+#             )
+#             trajs["action"].append(
+#                 torch.cat(
+#                     [gt_trajs["action"][idxs[i] :], gt_trajs["action"][:padding] * 0.0],
+#                     dim=0,
+#                 )
+#             )
+#             trajs["mask"].append(
+#                 torch.cat(
+#                     [gt_trajs["mask"][idxs[i] :], gt_trajs["mask"][:padding] * 0], dim=0
+#                 )
+#             )
+#     trajs["state"] = torch.stack(trajs["state"])
+#     trajs["action"] = torch.stack(trajs["action"])
+#     trajs["mask"] = torch.stack(trajs["mask"])
+#     for i in reversed(range(T)):
+#         trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i], dim=1)
+#     return trajs
 def sample_trajectory(gt_trajs, bsz, T):
     """
     Sample a batch of trajectories from the ground truth data.
@@ -321,10 +363,15 @@ def sample_trajectory(gt_trajs, bsz, T):
     Returns:
         A list of trajectories, each trajectory is a list of (state, action) tuples with length T.
     """
-    idxs = np.random.randint(0, len(gt_trajs["state"]), bsz)
+    idxs = np.random.randint(0, len(gt_trajs["state"]), bsz*2)
     trajs = {"state": [], "action": [], "mask": []}
-    for i in range(bsz):
-        if idxs[i] + T < len(gt_trajs["state"]):
+    i = 0
+    j = 0
+    while j < bsz:
+        if gt_trajs["mask"][idxs[i]] == 0:
+            i += 1
+            continue
+        if idxs[i] + T <= len(gt_trajs["state"]):
             trajs["state"].append(gt_trajs["state"][idxs[i] : idxs[i] + T])
             trajs["action"].append(gt_trajs["action"][idxs[i] : idxs[i] + T])
             trajs["mask"].append(gt_trajs["mask"][idxs[i] : idxs[i] + T])
@@ -344,16 +391,19 @@ def sample_trajectory(gt_trajs, bsz, T):
             )
             trajs["mask"].append(
                 torch.cat(
-                    [gt_trajs["mask"][idxs[i] :], gt_trajs["mask"][:padding] * 0], dim=0
+                    [gt_trajs["mask"][idxs[i] :], gt_trajs["mask"][:padding] * 0.0], dim=0
                 )
             )
+        i += 1
+        j += 1
     trajs["state"] = torch.stack(trajs["state"])
     trajs["action"] = torch.stack(trajs["action"])
     trajs["mask"] = torch.stack(trajs["mask"])
     for i in reversed(range(T)):
-        trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i], dim=1)
+        trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i+1], dim=1)
+    # trajs["state"] = trajs["state"]*trajs["mask"][:, :, None]
+    # trajs["action"] = trajs["action"]*trajs["mask"][:, :, None]
     return trajs
-
 
 def test_qp_mpc(env):
     mpc_controller = PendulumExpert(env)

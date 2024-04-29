@@ -359,7 +359,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.mpc_time = []
         self.network_time = []
 
-    def forward(self, x, x_gt, iter=0, qp_solve=True, lastqp_solve=False):
+    def forward(self, x, x_gt, u_gt, iter=0, qp_solve=True, lastqp_solve=False):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
         Args:
@@ -385,6 +385,9 @@ class DEQMPCPolicy(torch.nn.Module):
         for i in range(self.deq_iter):
             # torch.cuda.synchronize()
             # start = time.time()
+            # if iter == 1000 or iter == 1100 or iter == 1200 or iter== 1300:
+            #     self.tracking_mpc.ctrl.verbose = 1
+            # ipdb.set_trace()
             x_ref, z = self.model(x_ref, z)
             x_ref = x_ref.view(-1, self.T-1, self.np)
             x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
@@ -395,33 +398,44 @@ class DEQMPCPolicy(torch.nn.Module):
             
             # ipdb.set_trace()
             # x_ref = x_gt + x_ref - x_ref.detach().clone()
+            # u_ref = torch.randn_like(x_ref[..., :self.nu])*1.0
+            u_ref = torch.zeros_like(x_ref[..., :self.nu])
             xu_ref = torch.cat(
-                [x_ref, torch.zeros_like(x_ref[..., :self.nu])], dim=-1
+                [x_ref, u_ref], dim=-1
             ).transpose(0, 1)
             x_ref_tr = x_ref.transpose(0, 1)
-            u_ref_tr = torch.zeros_like(x_ref_tr[..., :self.nu])
+            u_ref_tr = u_ref.transpose(0,1)#torch.zeros_like(x_ref_tr[..., :self.nu])
             nominal_states = x_ref.transpose(0, 1)
             nominal_actions = torch.zeros_like(nominal_states[..., :self.nu])
             # torch.cuda.synchronize()
             # end = time.time()
             # self.network_time.append(end-start)
+            # self.tracking_mpc.ctrl.verbose = 1
             if qp_solve:
                 # torch.cuda.synchronize()
                 # start = time.time()
                 nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
-                
+                # ipdb.set_trace()
                 # torch.cuda.synchronize()
                 # end = time.time()
                 # self.mpc_time.append(end-start)
+            # if iter == 1100 or iter == 1200 or iter== 1300:
+            #     nominal_actions = nominal_actions.transpose(0, 1).squeeze(2)
+            #     nominal_states = nominal_states.transpose(0, 1)
+            #     ipdb.set_trace()
+            #     nominal_states = nominal_states.transpose(0, 1)
+            #     nominal_actions = nominal_actions.transpose(0, 1).unsqueeze(2)
             nominal_states_net = x_ref.transpose(0, 1)
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
             # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
             x_ref = nominal_states.transpose(0, 1).reshape(bsz, -1).detach().clone()
+        # ipdb.set_trace()
+        # self.tracking_mpc.ctrl.verbose = 0
         # print(f"Network time: {np.mean(self.network_time)} MPC time: {np.mean(self.mpc_time)}")
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve:
-            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref)
+            nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs
 
@@ -483,14 +497,14 @@ class Tracking_MPC(torch.nn.Module):
         self.R = args.R.to(self.device)
         # self.Qf = args.Qf
         if args.Q is None:
-            self.Q = torch.ones(self.nx, dtype=torch.float32, device=self.device)
+            self.Q = torch.ones(self.nx, dtype=torch.float64, device=self.device)
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
-            self.R = torch.ones(self.nu, dtype=torch.float32, device=self.device)
-        self.Q = torch.cat([self.Q, self.R], dim=0)
+            self.R = torch.ones(self.nu, dtype=torch.float64, device=self.device)
+        self.Q = torch.cat([self.Q, self.R], dim=0).to(torch.float64)
         self.Q = torch.diag(self.Q).repeat(self.T, self.bsz, 1, 1)
 
         self.u_init = torch.randn(
-            self.T, self.bsz, self.nu, dtype=torch.float32, device=self.device
+            self.T, self.bsz, self.nu, dtype=torch.float64, device=self.device
         )
 
         self.single_qp_solve = True if self.qp_iter == 1 else False
@@ -539,8 +553,8 @@ class Tracking_MPC(torch.nn.Module):
         if self.args.solver_type == "al":
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             if self.x_init is None:
-                self.x_init = self.ctrl.x_init = x_ref
-                self.u_init = self.ctrl.u_init = u_ref
+                self.x_init = self.ctrl.x_init = x_ref#.detach().clone()
+                self.u_init = self.ctrl.u_init = u_ref#.detach().clone()
 
         self.compute_p(xu_ref)
         if self.args.solver_type == "al":

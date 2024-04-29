@@ -5,7 +5,9 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 import sys, os, time
-sys.path.insert(0, '/home/sgurumur/locuslab/diff-qp-mpc/')
+
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, project_dir)
 import qpth.qp_wrapper as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
@@ -17,6 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 ## example task : hard pendulum with weird coordinates to make sure direct target tracking is difficult
 
+# torch.set_default_device('cuda')
 
 def seeding(seed=0):
     np.random.seed(seed)
@@ -26,6 +29,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--np", type=int, default=1)
     parser.add_argument("--T", type=int, default=5)
     # parser.add_argument('--dt', type=float, default=0.05)
@@ -60,11 +64,11 @@ def main():
         args.name = args.name + f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_np{args.np}"
         writer = SummaryWriter("./logs/" + args.name)
 
-    env = PendulumEnv(stabilization=False)
-    # env = IntegratorEnv()
+    # env = PendulumEnv(stabilization=False)
+    env = IntegratorEnv()
 
-    # gt_trajs = get_gt_data(args, env, "mpc")
-    gt_trajs = get_gt_data(args, env, "sac")
+    gt_trajs = get_gt_data(args, env, "mpc")
+    # gt_trajs = get_gt_data(args, env, "sac")
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = torch.Tensor([10.0, 1.00]).to(args.device)
     args.R = torch.Tensor([0.001]).to(args.device)
@@ -83,21 +87,22 @@ def main():
     losses = []
     losses_end = []
     time_diffs = []
+    losses_iter = [[] for _ in range(args.deq_iter)]
 
     # run imitation learning using gt_trajs
     for i in range(5000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
-
-        traj_sample["state"] = unnormalize_states(traj_sample["state"])
-        iter_qp_solve = True#False if (i < 1000 or not args.pretrain) else True
+        if isinstance(env, PendulumEnv):
+            traj_sample["state"] = unnormalize_states(traj_sample["state"])
+        iter_qp_solve = False if (i < 1000 and args.pretrain) else True
         qp_solve = iter_qp_solve and args.qp_solve # warm start only after 1000 iterations
         lastqp_solve = args.lastqp_solve and iter_qp_solve
         if args.deq:
             loss = 0.0
             start = time.time()
-            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
+            trajs = policy(traj_sample["state"][:, 0], traj_sample["state"], traj_sample["action"], iter=i, qp_solve=qp_solve, lastqp_solve=lastqp_solve)
             end = time.time()
             for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
                 loss_j = (
@@ -110,7 +115,17 @@ def main():
                     .sum(dim=-1)
                     .mean()
                 )
-                loss += loss_j
+                loss_j_proxy = (
+                    torch.abs(
+                        (
+                            nominal_states_net.transpose(0, 1) - traj_sample["state"]
+                        )
+                        * traj_sample["mask"][:, :, None]
+                    )
+                    .sum(dim=-1)
+                )
+                loss += loss_j + loss_j_proxy.mean()*0.1
+                losses_iter[j].append(loss_j_proxy.mean().item())
             loss_end = (
                 torch.abs(
                     (nominal_states.transpose(0, 1) - traj_sample["state"])
@@ -167,11 +182,13 @@ def main():
                 torch.save(policy.state_dict(), "./model/" + args.name)
                 writer.add_scalar("losses/loss_avg", np.mean(losses) / args.deq_iter, i)
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
+                [writer.add_scalar(f"losses/loss{j}", np.mean(losses_iter[j]), i) for j in range(args.deq_iter)]
 
             
             losses = []
             losses_end = []
             time_diffs = []
+            losses_iter = [[] for _ in range(args.deq_iter)]
             # print('nominal states: ', nominal_states)
             # print('nominal actions: ', nominal_actions)   
 

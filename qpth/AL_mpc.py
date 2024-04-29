@@ -260,12 +260,12 @@ class MPC(Module):
                 x = x.unsqueeze(1).expand(self.T, n_batch, -1).clone()
         x = x.type_as(x0.data)
 
-        if self.verbose > 0:
-            print('Initial mean(cost): {:.4e}'.format(
-                torch.mean(util.get_cost(
-                    self.T, u, cost, dx, x_init=self.x_init
-                )).item()
-            ))
+        # if self.verbose > 0:
+        #     print('Initial mean(cost): {:.4e}'.format(
+        #         torch.mean(util.get_cost(
+        #             self.T, u, cost, dx, x_init=self.x_init
+        #         )).item()
+        #     ))
 
         best = None
         # ipdb.set_trace()
@@ -318,7 +318,7 @@ class MPC(Module):
         # print(dyn_res_clamp_start)
         Q, q = cost.C.double(), cost.c.double()
         cost_lam_hist = [[cost_start], [lamda], [rho]]
-        
+        # self.verbose = 1
         # Augmented Lagrangian updates with broyden for root finding of the residual
         for i in range(self.al_iter):
             xu = torch.cat((x, u), dim=2).detach().clone()
@@ -334,7 +334,7 @@ class MPC(Module):
             # out = util.broyden_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=10, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
             # out = util.LBFGS_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=80, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, idx=True)
             # out = util.Newton_AL(fn, merit_fn, dyn_fn, cost_fn, xu, y, threshold=1e-3, eps=1e-6, ls=True)
-            newton_lamda = lambda Qi: util.NewtonAL.apply(fn, merit_fn, dyn_fn, cost_fn, xu, x0, y, lamda, rho, Qi, q, 1e-3, 1e-6, True)[0]
+            newton_lamda = lambda Qi: util.NewtonAL.apply(fn, merit_fn, dyn_fn, cost_fn, xu, x0, y, lamda, rho, Qi, q, 1e-3, 1e-6, True, self.verbose)[0]
             # ls_lamda = lambda qi: util.CholeskySolver.apply(torch.diag_embed(Q.squeeze()), -qi.squeeze().unsqueeze(-1))
             # q = torch.randn_like(q)
             # util.check_fd_grads(ls_lamda, q, eps=1e-10)
@@ -342,7 +342,7 @@ class MPC(Module):
             # util.check_grads(newton_lamda, q, eps=1e-6)
             merit_hess = lambda xi : self.merit_hessian(xi, Q, q, dx, x0, lamda, rho)
             Hess = None#merit_hess(xu)
-            out = util.NewtonAL.apply(fn, merit_fn, dyn_fn, cost_fn, merit_hess, xu, x0, y, lamda, rho, Q, q, Hess, 1e-3, 1e-6, True)
+            out = util.NewtonAL.apply(fn, merit_fn, dyn_fn, cost_fn, merit_hess, xu, x0, y, lamda, rho, Q, q, Hess, 1e-3, 1e-6, True, self.verbose)
             # out = util.GD_AL(fn, input, threshold=10, eps=1e-6, rho=rho, Hinv=Hinv, ysize=y.shape[-1], ls=True, dyn_fn = dyn_fn, cost_fn = cost_fn)
             # x_res, lam_res = self.grad_res(x, lamda, cost, dx, x0, lamda, rho)    
 
@@ -355,18 +355,21 @@ class MPC(Module):
             with torch.no_grad():
                 dyn_res, dyn_res_clamp = self.dyn_res(torch.cat((x_new, u_new), dim=2), dx, x0, res_type='both')
                 lamda = lamda + rho*dyn_res
-                lamda = torch.cat([lamda[:, :self.neq:], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
+                lamda = torch.cat([lamda[:, :self.neq], torch.clamp(lamda[:, self.neq:], min=0)], dim=1)
                 cost_res = self.compute_cost(out[0], Q, q)
                 dyn_res_clamp = torch.norm(dyn_res_clamp.view(self.n_batch, -1), dim=-1)
+                if self.verbose > 0:
+                    print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
                 # print("iter :", i, dyn_res_clamp.mean().item(), rho.mean().item(), cost_res.mean().item())
                 
-                rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
+                # rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
+                # rho = torch.minimum(rho*10, rho*0 + 100)
+                rho = rho*10
                 cost_lam_hist[0].append(cost_res)
                 cost_lam_hist[1].append(lamda)
                 cost_lam_hist[2].append(rho)
                 # if  torch.logical_or(dyn_res_clamp < self.dyn_res_crit, dyn_res_clamp < dyn_res_clamp_start/self.dyn_res_factor).all():
                 #     break
-
         # ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
@@ -374,9 +377,10 @@ class MPC(Module):
         self.dyn_res_prev = dyn_res_clamp
         self.just_initialized = False
 
-        delta_x = (x - x_old).transpose(0,1).float()
-        delta_u = (u - u_old).transpose(0,1).float()
-        return delta_x, delta_u, None
+        # delta_x = (x - x_old).transpose(0,1).float()
+        # delta_u = (u - u_old).transpose(0,1).float()
+        # return delta_x, delta_u, None
+        return x.transpose(0,1).float(), u.transpose(0,1).float(), None
     
     def merit_function(self, xu, Q, q, dx, x0, lamda, rho, grad=False):
         bsz = xu.size(0)
@@ -393,14 +397,21 @@ class MPC(Module):
     def merit_hessian(self, xu, Q, q, dx, x0, lamda, rho):
         bsz = xu.size(0)
         xi_shape = (1, xu.shape[1], xu.shape[2])
-        # res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
-        dyn_res_fn = lambda xi, xi0 : self.dyn_res(xi.view(xi_shape), dx, xi0.view(1, x0.shape[1]), res_type='clamp')[0]
+        res, res_clamp = self.dyn_res(xu, dx, x0, res_type='both')
+        dyn_res_fn_clamp = lambda xi, xi0 : self.dyn_res(xi.view(xi_shape), dx, xi0.view(1, x0.shape[1]), res_type='clamp')[0]
+        dyn_res_fn = lambda xi, xi0 : self.dyn_res(xi.view(xi_shape), dx, xi0.view(1, x0.shape[1]), res_type='noclamp')[0]
         # constraint jacobian
+        constraint_jac_clamp = vmap(jacrev(dyn_res_fn_clamp))(xu.view(bsz, -1), x0)
         constraint_jac = vmap(jacrev(dyn_res_fn))(xu.view(bsz, -1), x0)
-        constraint_hess = torch.bmm(constraint_jac.permute(0,2,1), constraint_jac)
+        constraint_hess = torch.bmm(constraint_jac_clamp.permute(0,2,1), constraint_jac_clamp)
         if self.diag_cost:
-            Qfull = torch.diag_embed(Q.view(bsz, -1))
-        return Qfull + rho[:,:,None]*constraint_hess
+            Qfull = torch.diag_embed(Q.reshape((bsz, -1)))
+        Hess = Qfull + rho[:,:,None]*constraint_hess
+        Hess_clip = Qfull + torch.clamp(rho[:,:,None], max=100)*constraint_hess
+        # print("ineqjac :", constraint_jac_clamp[:, 6:].norm().item(), constraint_jac[:, 6:].norm().item(), res_clamp[:,6:].norm().item(), res[:,6:].norm().item())
+        # print(constraint_hess.norm().item(), Qfull.norm().item(), constraint_jac_clamp.norm().item(), constraint_jac.norm().item())
+        # ipdb.set_trace()
+        return Hess, Hess#_clip
     def dyn_res_eq(self, x, u, dx, x0):
         " split x into state and control and compute dynamics residual using dx"
         # ipdb.set_trace()
@@ -550,11 +561,11 @@ class MPC(Module):
         n_not_improved = 0
         # xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
         # cost_total = self.compute_cost(xhats_qpf, cost.C, cost.c)
-        delta_x, delta_u, _ = self.single_qp(x, u, dx, x0, cost)
+        x, u, _ = self.single_qp(x, u, dx, x0, cost)
         # with torch.no_grad():
         #     _, _, alpha, cost_total = self.line_search(x, u, delta_x, delta_u, dx, x0, cost)
-        x = x + delta_x #* alpha
-        u = u + delta_u# * alpha
+        # x = x + delta_x #* alpha
+        # u = u + delta_u# * alpha
         # xhats_qpf = torch.cat((x, u), dim=2).transpose(0,1)
         # cost_total = self.compute_cost(xhats_qpf, cost.C, cost.c)
         return x, u, 0
