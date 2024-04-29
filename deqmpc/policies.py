@@ -133,8 +133,8 @@ class DEQMPCPolicy(torch.nn.Module):
             if qp_solve:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
-                out_aux_dict["x"] = nominal_states.detach().clone()
-                out_aux_dict["u"] = nominal_actions.detach().clone()
+                out_aux_dict["x"] = nominal_states
+                out_aux_dict["u"] = nominal_actions
             nominal_states_net = 1*x_ref
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
