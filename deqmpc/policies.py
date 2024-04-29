@@ -84,6 +84,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.nq = args.nq
         self.T = args.T
         self.dt = env.dt
+        self.bsz = args.bsz
         self.device = args.device
         self.deq_iter = args.deq_iter
         self.model = DEQLayer(args, env)  #TODO different types
@@ -108,91 +109,148 @@ class DEQMPCPolicy(torch.nn.Module):
         x_ref = x_ref.view(-1, self.T, self.nx)
         nominal_actions = torch.zeros((x.shape[0], self.T, self.nu), device=self.device)
         # x_ref = x_gt.view(x_ref.shape)
-        z = self.model.init_z(x.shape[0]).to(self.device)
-        out_aux_dict = {"z": z, "x": x_ref[:, 1:]}
+        z = self.model.init_z(self.bsz).to(self.device)
+        out_aux_dict = {"z": z, "x": x_ref[:, 1:], 'u': nominal_actions}
 
-        # initialize trajs list
-        trajs = []
-        bsz = x.shape[0]
         if self.args.solver_type == "al":
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
 
         # run the DEQ layer for deq_iter iterations
+        trajs, dyn_res = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
+        return trajs, dyn_res
+
+    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=True, lastqp_solve=False):   
+        trajs = []    
         for i in range(self.deq_iter):
-            in_obs_dict = {"o": x}
+            in_obs_dict = {"o": obs}
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
             x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
-            nominal_states = 1*x_ref
+            nominal_states_net = x_ref
+            nominal_states = nominal_states_net
+            nominal_actions = u_ref
             if qp_solve:
+                # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
+                out_aux_dict["x_ref"] = nominal_states.detach().clone()
+                out_aux_dict["u_ref"] = nominal_actions.detach().clone()
             nominal_states_net = 1*x_ref
-            x_ref = 1*nominal_states
-            if lastqp_solve and not qp_solve:
-                x_ref = 1*nominal_states
-            else:
-                x_ref = nominal_states.detach().clone()
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
-            
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
-        ), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
+        ), u_gt.view(-1, self.nu).double()).view(self.bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve and not qp_solve:
             nominal_states, nominal_actions = self.tracking_mpc(
-                x, xu_ref, x_ref, u_ref)
-            trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
+                x_t, xu_ref, x_ref, u_ref)
+            trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)        
         return trajs, dyn_res
 
 class DEQMPCPolicyHistory(DEQMPCPolicy):
     def __init__(self, args, env):
         super().__init__(args, env)
         self.H = args.H
-        self.model = DEQLayerHistory(args, env).to(self.device)  #TODO different types
+        if args.deq_out_type == 1:  # deq outputs only state predictions
+            self.model = DEQLayerHistoryState(args, env).to(self.device)  
+        elif args.deq_out_type == 2:  # deq outputs both state and action predictions
+            self.model = DEQLayerHistory(args, env).to(self.device)
+        else:
+            raise NotImplementedError
 
     def forward(self, obs_hist, x_gt, u_gt, mask, iter=0, qp_solve=True, lastqp_solve=False):
         """
         Args:
             x_hist (tensor H x bsz x nx): input observation history, including current observation
         """
-        bsz = obs_hist.shape[0]
         if (self.H == 1):
-            x_t = obs_hist.reshape(bsz, self.nx)
+            x_t = obs_hist.reshape(self.bsz, self.nx)
         else:
-            x_t = obs_hist[...,-1].reshape(bsz, self.nx)
+            x_t = obs_hist[:,-1].reshape(self.bsz, self.nx)
         x_ref = torch.cat([x_t]*self.T, dim=-1).detach().clone()
         x_ref = x_ref.view(-1, self.T, self.nx)
-        nominal_actions = torch.zeros((bsz, self.T, self.nu), device=self.device)
-        z = self.model.init_z(x_t.shape[0]).to(self.device)
-        out_aux_dict = {"z": z, "x": x_ref}
+        nominal_actions = torch.zeros((self.bsz, self.T, self.nu), device=self.device)
+        z = self.model.init_z(self.bsz).to(self.device)
+        out_aux_dict = {"z": z, "x": x_ref, "u": nominal_actions}
 
-        trajs = []
         if self.args.solver_type == "al":
             self.tracking_mpc.reinitialize(x_t, mask[:, :, None])
 
-        for i in range(self.deq_iter):
-            in_obs_dict = {"o": obs_hist}
-            out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
-            x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
-            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
-            nominal_states = 1*x_ref
-            if qp_solve:
-                # ipdb.set_trace()
-                nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
-            nominal_states_net = 1*x_ref
-            x_ref = 1*nominal_states
-            trajs.append((nominal_states_net, nominal_states, nominal_actions))
-
-        dyn_res = (self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
-        ), u_gt.view(-1, self.nu).double()).view(bsz, self.T, -1)[:, :-1] - x_ref.view(bsz, self.T, -1)[:, 1:]).view(bsz, -1).norm(dim=1).mean().item()
-        self.network_time = []
-        self.mpc_time = []
-        if lastqp_solve and not qp_solve:
-            nominal_states, nominal_actions = self.tracking_mpc(
-                x_t, xu_ref, x_ref, u_ref)
-            trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
+        # run the DEQ layer for deq_iter iterations
+        trajs, dyn_res = self.deqmpc_iter(obs_hist, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
         return trajs, dyn_res
 
+
+######################
+# Loss computation
+######################
+
+def compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs):
+    loss = 0.0
+    # supervise each DEQ iteration
+    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
+        # supervise the output of deq only (state prediction of T steps)
+        # hardcode the out_type to 1 because the output of DEQ is just state prediction atm
+        loss += add_loss_based_on_out_type(policy, policy.out_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = add_loss_based_on_out_type(
+        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    return loss, loss_end
+
+
+def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
+    loss = 0.0
+    # supervise each DEQMPC iteration
+    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
+        loss += add_loss_based_on_out_type(policy, policy.out_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = add_loss_based_on_out_type(
+        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    return loss, loss_end
+
+
+def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
+    nominal_states, nominal_actions = trajs
+    loss = add_loss_based_on_out_type(
+        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    loss_end = torch.Tensor([0.0])
+    return loss, loss_end
+
+
+def add_loss_based_on_out_type(policy, out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
+    loss = 0.0
+    if out_type == 0 or out_type == 2:
+        # supervise action
+        loss += torch.abs((nominal_actions - gt_actions) *
+                          gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
+        # ipdb.set_trace()
+    if out_type == 1 or out_type == 2:
+        # supervise state
+        loss += torch.abs((nominal_states - gt_states) *
+                          gt_mask[:, :, None]).sum(dim=-1).mean()
+    if out_type == 3:
+        # supervise configuration
+        loss += torch.abs((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
+                          gt_mask[:, :, None]).sum(dim=-1).mean()
+    return loss
+
+
+def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
+    if deq:
+        # deq or deqmpc
+        if deqmpc:
+            # full deqmpc
+            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
+        else:
+            # deq -- pretrain
+            return compute_loss_deq(policy.model, gt_states, gt_actions, gt_mask, trajs)
+    else:
+        # vanilla behavior cloning
+        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)
+
+
+######################
+# Other policies
+######################
 
 class FFDNetwork(torch.nn.Module):
     """
@@ -450,70 +508,3 @@ class NNPolicy(torch.nn.Module):
             actions = None
         return states, actions
 
-
-######################
-# Loss computation
-######################
-
-def compute_loss_deq(policy, gt_states, gt_actions, gt_mask, trajs):
-    loss = 0.0
-    # supervise each DEQ iteration
-    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        # supervise the output of deq only (state prediction of T steps)
-        # hardcode the out_type to 1 because the output of DEQ is just state prediction atm
-        loss += add_loss_based_on_out_type(policy, 1, gt_states,
-                                           gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = add_loss_based_on_out_type(
-        policy, 1, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    return loss, loss_end
-
-
-def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
-    loss = 0.0
-    # supervise each DEQMPC iteration
-    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss += add_loss_based_on_out_type(policy, policy.out_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = add_loss_based_on_out_type(
-        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    return loss, loss_end
-
-
-def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
-    nominal_states, nominal_actions = trajs
-    loss = add_loss_based_on_out_type(
-        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = torch.Tensor([0.0])
-    return loss, loss_end
-
-
-def add_loss_based_on_out_type(policy, out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
-    loss = 0.0
-    if out_type == 0 or out_type == 2:
-        # supervise action
-        loss += torch.abs((nominal_actions - gt_actions) *
-                          gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
-        # ipdb.set_trace()
-    if out_type == 1 or out_type == 2:
-        # supervise state
-        loss += torch.abs((nominal_states - gt_states) *
-                          gt_mask[:, :, None]).sum(dim=-1).mean()
-    if out_type == 3:
-        # supervise configuration
-        loss += torch.abs((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
-                          gt_mask[:, :, None]).sum(dim=-1).mean()
-    return loss
-
-
-def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
-    if deq:
-        # deq or deqmpc
-        if deqmpc:
-            # full deqmpc
-            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
-        else:
-            # deq -- pretrain
-            return compute_loss_deq(policy.model, gt_states, gt_actions, gt_mask, trajs)
-    else:
-        # vanilla behavior cloning
-        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)
