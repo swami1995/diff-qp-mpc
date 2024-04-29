@@ -64,8 +64,9 @@ def main():
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--dtype", type=str, default="double")
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
-    parser.add_argument("--deq_out_type", type=int, default=2)  # previously 1
+    parser.add_argument("--deq_out_type", type=int, default=1)  # previously 1
     parser.add_argument("--policy_out_type", type=int, default=1)  # previously 1
+    parser.add_argument("--deq_reg", type=float, default=0.1) # previously 0.0
     # check noise_utils.py for noise_type
     parser.add_argument("--data_noise_type", type=int, default=0)
     parser.add_argument("--data_noise_std", type=float, default=0.05)
@@ -133,6 +134,8 @@ def main():
     losses_end = []
     time_diffs = []
     dyn_resids = []
+    losses_var = []
+    losses_iter = []
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -177,7 +180,11 @@ def main():
         if (i % 10000 == 0):
             ipdb.set_trace()
 
-        loss, loss_end = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
+        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
+        loss = loss_dict["loss"]
+        loss_end = loss_dict["loss_end"]
+        losses_var.append(loss_dict["losses_var"])
+        losses_iter.append(loss_dict["losses_iter"])
         time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
@@ -214,6 +221,8 @@ def main():
             losses = []
             losses_end = []
             time_diffs = []
+            losses_iter = [[] for _ in range(args.deq_iter)]
+            losses_var = [[] for _ in range(args.deq_iter)]
 
 
             # print('nominal states: ', nominal_states)
