@@ -111,6 +111,7 @@ class DEQMPCPolicy(torch.nn.Module):
         nominal_actions = torch.zeros((x.shape[0], self.T, self.nu), device=self.device)
         # x_ref = x_gt.view(x_ref.shape)
         z = self.model.init_z(self.bsz).to(self.device)
+        # ipdb.set_trace()
         out_aux_dict = {"z": z, "x": x_ref[:, 1:], 'u': nominal_actions}
 
         if self.args.solver_type == "al":
@@ -133,7 +134,7 @@ class DEQMPCPolicy(torch.nn.Module):
             if qp_solve:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
-                out_aux_dict["x"] = nominal_states.detach().clone()
+                out_aux_dict["x"] = nominal_states[:,1:].detach().clone()
                 out_aux_dict["u"] = nominal_actions.detach().clone()
             nominal_states_net = 1*x_ref
             trajs.append((nominal_states_net, nominal_states, nominal_actions))

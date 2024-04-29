@@ -116,8 +116,8 @@ def main():
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
     if args.deq:
-        # policy = DEQMPCPolicy(args, env).to(args.device)
-        policy = DEQMPCPolicyHistory(args, env).to(args.device)
+        policy = DEQMPCPolicy(args, env).to(args.device)
+        # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -142,6 +142,7 @@ def main():
         # sample bsz random trajectories from gt_trajs and a random time step for each
         traj_sample = sample_trajectory(gt_trajs, args.bsz, args.H, args.T)
         traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
+        # ipdb.set_trace()
 
         if args.env == "pendulum":
             traj_sample["state"] = utils.unnormalize_states_pendulum(
@@ -156,6 +157,7 @@ def main():
         lastqp_solve = args.lastqp_solve and pretrain_done
 
         gt_obs = traj_sample["obs"]
+        # ipdb.set_trace()
         noisy_obs = noise_utils.corrupt_observation(
             gt_obs, args.data_noise_type, args.data_noise_std, args.data_noise_mean)
         if args.H == 1:
