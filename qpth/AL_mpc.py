@@ -247,8 +247,8 @@ class MPC(Module):
             cost = al_utils.QuadCost(cost.C.diagonal(dim1=-2, dim2=-1), cost.c)
         x, u = self.al_solve(x, u, dx, dx_jac, x0, cost)
         
-        self.x_init = x
-        self.u_init = u
+        self.x_init = x.detach().clone()
+        self.u_init = u.detach().clone()
         return (x, u)
     
     def al_solve(self, x, u, dx, dx_jac, x0, cost, lamda_init=None, rho_init=None):
@@ -265,7 +265,6 @@ class MPC(Module):
             rho = self.rho_prev
         else:
             rho = rho_init
-        # ipdb.set_trace()
         x_old, u_old = x, u
         with torch.no_grad():
             dyn_res_clamp_start = self.dyn_res(torch.cat((x, u), dim=2), dx, x0, res_type='clamp').view(self.n_batch, -1)
@@ -277,11 +276,14 @@ class MPC(Module):
                 rho_hist = torch.stack(self.cost_lam_hist[2][::-1], dim=0)
                 lamda, rho = al_utils.warm_start_al(x, lamda, rho, cost_start, cost_hist, lamda_hist, rho_hist)        
         rho_init = rho
-        Q = cost.C.to(self.dtype)
-        q = cost.c.to(self.dtype)
+        Q = cost.C#.to(self.dtype)
+        q = cost.c#.to(self.dtype)
         cost_lam_hist = [[cost_start], [lamda], [rho]]
         # end1 = time.time()
         # Augmented Lagrangian updates
+        # self.verbose = 1
+
+        # ipdb.set_trace()
         for i in range(self.al_iter):
             # start2 = time.time()
             xu = torch.cat((x, u), dim=2).detach().clone()
@@ -305,16 +307,16 @@ class MPC(Module):
                     print("iter :", i, dyn_res_clamp.mean().item(), cost_res.mean().item(), rho.mean().item())
                 # print("iter :", i, dyn_res_clamp.mean().item(), cost_res.mean().item(), rho.mean().item())
                 
-                rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
-                # rho = rho * 10
+                # rho = torch.minimum(rho*10*status[:,None] + rho*(1-status[:,None]), rho_init*100)
+                rho = rho * 10
                 cost_lam_hist[0].append(cost_res)
                 cost_lam_hist[1].append(lamda)
                 cost_lam_hist[2].append(rho)
             # end3 = time.time()
             # print("outer time: ", end1 - start1, end2 - start2, end3 - end2)
         
-        # if self.verbose > 0:
-        #     ipdb.set_trace()
+        if self.verbose > 0:
+            ipdb.set_trace()
         self.cost_lam_hist = cost_lam_hist
         self.lamda_prev = lamda
         self.rho_prev = rho

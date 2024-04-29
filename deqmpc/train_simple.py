@@ -164,7 +164,7 @@ def main():
                 )
                 losses_var[j].append(torch.var(loss_j_proxy).item())
                 loss_j = loss_j.mean()
-                loss += loss_j
+                loss += loss_j + 0.1*loss_j_proxy.mean()
                 losses_iter[j].append(loss_j_proxy.mean().item())
                 
                 # gt_state = traj_sample["state"]

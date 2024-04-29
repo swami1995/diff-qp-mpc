@@ -388,9 +388,10 @@ class DEQMPCPolicy(torch.nn.Module):
             # torch.cuda.synchronize()
             # start = time.time()
             # x_ref = (x_ref.view(bsz, self.T, -1)*mask[:, :, None]).view(bsz, -1)
-            if iter == 1000 or iter == 1100 or iter == 1200 or iter== 1300:
-                self.tracking_mpc.ctrl.verbose = 1
+            # if iter == 1000 or iter == 1100 or iter == 1200 or iter== 1300:
+            #     self.tracking_mpc.ctrl.verbose = 1
             #     ipdb.set_trace()
+            # ipdb.set_trace()
             x_ref, z = self.model(x_ref, z)
             x_ref = x_ref.view(-1, self.T-1, self.np)
             x_ref = torch.cat([x[:, None, :], x_ref], dim=1)
@@ -409,6 +410,7 @@ class DEQMPCPolicy(torch.nn.Module):
             # u_gt = u_gt[0][None].repeat(bsz, 1, 1)
             # x = x[0][None].repeat(bsz, 1)
             # x_ref = x_gt#
+            # u_ref = torch.randn_like(x_ref[..., :self.nu])*1.0#
             u_ref = torch.zeros_like(x_ref[..., :self.nu])
             xu_ref = torch.cat(
                 [x_ref, u_ref], dim=-1
@@ -427,7 +429,7 @@ class DEQMPCPolicy(torch.nn.Module):
                 # ipdb.set_trace()
                 # self.tracking_mpc.ctrl.al_iter = 2*(i+1)
                 nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
-                
+                # ipdb.set_trace()
                 # torch.cuda.synchronize()
                 # end = time.time()
                 # self.mpc_time.append(end-start)
@@ -436,7 +438,7 @@ class DEQMPCPolicy(torch.nn.Module):
                 # ipdb.set_trace()
             nominal_states_net = x_ref#.transpose(0, 1)
             if lastqp_solve:
-                trajs.append((nominal_states_net, nominal_states.detach().clone(), nominal_actions.detach().clone()))
+                trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
             else:
                 trajs.append((nominal_states_net, nominal_states, nominal_actions))
             # x_ref = nominal_states_net.transpose(0, 1).reshape(bsz, -1)#.detach().clone().reshape(bsz, -1)
@@ -445,7 +447,8 @@ class DEQMPCPolicy(torch.nn.Module):
             else:
                 x_ref = nominal_states.reshape(bsz, -1).detach().clone()
             # x_ref = x_ref.reshape(bsz, -1).detach().clone()
-        self.tracking_mpc.ctrl.verbose = 0
+        # ipdb.set_trace()
+        # self.tracking_mpc.ctrl.verbose = 0
         # print(f"Network time: {np.mean(self.network_time)} MPC time: {np.mean(self.mpc_time)}")
         dyn_res = (self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(), nominal_actions.view(-1, self.nu).double()).view(bsz, self.T, -1)[:, :-1] - x_ref.view(bsz, self.T, -1)[:, 1:]).view(bsz, -1).norm(dim=1).mean().item()
         # dyn_res = (self.tracking_mpc.dyn(x_gt.view(-1, self.nx).double(), u_gt.view(-1, self.nu).double()).view(bsz, 3, -1)[:, :-1] - x_gt[:, 1:]).view(bsz, -1).norm(dim=1).mean().item()
@@ -454,7 +457,6 @@ class DEQMPCPolicy(torch.nn.Module):
         if lastqp_solve:
             # for i in range(5):
             #     nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
-            
             nominal_states, nominal_actions = self.tracking_mpc(x, xu_ref, x_ref_tr, u_ref_tr)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)
         return trajs, dyn_res
@@ -540,7 +542,7 @@ class Tracking_MPC(torch.nn.Module):
                 u_upper=self.u_upper,
                 # al_iter=self.qp_iter,
                 exit_unconverged=False,
-                eps=1e-5,
+                eps=1e-2,
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
@@ -574,10 +576,11 @@ class Tracking_MPC(torch.nn.Module):
         if self.args.solver_type == "al":
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             if self.x_init is None:
-                self.x_init = self.ctrl.x_init = x_ref
-                self.u_init = self.ctrl.u_init = u_ref
+                self.x_init = self.ctrl.x_init = x_ref.detach().clone()
+                self.u_init = self.ctrl.u_init = u_ref.detach().clone()
 
         self.compute_p(xu_ref)
+        # ipdb.set_trace()
         if self.args.solver_type == "al":
             cost = al_utils.QuadCost(self.Q, self.p)
         else:

@@ -95,7 +95,9 @@ def merit_grad_hessian(
     if diag_cost:
         Qfull = torch.diag_embed(Q.reshape(bsz, -1))
     merit_hess = Qfull + rho[:, :, None] * constraint_hess
-    return merit_grad, merit_hess
+    merit_hess_clip = Qfull + torch.clamp(rho[:, :, None], max=10) * constraint_hess
+    # print(constraint_hess.norm().item(), Qfull.norm().item(), constraint_jac_clamp.norm().item(), constraint_jac.norm().item())
+    return merit_grad, merit_hess, merit_hess_clip
 
 
 def merit_hessian(
@@ -189,13 +191,13 @@ def dyn_res_eq(
     x_next = dx(x[:, :-1].reshape(-1, xsize), u[:, :-1].reshape(-1, usize)).view(
         bsz, T - 1, xsize
     )
-    res = x[:, 1:, :] - x_next
+    res_d = x[:, 1:, :] - x_next
     res_init = (x[:, 0, :] - x0).reshape(bsz, 1, -1)
     # if self.add_goal_constraint:
     #     res_goal = (x[:,-1,:] - self.x_goal).reshape(bsz, -1)
     #     res = torch.cat((res, res_init, res_goal), dim=1)
     # else:
-    res = torch.cat((res, res_init), dim=1)
+    res = torch.cat((res_d, res_init), dim=1)
     res = res.reshape(bsz, -1)
     return res
 
@@ -285,12 +287,16 @@ def dyn_res_ineq(x, u, x0, x_lower, x_upper, u_lower, u_upper):
 
 def dyn_res_ineq_jac(x, u, x0, x_lower, x_upper, u_lower, u_upper):
     bsz, T, x_size = x.shape
-    res, res_clamp, id_xu = dyn_res_ineq_jac_jit(
+    res, res_clamp, id_xu, clamp_idx = dyn_res_ineq_jac_jit(
         x, u, x0, x_lower, x_upper, u_lower, u_upper
     )
     id_xu = torch.block_diag(*id_xu)
     id_xu = id_xu[None].repeat(bsz, 1, 1)
-    id_xu_clamp = id_xu * (res_clamp > 0).float()[..., None]
+    # ipdb.set_trace()
+    # id_xu_clamp = id_xu * (res_clamp > 0).float()[..., None]
+    id_xu_clamp = id_xu * clamp_idx.float()[..., None]
+    # print("ineqjac :", id_xu_clamp.norm().item(), id_xu.norm().item(), res_clamp.norm().item(), res.norm().item())
+    # ipdb.set_trace()
     return res, res_clamp, id_xu, id_xu_clamp
 
 
@@ -301,13 +307,14 @@ def dyn_res_ineq_jac_jit(x, u, x0, x_lower, x_upper, u_lower, u_upper):
     res = None
     res = torch.cat((u - u_upper, -u + u_lower), dim=2)
     res = res.reshape(bsz, -1)
+    clamp_idx = res >= 0
     res_clamp = torch.clamp(res, min=0)
     id_u = torch.eye(u_size, device=x.device).to(x)
     id_u = torch.cat((id_u, -id_u), dim=0)
     id_x = torch.zeros((2 * u_size, x_size), device=x.device).to(x)
     id_xu = torch.cat((id_x, id_u), dim=1)
     id_xu = [id_xu] * T
-    return res, res_clamp, id_xu
+    return res, res_clamp, id_xu, clamp_idx
 
 
 def dyn_res(xu, dx, x0, x_lower=None, x_upper=None, u_lower=None, u_upper=None):
@@ -392,19 +399,23 @@ class NewtonAL(torch.autograd.Function):
         if verbose:
             print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), merit.mean().item())
         stepsz = 1
-        cholesky_fail = torch.tensor(False)
+        cholesky_fail = torch.tensor(True)
         merit_delta = 1
-        while (
-            merit_delta > threshold*1e-8 and nstep < max_newton_steps):# and stepsz > 1e-8
+        # ipdb.set_trace()
+        # while (
+        #     merit_delta > threshold*1e-8 and nstep < max_newton_steps):# and stepsz > 1e-8
+        while nstep < 4 and stepsz > 1e-8:
         # ):  # and update_norm > 1e-3*init_update_norm:
             # ipdb.set_trace()
             nstep += 1
             # Compute the hessian and gradient of the augmented lagrangian
             with torch.enable_grad():
                 x_est.requires_grad_(True)
-                grad, Hess = meritGHfnQ(x_est)
+                grad, Hess, Hess_clip = meritGHfnQ(x_est)
+            # ipdb.set_trace()
             # Solve for the newton step
             stepsz = 0
+            # Hess_clip = Hess = torch.eye(Hess.shape[-1], device=Hess.device, dtype=Hess.dtype).repeat(bsz, 1, 1) 
             if not cholesky_fail:
                 U, info = torch.linalg.cholesky_ex(Hess)
                 update = -torch.cholesky_solve(grad.reshape(bsz, -1, 1), U).reshape(
@@ -416,41 +427,48 @@ class NewtonAL(torch.autograd.Function):
                     )
                     cholesky_fail = torch.tensor(True)
             else:
+                U = Hess
+                # update = -grad.reshape(#torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(
+                #     bsz, T, n_elem
+                # )
                 update = -torch.linalg.solve(Hess, grad.reshape(bsz, -1)).reshape(
                     bsz, T, n_elem
                 )
+                # update = torch.round(update, decimals=2)
 
             if ls:
-                x_est, new_merit, stepsz, status = line_search_newton(
+                x_est1, new_merit, stepsz, status = line_search_newton(
                     update, x_est, meritfnQ, merit, x0
                 )
             else:
-                x_est = x_est + update
+                x_est1 = x_est + update
                 new_merit = meritfnQ(x_est)
 
             if (
-                x_est.isnan().sum() > 0 or x_est.isinf().sum() > 0
+                x_est1.isnan().sum() > 0 or x_est1.isinf().sum() > 0
             ):  # or new_merit.isnan().sum() > 0 or new_merit.isinf().sum() > 0:
                 ipdb.set_trace()
-            cost = cost_fnQ(x_est)
-            dyn_res = dyn_fn(x_est)
+            cost = cost_fnQ(x_est1)
+            dyn_res = dyn_fn(x_est1)
             new_dyn_res = torch.norm(dyn_res).item()
             if verbose:
                 print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
-
+            # if nstep == 3:
+            #     ipdb.set_trace()
+            x_est = x_est1
             ## exit creteria
-            # if (
-            #     abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
-            #     or new_dyn_res < 1e-3
-            # ):
-            #     break
+            if (
+                abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
+                or new_dyn_res < 1e-3
+            ):
+                break
 
             old_dyn_res = new_dyn_res
             merit_delta = 1000# ((new_merit - merit) / new_merit).abs().max().item()
             merit = new_merit
 
         try:
-            ctx.save_for_backward(Hess, U, x_est, cholesky_fail)
+            ctx.save_for_backward(Hess_clip, U, x_est, cholesky_fail)
         except:
             ipdb.set_trace()
         Us, VTs = None, None
@@ -507,7 +525,7 @@ def line_search_newton(update, x_est, meritfnQ, merit, x0):
         .expand(n_ls, x_est.shape[0])
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
-    x_next[:, :, 0, :xsize] = x0[None]
+    # x_next[:, :, 0, :xsize] = x0[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
     # new2_objective = torch.vmap(meritfnQ)(x_next)
     new2_objective = meritfnQ(x_next).reshape(n_ls, -1)

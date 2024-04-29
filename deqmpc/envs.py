@@ -98,7 +98,8 @@ class PendulumEnv:
         self.action_space = Spaces(-np.array([self.max_torque]), np.array([self.max_torque]), (self.nu, 2)) #np.array([[-2, 2]])                
         self.stabilization = stabilization
         self.Qlqr = torch.Tensor([10.0, 1.00])
-        self.Rlqr = torch.Tensor([0.0000000])
+        # self.Rlqr = torch.Tensor([0.0000000])
+        self.Rlqr = torch.Tensor([0.001])
 
     def seed(self, seed):
         """
@@ -264,7 +265,7 @@ class IntegratorEnv:
         self.action_space = Spaces(-np.full(self.nu, self.max_acc), np.full(self.nu, self.max_acc), (self.nu, 2))
 
         self.Qlqr = torch.Tensor([10.0, 1.00])
-        self.Rlqr = torch.Tensor([0.00001])
+        self.Rlqr = torch.Tensor([0.001])
 
     def seed(self, seed):
         """
