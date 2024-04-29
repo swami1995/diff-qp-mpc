@@ -333,7 +333,7 @@ class Tracking_MPC(torch.nn.Module):
                 u_upper=self.u_upper,
                 # al_iter=self.qp_iter,
                 exit_unconverged=False,
-                eps=1e-5,
+                eps=1e-2,
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
@@ -367,10 +367,11 @@ class Tracking_MPC(torch.nn.Module):
         if self.args.solver_type == "al":
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             if self.x_init is None:
-                self.x_init = self.ctrl.x_init = x_ref
-                self.u_init = self.ctrl.u_init = u_ref
+                self.x_init = self.ctrl.x_init = x_ref.detach().clone()
+                self.u_init = self.ctrl.u_init = u_ref.detach().clone()
 
         self.compute_p(xu_ref)
+        # ipdb.set_trace()
         if self.args.solver_type == "al":
             cost = al_utils.QuadCost(self.Q, self.p)
         else:
