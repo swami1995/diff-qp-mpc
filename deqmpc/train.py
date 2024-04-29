@@ -39,16 +39,16 @@ def main():
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--nq", type=int, default=1)  # observation (configurations) for the policy
     parser.add_argument("--T", type=int, default=5)  # look-ahead horizon length (including current time step)
-    parser.add_argument("--H", type=int, default=1)  # observation history length (including current time step)
+    parser.add_argument("--H", type=int, default=2)  # observation history length (including current time step)
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
-    parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=128)
+    parser.add_argument("--bsz", type=int, default=256)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
-    parser.add_argument("--hdim", type=int, default=128)
+    parser.add_argument("--hdim", type=int, default=256)
     parser.add_argument("--deq_iter", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", type=str, default=None)
@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--dtype", type=str, default="double")
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
-    parser.add_argument("--deq_out_type", type=int, default=1)  # previously 1
+    parser.add_argument("--deq_out_type", type=int, default=2)  # previously 1
     parser.add_argument("--policy_out_type", type=int, default=1)  # previously 1
     # check noise_utils.py for noise_type
     parser.add_argument("--data_noise_type", type=int, default=0)
@@ -174,7 +174,7 @@ def main():
         else:
             trajs = policy(obs_in)
         
-        if (i % 1000 == 0):
+        if (i % 10000 == 0):
             ipdb.set_trace()
 
         loss, loss_end = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
