@@ -179,8 +179,8 @@ class DEQMPCPolicyHistory(DEQMPCPolicy):
             x_ref = 1*nominal_states
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
 
-        dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
-        ), u_gt.view(-1, self.nu).double()).view(bsz, -1).norm(dim=1).mean().item()
+        dyn_res = (self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
+        ), u_gt.view(-1, self.nu).double()).view(bsz, self.T, -1)[:, :-1] - x_ref.view(bsz, self.T, -1)[:, 1:]).view(bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve and not qp_solve:
@@ -272,7 +272,7 @@ class Tracking_MPC(torch.nn.Module):
                 u_upper=self.u_upper,
                 # al_iter=self.qp_iter,
                 exit_unconverged=False,
-                eps=1e-5,
+                eps=1e-2,
                 n_batch=self.bsz,
                 backprop=False,
                 verbose=0,
@@ -306,10 +306,11 @@ class Tracking_MPC(torch.nn.Module):
         if self.args.solver_type == "al":
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             if self.x_init is None:
-                self.x_init = self.ctrl.x_init = x_ref
-                self.u_init = self.ctrl.u_init = u_ref
+                self.x_init = self.ctrl.x_init = x_ref.detach().clone()
+                self.u_init = self.ctrl.u_init = u_ref.detach().clone()
 
         self.compute_p(xu_ref)
+        # ipdb.set_trace()
         if self.args.solver_type == "al":
             cost = al_utils.QuadCost(self.Q, self.p)
         else:
