@@ -20,7 +20,7 @@ import torch
 import torch.autograd as autograd
 
 
-torch.set_default_device('cuda')
+# torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
 # import tensorboard from pytorch
 
@@ -43,7 +43,7 @@ def main():
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=256)
     parser.add_argument("--device", type=str, default=None)
@@ -135,7 +135,7 @@ def main():
     time_diffs = []
     dyn_resids = []
     losses_var = []
-    losses_iter = []
+    losses_iter = [[] for _ in range(args.deq_iter)]
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -169,7 +169,7 @@ def main():
         gt_actions = traj_sample["action"]
         gt_states = traj_sample["state"]
         gt_mask = traj_sample["mask"]
-        
+        # ipdb.set_trace()
         if args.deq:
             start = time.time()
             trajs, dyn_res = policy(obs_in, gt_states, gt_actions,
@@ -186,7 +186,7 @@ def main():
         loss = loss_dict["loss"]
         loss_end = loss_dict["loss_end"]
         losses_var.append(loss_dict["losses_var"])
-        losses_iter.append(loss_dict["losses_iter"])
+        [losses_iter[k].append(loss_dict["losses_iter"][k]) for k in range(args.deq_iter)]
         time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
@@ -194,6 +194,7 @@ def main():
         losses_end.append(loss_end.item())
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
+        # ipdb.set_trace()
         optimizer.step()
 
         # Printing
@@ -219,6 +220,7 @@ def main():
                 writer.add_scalar("losses/loss_avg",
                                   np.mean(losses) / args.deq_iter, i)
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
+                [writer.add_scalar(f"losses/loss{k}", np.mean(losses_iter[k]), i) for k in range(len(losses_iter))]
 
             losses = []
             losses_end = []

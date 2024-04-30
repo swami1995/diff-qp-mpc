@@ -101,7 +101,7 @@ def merit_grad_hessian(
     merit_hess = Qfull + rho[:, :, None] * constraint_hess
     merit_hess_clip = Qfull + torch.clamp(rho[:, :, None], max=10) * constraint_hess
     # print(constraint_hess.norm().item(), Qfull.norm().item(), constraint_jac_clamp.norm().item(), constraint_jac.norm().item())
-    return merit_grad, merit_hess, merit_hess_clip
+    return merit_grad, merit_hess, merit_hess#_clip
 
 
 def merit_hessian(
@@ -409,10 +409,10 @@ class NewtonAL(torch.autograd.Function):
         stepsz = 1
         cholesky_fail = torch.tensor(True)
         merit_delta = 1
-        while (
-                merit_delta > threshold*1e-8 and nstep < max_newton_steps):  # and stepsz > 1e-8
+        # while (
+        #         merit_delta > threshold*1e-8 and nstep < max_newton_steps):  # and stepsz > 1e-8
             # ):  # and update_norm > 1e-3*init_update_norm:
-            #while nstep < 4 and stepsz > 1e-8:
+        while nstep < max_newton_steps and stepsz > 1e-8:
             # ipdb.set_trace()
             nstep += 1
             # Compute the hessian and gradient of the augmented lagrangian
@@ -462,17 +462,17 @@ class NewtonAL(torch.autograd.Function):
                 print(nstep, (dyn_res.view(bsz, -1).norm(dim=-1)).mean().item(), (cost).mean().item(), torch.norm(update).item(), new_merit.mean().item(), stepsz)
 
             ## exit creteria
-            # if (
-            #     abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
-            #     or new_dyn_res < 1e-3
-            # ):
-            #     break
+            x_est = x_est1
+            if (
+                abs(old_dyn_res - new_dyn_res) / new_dyn_res < 1e-3
+                or new_dyn_res < 1e-3
+            ):
+                break
 
             old_dyn_res = new_dyn_res
             # 
-            merit_delta = ((new_merit - merit) / new_merit).abs().max().item()#1000
+            merit_delta = 1000#((new_merit - merit) / new_merit).abs().max().item()#1000
             merit = new_merit
-            x_est = x_est1
 
         try:
             ctx.save_for_backward(Hess_clip, U, x_est, cholesky_fail)
@@ -532,7 +532,7 @@ def line_search_newton(update, x_est, meritfnQ, merit, x0):
         .expand(n_ls, x_est.shape[0])
     )
     x_next = x_est[None] + stepszs[:, :, None, None] * update[None]
-    x_next[:, :, 0, :xsize] = x0[None]
+    # x_next[:, :, 0, :xsize] = x0[None]
     # new2_objective = torch.stack([meritfnQ(x_next[i]) for i in range(n_ls)], dim=0)
     # new2_objective = torch.vmap(meritfnQ)(x_next)
     new2_objective = meritfnQ(x_next).reshape(n_ls, -1)

@@ -112,7 +112,7 @@ class DEQMPCPolicy(torch.nn.Module):
         # x_ref = x_gt.view(x_ref.shape)
         z = self.model.init_z(self.bsz).to(self.device)
         # ipdb.set_trace()
-        out_aux_dict = {"z": z, "x": x_ref[:, 1:], 'u': nominal_actions}
+        out_aux_dict = {"z": z, "x": x_ref, 'u': nominal_actions}
 
         if self.args.solver_type == "al":
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
@@ -125,6 +125,7 @@ class DEQMPCPolicy(torch.nn.Module):
         trajs = []    
         for i in range(self.deq_iter):
             in_obs_dict = {"o": obs}
+            # ipdb.set_trace()
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
             x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
@@ -134,8 +135,9 @@ class DEQMPCPolicy(torch.nn.Module):
             if qp_solve:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
-                out_aux_dict["x"] = nominal_states
-                out_aux_dict["u"] = nominal_actions
+                out_aux_dict["x"] = nominal_states.detach().clone()
+                out_aux_dict["u"] = nominal_actions.detach().clone()
+            out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
             nominal_states_net = 1*x_ref
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
@@ -196,7 +198,7 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
         loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, gt_states,
                                            gt_actions, gt_mask, nominal_states_net, nominal_actions)
         loss += loss_j + policy.deq_reg * loss_proxy_j
-        return_dict["losses_var"].append(loss_proxy_j.item())
+        # return_dict["losses_var"].append(loss_proxy_j.item())
         return_dict["losses_iter"].append(loss_proxy_j.item())
     loss_end = add_loss_based_on_out_type(
         policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)

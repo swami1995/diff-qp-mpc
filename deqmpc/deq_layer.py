@@ -46,24 +46,26 @@ class DEQLayer(torch.nn.Module):
         compute the policy output for the given observation input and feedback input 
         """
         obs, x_prev, z = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"]
-        if (x_prev.shape[1] != self.T - 1):  # handle the case of orginal DEQLayer not predicting current state
-            x_prev = x_prev[:, 1:]
+        # if (x_prev.shape[1] != self.T - 1):  # handle the case of orginal DEQLayer not predicting current state
+        #     x_prev = x_prev[:, 1:]
         bsz = obs.shape[0]
         _obs = obs.reshape(bsz,1,self.nx)
-        _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
+        # _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
+        _input = x_prev.reshape(bsz, -1)
         _input1 = self.input_layer(_input)
         z_out = self.deq_layer(_input1, z)
         dx_ref = self.output_layer(z_out)
-
+        # ipdb.set_trace()
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
-        x_ref = torch.cat([dx_ref + x_prev[..., :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
         
         out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref}
-        out_aux_dict = {"x": x_ref[:,1:], "u": u_ref, "z": z_out}
+        out_aux_dict = {"x": x_ref[:,:], "u": u_ref, "z": z_out}
         return out_mpc_dict, out_aux_dict
 
     def input_layer(self, x):
