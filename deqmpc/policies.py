@@ -116,7 +116,7 @@ class DEQMPCPolicy(torch.nn.Module):
 
         if self.args.solver_type == "al":
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
-
+    
         # run the DEQ layer for deq_iter iterations
         trajs, dyn_res = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
         return trajs, dyn_res
@@ -131,13 +131,15 @@ class DEQMPCPolicy(torch.nn.Module):
             nominal_states_net = x_ref
             nominal_states = nominal_states_net
             nominal_actions = u_ref
+            # ipdb.set_trace()
             if qp_solve:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
                 out_aux_dict["x"] = nominal_states
                 out_aux_dict["u"] = nominal_actions
-            nominal_states_net = 1*x_ref
+            nominal_states_net = x_ref
             trajs.append((nominal_states_net, nominal_states, nominal_actions))
+        # ipdb.set_trace()
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
         ), u_gt.view(-1, self.nu).double()).view(self.bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
@@ -202,6 +204,7 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
         policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
+    # ipdb.set_trace()
     return return_dict
 
 

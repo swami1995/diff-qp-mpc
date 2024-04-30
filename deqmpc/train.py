@@ -43,12 +43,12 @@ def main():
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=256)
+    parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
-    parser.add_argument("--hdim", type=int, default=256)
+    parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", type=str, default=None)
@@ -136,7 +136,11 @@ def main():
     dyn_resids = []
     losses_var = []
     losses_iter = []
-
+    def init_normal(m):
+        if type(m) == torch.nn.Linear:
+            torch.nn.init.ones_(m.weight)
+            torch.nn.init.ones_(m.bias)
+    policy.model.apply(init_normal)
     # run imitation learning using gt_trajs
     for i in range(20000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
@@ -152,7 +156,7 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        pretrain_done = False if (i < 1000 and args.pretrain) else True
+        pretrain_done = False if (i < 100 and args.pretrain) else True
         # warm start only after 1000 iterations
         lastqp_solve = args.lastqp_solve and pretrain_done
 
@@ -195,7 +199,7 @@ def main():
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         optimizer.step()
-
+        # ipdb.set_trace()
         # Printing
         if i % 100 == 0:
             print("iter: ", i, "deqmpc" if pretrain_done else "deq")

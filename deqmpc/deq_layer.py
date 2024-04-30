@@ -58,12 +58,14 @@ class DEQLayer(torch.nn.Module):
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
-        x_ref = torch.cat([dx_ref + x_prev[..., :self.nq], vel_ref], dim=-1)
+        # ipdb.set_trace()
+        x_ref = torch.cat([dx_ref + obs[:,None,:self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
         
         out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref}
         out_aux_dict = {"x": x_ref[:,1:], "u": u_ref, "z": z_out}
+        
         return out_mpc_dict, out_aux_dict
 
     def input_layer(self, x):
