@@ -208,6 +208,7 @@ class DEQLayer(torch.nn.Module):
         vel_ref = dx_ref[..., np:]
         dx_ref = dx_ref[..., :np] * self.dt
         x_ref = torch.cat([dx_ref + x[:,None,:np], vel_ref], dim=-1)
+        # ipdb.set_trace()
         return x_ref, z_out
 
     def input_layer(self, x):
@@ -423,6 +424,7 @@ class DEQMPCPolicy(torch.nn.Module):
             # end = time.time()
             # self.network_time.append(end-start)
             # self.tracking_mpc.ctrl.verbose = 1
+            # ipdb.set_trace()
             if qp_solve:
                 # torch.cuda.synchronize()
                 # start = time.time()

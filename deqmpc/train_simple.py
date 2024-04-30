@@ -116,7 +116,11 @@ def main():
     dyn_resids = []
     losses_var = [[] for _ in range(args.deq_iter)]
     losses_iter = [[] for _ in range(args.deq_iter)]
-
+    def init_normal(m):
+        if type(m) == torch.nn.Linear:
+            torch.nn.init.ones_(m.weight)
+            torch.nn.init.ones_(m.bias)
+    policy.model.apply(init_normal)
     # run imitation learning using gt_trajs
     for i in range(20000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
@@ -127,7 +131,7 @@ def main():
             traj_sample["state"] = unnormalize_states_pendulum(traj_sample["state"])
         elif args.env == "cartpole1link" or args.env == "cartpole2link":
             traj_sample["state"] = unnormalize_states_cartpole_nlink(traj_sample["state"])
-        iter_qp_solve = False if (i < 1000 and args.pretrain) else True
+        iter_qp_solve = False if (i < 100 and args.pretrain) else True
         qp_solve = iter_qp_solve and args.qp_solve # warm start only after 1000 iterations
         lastqp_solve = args.lastqp_solve and iter_qp_solve
         if args.deq:
@@ -202,6 +206,7 @@ def main():
                     .mean()
                 )
             loss_end = torch.Tensor([0.0])
+        # ipdb.set_trace()
         time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
