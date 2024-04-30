@@ -152,7 +152,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.mpc_time = []
         if lastqp_solve and not qp_solve:
             nominal_states, nominal_actions = self.tracking_mpc(
-                x_t, xu_ref, x_ref, u_ref)
+                x_t, xu_ref, x_ref, u_ref, al_iters=10)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)        
         return trajs, dyn_res
 
@@ -371,7 +371,7 @@ class Tracking_MPC(torch.nn.Module):
                 single_qp_solve=self.single_qp_solve,
             )
 
-    def forward(self, x0, xu_ref, x_ref, u_ref):
+    def forward(self, x0, xu_ref, x_ref, u_ref, al_iters=2):
         """
         compute the mpc output for the given state x and reference x_ref
         """
@@ -384,6 +384,7 @@ class Tracking_MPC(torch.nn.Module):
         self.compute_p(xu_ref)
         # ipdb.set_trace()
         if self.args.solver_type == "al":
+            self.ctrl.al_iter = al_iters
             cost = al_utils.QuadCost(self.Q, self.p)
         else:
             cost = ip_mpc.QuadCost(self.Q.transpose(
