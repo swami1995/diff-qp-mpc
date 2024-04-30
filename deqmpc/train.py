@@ -44,11 +44,12 @@ def main():
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
-    parser.add_argument("--bsz", type=int, default=256)
+    parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--deq", action="store_true")
-    parser.add_argument("--hdim", type=int, default=256)
+    parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--deq_iter", type=int, default=6)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--name", type=str, default=None)
@@ -196,7 +197,7 @@ def main():
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         # ipdb.set_trace()
         optimizer.step()
-
+        # ipdb.set_trace()
         # Printing
         if i % 100 == 0:
             print("iter: ", i, "deqmpc" if pretrain_done else "deq")
