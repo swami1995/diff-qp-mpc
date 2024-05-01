@@ -8,7 +8,7 @@ import ipdb
 import torch.nn.functional as F
 # from policy_utils import SinusoidalPosEmb
 import time
-from deq_layer_utils import *
+from deq_layer_utils import GradNormLayer
 
 # POSSIBLE OUTPUT TYPES OF DEQ LAYER
 # 0: action prediction u[0]->u[T-1]
@@ -60,7 +60,8 @@ class DEQLayer(torch.nn.Module):
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
-        x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        # x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
         # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
@@ -104,7 +105,9 @@ class DEQLayer(torch.nn.Module):
 
     def output_layer(self, z):
         if self.layer_type == "mlp":
-            return self.out_layer(z)
+            out = self.out_layer(z)
+            out = self.gradnorm(out)
+            return out
         elif self.layer_type == "gcn":
             z = z.view(-1, self.T, self.hdim)
             z = self.convout(z.permute(0, 2, 1))
@@ -205,6 +208,7 @@ class DEQLayer(torch.nn.Module):
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.hdim, self.out_dim)
             )
+            self.gradnorm = GradNormLayer(self.out_dim)
         elif self.layer_type == "gcn":
             self.convout = torch.nn.Conv1d(
                 self.hdim, self.hdim, self.kernel_width)
@@ -346,7 +350,8 @@ class DEQLayerFeedback(DEQLayer):
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
-        x_ref = torch.cat([dx_ref + x[..., :1, :self.nq], vel_ref], dim=-1)
+        # x_ref = torch.cat([dx_ref + x[..., :1, :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([xn[..., 1:, :self.nq] + dx_ref, vel_ref + xn[..., 1:, self.nq:]], dim=-1)
         # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
@@ -372,6 +377,7 @@ class DEQLayerFeedback(DEQLayer):
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.hdim, self.out_dim)
             )
+            self.gradnorm = GradNormLayer(self.out_dim)
         else:
             NotImplementedError
 

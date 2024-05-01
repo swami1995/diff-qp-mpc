@@ -74,7 +74,8 @@ class CartpoleEnv(torch.nn.Module):
             (self.nu,),
         )
         self.stabilization = stabilization
-        self.Qlqr = torch.ones(self.nx, **self.kwargs)
+        # self.Qlqr = torch.ones(self.nx, **self.kwargs)
+        self.Qlqr = torch.cat([torch.ones(self.nq, **self.kwargs)*10, torch.ones(self.nq, **self.kwargs)*0.1], dim=-1)
         self.Rlqr = torch.ones(self.nu, **self.kwargs)*0.00000001
         if nx == 6:
             # self.saved_ckpt_name = "cgac_checkpoint_cartpole2link_swingupeplen300maxu100_initrew1finrew5"
