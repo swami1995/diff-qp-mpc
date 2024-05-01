@@ -121,7 +121,7 @@ class DEQMPCPolicy(torch.nn.Module):
         trajs, dyn_res = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
         return trajs, dyn_res
 
-    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=True, lastqp_solve=False):   
+    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False):   
         trajs = []    
         for i in range(self.deq_iter):
             in_obs_dict = {"o": obs}
@@ -140,7 +140,6 @@ class DEQMPCPolicy(torch.nn.Module):
                 out_aux_dict["u"] = nominal_actions.detach().clone()
             if not lastqp_solve:
                 out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
-            nominal_states_net = 1*x_ref
             if not lastqp_solve:
                 trajs.append((nominal_states_net, nominal_states, nominal_actions))
             else:
@@ -187,6 +186,27 @@ class DEQMPCPolicyHistory(DEQMPCPolicy):
 
         # run the DEQ layer for deq_iter iterations
         trajs, dyn_res = self.deqmpc_iter(obs_hist, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
+        return trajs, dyn_res
+
+
+class DEQMPCPolicyFeedback(DEQMPCPolicy):
+    def __init__(self, args, env):
+        super().__init__(args, env)
+        self.model = DEQLayerFeedback(args, env).to(self.device)
+
+    def forward(self, obs, x_gt, u_gt, mask, iter=0, qp_solve=True, lastqp_solve=False):
+        x_ref = torch.cat([obs]*self.T, dim=-1).detach().clone()
+        x_ref = x_ref.view(-1, self.T, self.nx)
+        nominal_actions = torch.zeros((obs.shape[0], self.T, self.nu), device=self.device)
+        z = self.model.init_z(self.bsz).to(self.device)
+        # ipdb.set_trace()
+        out_aux_dict = {"z": z, "xn": x_ref, "x": x_ref, 'u': nominal_actions}
+
+        if self.args.solver_type == "al":
+            self.tracking_mpc.reinitialize(obs, mask[:, :, None])
+    
+        # run the DEQ layer for deq_iter iterations
+        trajs, dyn_res = self.deqmpc_iter(obs, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
         return trajs, dyn_res
 
 

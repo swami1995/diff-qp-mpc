@@ -12,6 +12,7 @@ class PendulumDynamics(torch.nn.Module):
         self.l = 1.
         self.nx = 2
         self.nu = 1
+        self.nq = 1
 
     def forward(self, state, action):
         """
@@ -91,6 +92,7 @@ class PendulumEnv:
         self.state = None  # Will be initialized in reset
         self.nx = self.dynamics.nx
         self.nu = self.dynamics.nu
+        self.nq = self.dynamics.nq
         self.max_torque = self.dynamics.max_torque
         self.dt = self.dynamics.dt
         self.num_successes = 0
