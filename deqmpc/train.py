@@ -79,8 +79,12 @@ def main():
     if args.save:
         if not os.path.exists("./logs/" + args.name):
             os.makedirs("./logs/" + args.name)
-        args.name = args.name + \
-            f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_np{args.nq}"
+        if (args.qp_solve):
+            method_name = f"deqmpc_" 
+        elif (args.lastqp_solve):
+            method_name = f"diffmpc_"
+        args.name = method_name + args.name + \
+            f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}"
         writer = SummaryWriter("./logs/" + args.name)
 
     kwargs = {"dtype": torch.float64,
@@ -116,8 +120,9 @@ def main():
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
     if args.deq:
-        policy = DEQMPCPolicy(args, env).to(args.device)
+        # policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
+        policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -154,26 +159,22 @@ def main():
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
         pretrain_done = False if (i < 1000 and args.pretrain) else True
         # warm start only after 1000 iterations
-        lastqp_solve = args.lastqp_solve and pretrain_done
 
         gt_obs = traj_sample["obs"]
-        # ipdb.set_trace()
         noisy_obs = noise_utils.corrupt_observation(
             gt_obs, args.data_noise_type, args.data_noise_std, args.data_noise_mean)
         if args.H == 1:
             obs_in = noisy_obs.squeeze(1)
         else:
             obs_in = noisy_obs
-        # ipdb.set_trace()
         
         gt_actions = traj_sample["action"]
         gt_states = traj_sample["state"]
         gt_mask = traj_sample["mask"]
-        # ipdb.set_trace()
         if args.deq:
             start = time.time()
             trajs, dyn_res = policy(obs_in, gt_states, gt_actions,
-                                    gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=lastqp_solve)
+                                    gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
             dyn_resids.append(dyn_res)
         else:
@@ -196,7 +197,6 @@ def main():
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         # ipdb.set_trace()
         optimizer.step()
-        # ipdb.set_trace()
         # Printing
         if i % 100 == 0:
             print("iter: ", i, "deqmpc" if pretrain_done else "deq")
