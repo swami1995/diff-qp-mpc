@@ -86,6 +86,7 @@ def main():
         args.name = method_name + args.name + \
             f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}"
         writer = SummaryWriter("./logs/" + args.name)
+        print("logging to: ", args.name)
 
     kwargs = {"dtype": torch.float64,
               "device": args.device, "requires_grad": False}
