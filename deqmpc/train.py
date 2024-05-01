@@ -120,9 +120,9 @@ def main():
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
     if args.deq:
-        # policy = DEQMPCPolicy(args, env).to(args.device)
+        policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
-        policy = DEQMPCPolicyFeedback(args, env).to(args.device)
+        # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
