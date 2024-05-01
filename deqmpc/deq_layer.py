@@ -8,7 +8,7 @@ import ipdb
 import torch.nn.functional as F
 # from policy_utils import SinusoidalPosEmb
 import time
-from deq_layer_utils import *
+from deq_layer_utils import GradNormLayer
 
 # POSSIBLE OUTPUT TYPES OF DEQ LAYER
 # 0: action prediction u[0]->u[T-1]
@@ -104,7 +104,9 @@ class DEQLayer(torch.nn.Module):
 
     def output_layer(self, z):
         if self.layer_type == "mlp":
-            return self.out_layer(z)
+            out = self.out_layer(z)
+            out = self.gradnorm(out)
+            return out
         elif self.layer_type == "gcn":
             z = z.view(-1, self.T, self.hdim)
             z = self.convout(z.permute(0, 2, 1))
@@ -205,6 +207,7 @@ class DEQLayer(torch.nn.Module):
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Linear(self.hdim, self.out_dim)
             )
+            self.gradnorm = GradNormLayer(self.out_dim)
         elif self.layer_type == "gcn":
             self.convout = torch.nn.Conv1d(
                 self.hdim, self.hdim, self.kernel_width)
