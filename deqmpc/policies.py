@@ -136,14 +136,14 @@ class DEQMPCPolicy(torch.nn.Module):
             if qp_solve:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
-                # out_aux_dict["x"] = nominal_states.detach().clone()
-                # out_aux_dict["u"] = nominal_actions.detach().clone()
-            # if not lastqp_solve:
-            #     out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
-            # if not lastqp_solve:
-            trajs.append((nominal_states_net, nominal_states, nominal_actions))
-            # else:
-                # trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
+                out_aux_dict["x"] = nominal_states.detach().clone()
+                out_aux_dict["u"] = nominal_actions.detach().clone()
+            if not lastqp_solve:
+                out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
+            if not lastqp_solve:
+                trajs.append((nominal_states_net, nominal_states, nominal_actions))
+            else:
+                trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
         # ipdb.set_trace()
         dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
         ), u_gt.view(-1, self.nu).double()).view(self.bsz, -1).norm(dim=1).mean().item()
@@ -261,7 +261,7 @@ def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
     nominal_states, nominal_actions = trajs
     loss = add_loss_based_on_out_type(
         policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = torch.Tensor([0.0])
+    loss_end = torch.Tensor([0.0])https://sites.google.com/view/rss2024-assistive-robotics
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
     return return_dict
@@ -290,7 +290,7 @@ def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc2(policy, gt_states, gt_actions, gt_mask, trajs)
         else:
             # deq -- pretrain
             return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs)
