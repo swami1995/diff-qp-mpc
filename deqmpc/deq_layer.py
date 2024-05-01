@@ -8,6 +8,7 @@ import ipdb
 import torch.nn.functional as F
 # from policy_utils import SinusoidalPosEmb
 import time
+from deq_layer_utils import *
 
 # POSSIBLE OUTPUT TYPES OF DEQ LAYER
 # 0: action prediction u[0]->u[T-1]
