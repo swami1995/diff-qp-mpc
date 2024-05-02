@@ -142,8 +142,7 @@ class DEQMPCPolicy(torch.nn.Module):
             if not lastqp_solve:
                 out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
             if not lastqp_solve:
-         
-               trajs.append((nominal_states_net, nominal_states, nominal_actions))
+                trajs.append((nominal_states_net, nominal_states, nominal_actions))
             else:
                 trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
         # ipdb.set_trace()
@@ -286,7 +285,7 @@ def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc2(policy, gt_states, gt_actions, gt_mask, trajs)
         else:
             # deq -- pretrain
             return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs)

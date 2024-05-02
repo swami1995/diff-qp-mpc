@@ -78,8 +78,6 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     args.device = device if args.device is None else args.device
     if args.save:
-        if not os.path.exists("./logs/" + args.name):
-            os.makedirs("./logs/" + args.name)
         if (args.qp_solve):
             method_name = f"deqmpc_" 
         elif (args.lastqp_solve):
