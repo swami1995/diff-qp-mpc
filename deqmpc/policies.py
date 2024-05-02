@@ -91,6 +91,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.model = DEQLayer(args, env)  #TODO different types
         self.model.to(self.device)
         self.out_type = args.policy_out_type  # output type of policy
+        self.loss_type = args.loss_type  # loss type for policy
         self.tracking_mpc = Tracking_MPC(args, env)
         self.mpc_time = []
         self.network_time = []
@@ -136,17 +137,18 @@ class DEQMPCPolicy(torch.nn.Module):
             if qp_solve:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
-                # out_aux_dict["x"] = nominal_states.detach().clone()
-                # out_aux_dict["u"] = nominal_actions.detach().clone()
-            # if not lastqp_solve:
-            #     out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
-            # if not lastqp_solve:
-            trajs.append((nominal_states_net, nominal_states, nominal_actions))
-            # else:
-                # trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
+                out_aux_dict["x"] = nominal_states.detach().clone()
+                out_aux_dict["u"] = nominal_actions.detach().clone()
+            if not lastqp_solve:
+                out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
+            if not lastqp_solve:
+         
+               trajs.append((nominal_states_net, nominal_states, nominal_actions))
+            else:
+                trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
         # ipdb.set_trace()
-        dyn_res = self.tracking_mpc.dyn(x_ref.view(-1, self.nx).double(
-        ), u_gt.view(-1, self.nu).double()).view(self.bsz, -1).norm(dim=1).mean().item()
+        dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
+        ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
         if lastqp_solve and not qp_solve:
@@ -219,69 +221,63 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
     loss = 0.0
     # supervise each DEQMPC iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss_j = add_loss_based_on_out_type(policy, policy.out_type, gt_states,
+        loss_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
                                            gt_actions, gt_mask, nominal_states, nominal_actions)
-        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, gt_states,
+        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
                                            gt_actions, gt_mask, nominal_states_net, nominal_actions)
         loss += loss_j + policy.deq_reg * loss_proxy_j
         # return_dict["losses_var"].append(loss_proxy_j.item())
         return_dict["losses_iter"].append(loss_proxy_j.item())
     loss_end = add_loss_based_on_out_type(
-        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
     # ipdb.set_trace()
     return return_dict
 
-def compute_loss_deqmpc2(policy, gt_states, gt_actions, gt_mask, trajs):
-    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
-    loss = 0.0
-    # supervise each DEQMPC iteration
-    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss_j = add_loss_based_on_out_type(policy, policy.out_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states, nominal_actions)
-        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states_net, nominal_actions)
-        if j < 3:
-            loss_j = loss_j * 0.0
-            loss_proxy_j = loss_proxy_j * 0.0
-        loss += loss_j + policy.deq_reg * loss_proxy_j
-        # return_dict["losses_var"].append(loss_proxy_j.item())
-        return_dict["losses_iter"].append(loss_proxy_j.item())
-    loss_end = add_loss_based_on_out_type(
-        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    return_dict["loss"] = loss
-    return_dict["loss_end"] = loss_end
-    # ipdb.set_trace()
-    return return_dict
 
 def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
     loss = 0.0
     nominal_states, nominal_actions = trajs
     loss = add_loss_based_on_out_type(
-        policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     loss_end = torch.Tensor([0.0])
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
     return return_dict
 
 
-def add_loss_based_on_out_type(policy, out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
+def add_loss_based_on_out_type(policy, out_type, loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
     loss = 0.0
     if out_type == 0 or out_type == 2:
         # supervise action
-        loss += torch.abs((nominal_actions - gt_actions) *
-                          gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
+        if loss_type == "l2":
+            loss += torch.norm((nominal_actions - gt_actions) *
+                               gt_mask[:, :, None]).pow(2).mean()
+        elif loss_type == "l1":
+            loss += torch.abs((nominal_actions - gt_actions) *
+                              gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
+        # loss += torch.abs((nominal_actions - gt_actions) *
+        #                   gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
         # ipdb.set_trace()
     if out_type == 1 or out_type == 2:
         # supervise state
-        loss += torch.abs((nominal_states - gt_states) *
-                          gt_mask[:, :, None]).sum(dim=-1).mean()
+        if loss_type == "l2":
+            loss += torch.norm((nominal_states - gt_states) *
+                               gt_mask[:, :, None]).pow(2).mean()
+        elif loss_type == "l1":
+            loss += torch.abs((nominal_states - gt_states) *
+                            gt_mask[:, :, None]).sum(dim=-1).mean()
     if out_type == 3:
         # supervise configuration
-        loss += torch.abs((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
+        if loss_type == "l2":
+            loss += torch.norm((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
+                               gt_mask[:, :, None]).pow(2).mean()
+        elif loss_type == "l1":
+            loss += torch.abs((nominal_states[..., :policy.nq] - gt_states[..., :policy.nq]) *
                           gt_mask[:, :, None]).sum(dim=-1).mean()
+        
     return loss
 
 
