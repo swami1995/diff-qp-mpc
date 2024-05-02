@@ -66,7 +66,8 @@ def main():
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
     parser.add_argument("--deq_out_type", type=int, default=1)  # previously 1
     parser.add_argument("--policy_out_type", type=int, default=1)  # previously 1
-    parser.add_argument("--deq_reg", type=float, default=0.5) # previously 0.0
+    parser.add_argument("--loss_type", type=str, default='l1')  # previously 0
+    parser.add_argument("--deq_reg", type=float, default=0.1) # previously 0.0
     # check noise_utils.py for noise_type
     parser.add_argument("--data_noise_type", type=int, default=0)
     parser.add_argument("--data_noise_std", type=float, default=0.05)
@@ -115,6 +116,7 @@ def main():
 
     # gt_trajs = get_gt_data(args, env, "mpc")
     # gt_trajs = get_gt_data(args, env, "cgac")
+    # ipdb.set_trace()
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
@@ -170,6 +172,7 @@ def main():
         gt_actions = traj_sample["action"]
         gt_states = traj_sample["state"]
         gt_mask = traj_sample["mask"]
+        # ipdb.set_trace()
         if args.deq:
             start = time.time()
             trajs, dyn_res = policy(obs_in, gt_states, gt_actions,
@@ -179,7 +182,7 @@ def main():
         else:
             trajs = policy(obs_in)
         
-        # if (i % 10000 == 0):
+        # if (i % 2000 == 0):
         #     ipdb.set_trace()
 
         loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
