@@ -261,7 +261,7 @@ def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
     nominal_states, nominal_actions = trajs
     loss = add_loss_based_on_out_type(
         policy, policy.out_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = torch.Tensor([0.0])https://sites.google.com/view/rss2024-assistive-robotics
+    loss_end = torch.Tensor([0.0])
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
     return return_dict
@@ -290,7 +290,7 @@ def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            return compute_loss_deqmpc2(policy, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
         else:
             # deq -- pretrain
             return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs)

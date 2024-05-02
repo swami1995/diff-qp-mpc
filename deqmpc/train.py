@@ -20,7 +20,7 @@ import torch
 import torch.autograd as autograd
 
 
-# torch.set_default_device('cuda')
+torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
 # import tensorboard from pytorch
 
@@ -66,7 +66,7 @@ def main():
     parser.add_argument("--ckpt", type=str, default="bc_sac_pen")
     parser.add_argument("--deq_out_type", type=int, default=1)  # previously 1
     parser.add_argument("--policy_out_type", type=int, default=1)  # previously 1
-    parser.add_argument("--deq_reg", type=float, default=0.1) # previously 0.0
+    parser.add_argument("--deq_reg", type=float, default=0.5) # previously 0.0
     # check noise_utils.py for noise_type
     parser.add_argument("--data_noise_type", type=int, default=0)
     parser.add_argument("--data_noise_std", type=float, default=0.05)
@@ -156,7 +156,7 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        pretrain_done = False if (i < 5000 and args.pretrain) else True
+        pretrain_done = False if (i < 1000 and args.pretrain) else True
         # warm start only after 1000 iterations
 
         gt_obs = traj_sample["obs"]
