@@ -158,7 +158,7 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        pretrain_done = False if (i < 1000 and args.pretrain) else True
+        pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations
 
         gt_obs = traj_sample["obs"]

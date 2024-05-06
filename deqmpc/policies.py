@@ -122,9 +122,14 @@ class DEQMPCPolicy(torch.nn.Module):
         trajs, dyn_res = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
         return trajs, dyn_res
 
-    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False):   
-        trajs = []    
-        for i in range(self.deq_iter):
+    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False): 
+        if (qp_solve):
+            deq_iter = self.deq_iter * 2
+        else:
+            deq_iter = self.deq_iter   
+
+        trajs = []
+        for i in range(deq_iter):
             in_obs_dict = {"o": obs}
             # ipdb.set_trace()
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
@@ -134,7 +139,7 @@ class DEQMPCPolicy(torch.nn.Module):
             nominal_states = nominal_states_net
             nominal_actions = u_ref
             # ipdb.set_trace()
-            if qp_solve:
+            if qp_solve and i > self.deq_iter:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
                 out_aux_dict["x"] = nominal_states.detach().clone()
@@ -145,12 +150,13 @@ class DEQMPCPolicy(torch.nn.Module):
                 trajs.append((nominal_states_net, nominal_states, nominal_actions))
             else:
                 trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
-        # ipdb.set_trace()
+
         dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
         ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
         self.network_time = []
         self.mpc_time = []
-        if lastqp_solve and not qp_solve:
+
+        if lastqp_solve:
             nominal_states, nominal_actions = self.tracking_mpc(
                 x_t, xu_ref, x_ref, u_ref, al_iters=10)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)        
