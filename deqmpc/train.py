@@ -20,7 +20,7 @@ import torch
 import torch.autograd as autograd
 
 
-torch.set_default_device('cuda')
+# torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
 # import tensorboard from pytorch
 

@@ -7,4 +7,4 @@ echo Starting training...
 
 # python train.py --deq --deq_iter 6 --bsz 256 --T 5 --name integrator --solver_type al --env integrator --test --pretrain --qp_solve
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --solver_type al --env cartpole1link --nq 2 --lastqp_solve --test --pretrain --H 1 --hdim 128 --name cp1_reg0.1_5k --save
+python train.py --deq --deq_iter 6 --bsz 200 --T 5 --solver_type al --env cartpole1link --nq 2 --qp_solve --test --pretrain --H 1 --hdim 256 --name cp1_hdim256_reg0.1_5k_detach 

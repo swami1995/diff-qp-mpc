@@ -123,33 +123,35 @@ class DEQMPCPolicy(torch.nn.Module):
         return trajs, dyn_res
 
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False): 
-        if (qp_solve):
-            deq_iter = self.deq_iter * 2
-        else:
-            deq_iter = self.deq_iter   
+        deq_iter = self.deq_iter   
+        opt_from_iter = 2
 
         trajs = []
         for i in range(deq_iter):
             in_obs_dict = {"o": obs}
-            # ipdb.set_trace()
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
             x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             nominal_states_net = x_ref
             nominal_states = nominal_states_net
             nominal_actions = u_ref
-            # ipdb.set_trace()
-            if qp_solve and i > self.deq_iter:
+
+            # Only run MPC after a few iterations, don't flow MPC gradients through the DEQ
+            if qp_solve and i >= opt_from_iter:
                 # ipdb.set_trace()
-                nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref)
+                nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref, al_iters=2)
                 out_aux_dict["x"] = nominal_states.detach().clone()
                 out_aux_dict["u"] = nominal_actions.detach().clone()
+                
             if not lastqp_solve:
                 out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
-            if not lastqp_solve:
-                trajs.append((nominal_states_net, nominal_states, nominal_actions))
+                out_aux_dict["u"] = out_aux_dict["u"].detach().clone()
+            
+            if (qp_solve and i < opt_from_iter) or lastqp_solve:
+                trajs.append((nominal_states_net, nominal_states.detach().clone(), nominal_actions.detach().clone()))
             else:
-                trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
+                # Only supervise DEQ training or joint iterations for DEQMPC
+                trajs.append((nominal_states_net, nominal_states, nominal_actions))
 
         dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
         ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
