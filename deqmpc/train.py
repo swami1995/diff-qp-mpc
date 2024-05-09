@@ -20,7 +20,7 @@ import torch
 import torch.autograd as autograd
 
 
-# torch.set_default_device('cuda')
+torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
 # import tensorboard from pytorch
 
@@ -121,9 +121,10 @@ def main():
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
     if args.deq:
-        policy = DEQMPCPolicy(args, env).to(args.device)
+        # policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
+        policy = DEQMPCPolicyQ(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -175,17 +176,20 @@ def main():
         # ipdb.set_trace()
         if args.deq:
             start = time.time()
-            trajs, dyn_res = policy(obs_in, gt_states, gt_actions,
-                                    gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
+            policy_out = policy(obs_in, gt_states, gt_actions,
+                                    gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
-            dyn_resids.append(dyn_res)
+            dyn_resids.append(policy_out["dyn_res"])
         else:
-            trajs = policy(obs_in)
+            policy_out = policy(obs_in)
         
-        # if (i % 2000 == 0):
+        # if (i % 1000 == 0):
         #     ipdb.set_trace()
 
-        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
+        # if (i == 5500):
+        #     ipdb.set_trace()
+
+        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, policy_out, args.deq, pretrain_done)
         loss = loss_dict["loss"]
         loss_end = loss_dict["loss_end"]
         losses_var.append(loss_dict["losses_var"])

@@ -96,7 +96,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.mpc_time = []
         self.network_time = []
 
-    def forward(self, x, x_gt, u_gt, mask, iter=0, qp_solve=True, lastqp_solve=False):
+    def forward(self, x, x_gt, u_gt, mask, out_iter=0, qp_solve=True, lastqp_solve=False):
         """
         Run the DEQLayer and then run the MPC iteratively in a for loop until convergence
         Args:
@@ -119,10 +119,10 @@ class DEQMPCPolicy(torch.nn.Module):
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
     
         # run the DEQ layer for deq_iter iterations
-        trajs, dyn_res = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
-        return trajs, dyn_res
+        policy_out = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve, out_iter)        
+        return policy_out
 
-    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False): 
+    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
         deq_iter = self.deq_iter   
         opt_from_iter = 2
 
@@ -131,6 +131,8 @@ class DEQMPCPolicy(torch.nn.Module):
             in_obs_dict = {"o": obs}
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
             x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
+            # if (out_iter == 4900 or out_iter == 5000 or out_iter == 5500):
+            #     ipdb.set_trace()
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             nominal_states_net = x_ref
             nominal_states = nominal_states_net
@@ -142,6 +144,8 @@ class DEQMPCPolicy(torch.nn.Module):
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref, al_iters=2)
                 out_aux_dict["x"] = nominal_states.detach().clone()
                 out_aux_dict["u"] = nominal_actions.detach().clone()
+                # if (out_iter == 5000 or out_iter == 5500):
+                #     ipdb.set_trace()
                 
             if not lastqp_solve:
                 out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
@@ -162,7 +166,8 @@ class DEQMPCPolicy(torch.nn.Module):
             nominal_states, nominal_actions = self.tracking_mpc(
                 x_t, xu_ref, x_ref, u_ref, al_iters=10)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)        
-        return trajs, dyn_res
+        policy_out = {"trajs": trajs, "dyn_res": dyn_res}    
+        return policy_out
 
 class DEQMPCPolicyHistory(DEQMPCPolicy):
     def __init__(self, args, env):
@@ -175,7 +180,7 @@ class DEQMPCPolicyHistory(DEQMPCPolicy):
         else:
             raise NotImplementedError
 
-    def forward(self, obs_hist, x_gt, u_gt, mask, iter=0, qp_solve=True, lastqp_solve=False):
+    def forward(self, obs_hist, x_gt, u_gt, mask, out_iter=0, qp_solve=True, lastqp_solve=False):
         """
         Args:
             x_hist (tensor H x bsz x nx): input observation history, including current observation
@@ -194,8 +199,8 @@ class DEQMPCPolicyHistory(DEQMPCPolicy):
             self.tracking_mpc.reinitialize(x_t, mask[:, :, None])
 
         # run the DEQ layer for deq_iter iterations
-        trajs, dyn_res = self.deqmpc_iter(obs_hist, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
-        return trajs, dyn_res
+        policy_out = self.deqmpc_iter(obs_hist, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
+        return policy_out
 
 
 class DEQMPCPolicyFeedback(DEQMPCPolicy):
@@ -203,7 +208,7 @@ class DEQMPCPolicyFeedback(DEQMPCPolicy):
         super().__init__(args, env)
         self.model = DEQLayerFeedback(args, env).to(self.device)
 
-    def forward(self, obs, x_gt, u_gt, mask, iter=0, qp_solve=True, lastqp_solve=False):
+    def forward(self, obs, x_gt, u_gt, mask, out_iter=0, qp_solve=True, lastqp_solve=False):
         x_ref = torch.cat([obs]*self.T, dim=-1).detach().clone()
         x_ref = x_ref.view(-1, self.T, self.nx)
         nominal_actions = torch.zeros((obs.shape[0], self.T, self.nu), device=self.device)
@@ -218,13 +223,86 @@ class DEQMPCPolicyFeedback(DEQMPCPolicy):
         trajs, dyn_res = self.deqmpc_iter(obs, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
         return trajs, dyn_res
 
+class DEQMPCPolicyQ(DEQMPCPolicy):
+    def __init__(self, args, env):
+        super().__init__(args, env)
+        self.model = DEQLayerQ(args, env).to(self.device)
+
+    def forward(self, obs, x_gt, u_gt, mask, out_iter=0, qp_solve=True, lastqp_solve=False):
+        # obs is x0
+        x_ref = torch.cat([obs]*self.T, dim=-1).detach().clone()
+        x_ref = x_ref.view(-1, self.T, self.nx)
+        nominal_actions = torch.zeros((obs.shape[0], self.T, self.nu), device=self.device)
+        z = self.model.init_z(self.bsz).to(self.device)
+        q = torch.ones_like(x_ref[:,:,0])
+        # ipdb.set_trace()
+        out_aux_dict = {"z": z, "x": x_ref, 'u': nominal_actions, 'q': q}
+
+        if self.args.solver_type == "al":
+            self.tracking_mpc.reinitialize(obs, mask[:, :, None])
+    
+        # run the DEQ layer for deq_iter iterations
+        policy_out = self.deqmpc_iter(obs, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve, out_iter)        
+        return policy_out
+
+    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
+        deq_iter = self.deq_iter   
+        opt_from_iter = 2
+
+        trajs = []
+        for i in range(deq_iter):
+            in_obs_dict = {"o": obs}
+            out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
+            x_t, x_ref, u_ref, q_scaling = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"], out_mpc_dict["q"]
+            # if (out_iter == 4900 or out_iter == 5000 or out_iter == 5500):
+            #     ipdb.set_trace()
+            xu_ref = torch.cat([x_ref, u_ref], dim=-1)
+            nominal_states_net = x_ref
+            nominal_states = nominal_states_net
+            nominal_actions = u_ref
+
+            # Only run MPC after a few iterations, don't flow MPC gradients through the DEQ
+            if qp_solve and i >= opt_from_iter:
+                # ipdb.set_trace()
+                nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref, q_scaling, al_iters=2)
+                out_aux_dict["x"] = nominal_states.detach().clone()
+                out_aux_dict["u"] = nominal_actions.detach().clone()
+
+                # if (out_iter == 5000 or out_iter == 5500):
+                #     ipdb.set_trace()
+                
+            if not lastqp_solve:
+                out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
+                out_aux_dict["u"] = out_aux_dict["u"].detach().clone()
+                # out_aux_dict["q"] = out_aux_dict["q"].detach().clone()
+                            
+            if (qp_solve and i < opt_from_iter) or lastqp_solve:
+                trajs.append((nominal_states_net, nominal_states.detach().clone(), nominal_actions.detach().clone()))
+            else:
+                # Only supervise DEQ training or joint iterations for DEQMPC
+                trajs.append((nominal_states_net, nominal_states, nominal_actions))
+
+        dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
+        ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
+        self.network_time = []
+        self.mpc_time = []
+
+        if lastqp_solve:
+            nominal_states, nominal_actions = self.tracking_mpc(
+                x_t, xu_ref, x_ref, u_ref, al_iters=10)
+            trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)    
+
+        policy_out = {"trajs": trajs, "dyn_res": dyn_res, "q_scaling": q_scaling}    
+        return policy_out
+
 
 ######################
 # Loss computation
 ######################
 
-def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
+def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out):
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
+    trajs = policy_out["trajs"]
     loss = 0.0
     # supervise each DEQMPC iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
@@ -242,9 +320,31 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
     # ipdb.set_trace()
     return return_dict
 
-
-def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
+def compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out):
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
+    trajs = policy_out["trajs"]
+    q_scaling = policy_out["q_scaling"]
+    loss = 0.0
+    # supervise each DEQMPC iteration
+    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
+        loss_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states, nominal_actions)
+        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states_net, nominal_actions)
+        loss_q_scaling = torch.norm(q_scaling - 1.0, dim=1).mean()
+        loss += loss_j + policy.deq_reg * loss_proxy_j + 0.05 * loss_q_scaling
+        # return_dict["losses_var"].append(loss_proxy_j.item())
+        return_dict["losses_iter"].append(loss_proxy_j.item())
+    loss_end = add_loss_based_on_out_type(
+        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+    return_dict["loss"] = loss
+    return_dict["loss_end"] = loss_end
+    # ipdb.set_trace()
+    return return_dict
+
+def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out):
+    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
+    trajs = policy_out["trajs"]
     loss = 0.0
     nominal_states, nominal_actions = trajs
     loss = add_loss_based_on_out_type(
@@ -288,18 +388,18 @@ def add_loss_based_on_out_type(policy, out_type, loss_type, gt_states, gt_action
     return loss
 
 
-def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
+def compute_loss(policy, gt_states, gt_actions, gt_mask, policy_out, deq, deqmpc):
     if deq:
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out)
         else:
             # deq -- pretrain
-            return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, policy_out)
     else:
         # vanilla behavior cloning
-        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)
+        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out)
 
 
 ######################
@@ -415,7 +515,7 @@ class Tracking_MPC(torch.nn.Module):
                 single_qp_solve=self.single_qp_solve,
             )
 
-    def forward(self, x0, xu_ref, x_ref, u_ref, al_iters=2):
+    def forward(self, x0, xu_ref, x_ref, u_ref, q_scaling=None, al_iters=2):
         """
         compute the mpc output for the given state x and reference x_ref
         """
@@ -424,14 +524,19 @@ class Tracking_MPC(torch.nn.Module):
             if self.x_init is None:
                 self.x_init = self.ctrl.x_init = x_ref.detach().clone()
                 self.u_init = self.ctrl.u_init = u_ref.detach().clone()
-
-        self.compute_p(xu_ref)
+        if (q_scaling is not None):
+            # ipdb.set_trace()
+            q_scaling = q_scaling + torch.ones_like(q_scaling)
+            Q = self.Q * q_scaling[:,:,None,None]
+        else:
+            Q = self.Q
+        self.compute_p(xu_ref, Q)
         # ipdb.set_trace()
         if self.args.solver_type == "al":
             self.ctrl.al_iter = al_iters
-            cost = al_utils.QuadCost(self.Q, self.p)
+            cost = al_utils.QuadCost(Q, self.p)
         else:
-            cost = ip_mpc.QuadCost(self.Q.transpose(
+            cost = ip_mpc.QuadCost(Q.transpose(
                 0, 1), self.p.transpose(0, 1))
             self.ctrl.u_init = self.u_init.transpose(0, 1)
         # ipdb.set_trace()
@@ -446,7 +551,7 @@ class Tracking_MPC(torch.nn.Module):
         self.u_init = nominal_actions.clone().detach()
         return nominal_states, nominal_actions
 
-    def compute_p(self, x_ref):
+    def compute_p(self, x_ref, Q):
         """
         compute the p for the quadratic objective using self.Q as the diagonal matrix and the reference x_ref at each time without a for loop
         """
@@ -456,7 +561,7 @@ class Tracking_MPC(torch.nn.Module):
         # self.p[:, :, : self.nx] = -(
         #     self.Q[:, :, : self.nx, : self.nx] * x_ref.unsqueeze(-2)
         # ).sum(dim=-1)
-        self.p = -(self.Q * x_ref.unsqueeze(-2)).sum(dim=-1)
+        self.p = -(Q * x_ref.unsqueeze(-2)).sum(dim=-1)
         return self.p
 
     def reinitialize(self, x, mask):
