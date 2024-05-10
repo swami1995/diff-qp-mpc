@@ -89,6 +89,7 @@ def main():
 
     kwargs = {"dtype": torch.float64,
               "device": args.device, "requires_grad": False}
+
     if args.env == "pendulum":
         env = PendulumEnv(stabilization=False)
         gt_trajs = get_gt_data(args, env, "sac")
@@ -121,10 +122,10 @@ def main():
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
     if args.deq:
-        # policy = DEQMPCPolicy(args, env).to(args.device)
+        policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
-        policy = DEQMPCPolicyQ(args, env).to(args.device)
+        # policy = DEQMPCPolicyQ(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -143,6 +144,10 @@ def main():
     dyn_resids = []
     losses_var = []
     losses_iter = [[] for _ in range(args.deq_iter)]
+    losses_iter_opt = [[] for _ in range(args.deq_iter)]
+    losses_iter_nn = [[] for _ in range(args.deq_iter)]
+    losses_iter_base = [[] for _ in range(args.deq_iter)]
+    
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -177,7 +182,7 @@ def main():
         if args.deq:
             start = time.time()
             policy_out = policy(obs_in, gt_states, gt_actions,
-                                    gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
+                                gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
             dyn_resids.append(policy_out["dyn_res"])
         else:
@@ -191,18 +196,23 @@ def main():
 
         loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, policy_out, args.deq, pretrain_done)
         loss = loss_dict["loss"]
-        loss_end = loss_dict["loss_end"]
-        losses_var.append(loss_dict["losses_var"])
-        [losses_iter[k].append(loss_dict["losses_iter"][k]) for k in range(args.deq_iter)]
         time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
         losses.append(loss.item())
-        losses_end.append(loss_end.item())
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         # ipdb.set_trace()
         optimizer.step()
+
+        loss_end = loss_dict["loss_end"]
+        losses_end.append(loss_end.item())
+        losses_var.append(loss_dict["losses_var"])
+        [losses_iter[k].append(loss_dict["losses_iter"][k]) for k in range(args.deq_iter)]
+        [losses_iter_opt[k].append(loss_dict["losses_iter_opt"][k]) for k in range(args.deq_iter)]
+        [losses_iter_nn[k].append(loss_dict["losses_iter_nn"][k]) for k in range(args.deq_iter)]
+        [losses_iter_base[k].append(loss_dict["losses_iter_base"][k]) for k in range(args.deq_iter)]
+
         # Printing
         if i % 100 == 0:
             print("iter: ", i, "deqmpc" if pretrain_done else "deq")
@@ -226,12 +236,16 @@ def main():
                 writer.add_scalar("losses/loss_avg",
                                   np.mean(losses) / args.deq_iter, i)
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
-                [writer.add_scalar(f"losses/loss{k}", np.mean(losses_iter[k]), i) for k in range(len(losses_iter))]
+                [writer.add_scalar(f"losses_opt/losses_iter_opt{k}", np.mean(losses_iter_opt[k]), i) for k in range(len(losses_iter_opt))]
+                [writer.add_scalar(f"losses_nn/losses_iter_nn{k}", np.mean(losses_iter_nn[k]), i) for k in range(len(losses_iter_nn))]
+                [writer.add_scalar(f"losses_base/losses_iter_base{k}", np.mean(losses_iter_base[k]), i) for k in range(len(losses_iter_base))]
+                [writer.add_scalar(f"losses/losses_iter{k}", np.mean(losses_iter[k]), i) for k in range(len(losses_iter))]
 
             losses = []
             losses_end = []
             time_diffs = []
             losses_iter = [[] for _ in range(args.deq_iter)]
+            losses_iter_noQreg = [[] for _ in range(args.deq_iter)]
             losses_var = [[] for _ in range(args.deq_iter)]
 
 

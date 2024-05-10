@@ -124,7 +124,7 @@ class DEQMPCPolicy(torch.nn.Module):
 
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
         deq_iter = self.deq_iter   
-        opt_from_iter = 2
+        opt_from_iter = 0
 
         trajs = []
         for i in range(deq_iter):
@@ -301,45 +301,63 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
 ######################
 
 def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out):
-    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
+    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter_opt": [], "losses_iter_nn": [], "losses_iter_base": [], "losses_iter": []}
     trajs = policy_out["trajs"]
     loss = 0.0
+    # ipdb.set_trace()
     # supervise each DEQMPC iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
+        loss_opt_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
                                            gt_actions, gt_mask, nominal_states, nominal_actions)
-        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
+        return_dict["losses_iter_opt"].append(loss_opt_j.item())
+
+        loss_nn_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
                                            gt_actions, gt_mask, nominal_states_net, nominal_actions)
-        loss += loss_j + policy.deq_reg * loss_proxy_j
-        # return_dict["losses_var"].append(loss_proxy_j.item())
-        return_dict["losses_iter"].append(loss_proxy_j.item())
+        return_dict["losses_iter_nn"].append(loss_nn_j.item())
+
+        loss_base_j = loss_opt_j + policy.deq_reg * loss_nn_j 
+        return_dict["losses_iter_base"].append(loss_base_j.item())
+
+        loss_j = loss_base_j        
+        return_dict["losses_iter"].append(loss_j.item())
+
+        loss += loss_j
+
     loss_end = add_loss_based_on_out_type(
         policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
-    # ipdb.set_trace()
     return return_dict
 
 def compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out):
-    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
+    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter_opt": [], "losses_iter_nn": [], "losses_iter_base": [], "losses_iter": []}
     trajs = policy_out["trajs"]
     q_scaling = policy_out["q_scaling"]
     loss = 0.0
+    # ipdb.set_trace()
     # supervise each DEQMPC iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
+        loss_opt_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
                                            gt_actions, gt_mask, nominal_states, nominal_actions)
-        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
+        return_dict["losses_iter_opt"].append(loss_opt_j.item())
+
+        loss_nn_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
                                            gt_actions, gt_mask, nominal_states_net, nominal_actions)
-        loss_q_scaling = torch.norm(q_scaling - 1.0, dim=1).mean()
-        loss += loss_j + policy.deq_reg * loss_proxy_j + 0.05 * loss_q_scaling
-        # return_dict["losses_var"].append(loss_proxy_j.item())
-        return_dict["losses_iter"].append(loss_proxy_j.item())
+        return_dict["losses_iter_nn"].append(loss_nn_j.item())
+
+        loss_base_j = loss_opt_j + policy.deq_reg * loss_nn_j 
+        return_dict["losses_iter_base"].append(loss_base_j.item())
+
+        loss_q_scaling_j = torch.norm(q_scaling - 1.0, dim=1).mean()
+        loss_j = loss_base_j + 0.05 * loss_q_scaling_j
+        return_dict["losses_iter"].append(loss_j.item())
+
+        loss += loss_j        
+        
     loss_end = add_loss_based_on_out_type(
         policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
-    # ipdb.set_trace()
     return return_dict
 
 def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out):
@@ -393,7 +411,10 @@ def compute_loss(policy, gt_states, gt_actions, gt_mask, policy_out, deq, deqmpc
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out)
+            if "q_scaling" in policy_out.keys():
+                return compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out)
+            else:
+                return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out)
         else:
             # deq -- pretrain
             return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, policy_out)
