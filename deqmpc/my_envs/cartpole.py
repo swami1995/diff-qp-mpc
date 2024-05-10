@@ -62,7 +62,7 @@ class CartpoleEnv(torch.nn.Module):
             self.u_bounds = 250.0
         elif nx == 4:
             self.T = 200
-            self.u_bounds = 100.0
+            self.u_bounds = 1000.0
         self.num_steps = 0
         # create observation space based on nx, position and velocity
         high = np.concatenate(

@@ -72,6 +72,7 @@ def main():
     parser.add_argument("--data_noise_type", type=int, default=0)
     parser.add_argument("--data_noise_std", type=float, default=0.05)
     parser.add_argument("--data_noise_mean", type=float, default=0.3)
+    parser.add_argument("--grad_coeff", action="store_true")
 
     args = parser.parse_args()
     seeding(args.seed)
@@ -142,6 +143,17 @@ def main():
     dyn_resids = []
     losses_var = []
     losses_iter = [[] for _ in range(args.deq_iter)]
+    losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
+    losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
+    if args.deq_out_type == 0:
+        num_coeffs_per_iter = 1
+    elif args.deq_out_type == 1:
+        num_coeffs_per_iter = 2
+    elif args.deq_out_type == 2:
+        num_coeffs_per_iter = 3
+    elif args.deq_out_type == 3:
+        num_coeffs_per_iter = 1
+    coeffs = torch.ones((args.deq_iter, num_coeffs_per_iter), device=args.device)
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -158,7 +170,7 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        pretrain_done = False if (i < 1000 and args.pretrain) else True
+        pretrain_done = False if (i < 10000 and args.pretrain) else True
         # warm start only after 1000 iterations
 
         gt_obs = traj_sample["obs"]
@@ -175,7 +187,7 @@ def main():
         # ipdb.set_trace()
         if args.deq:
             start = time.time()
-            trajs, dyn_res = policy(obs_in, gt_states, gt_actions,
+            trajs, dyn_res, scales = policy(obs_in, gt_states, gt_actions,
                                     gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
             dyn_resids.append(dyn_res)
@@ -183,9 +195,16 @@ def main():
             trajs = policy(obs_in)
         
         # if (i % 2000 == 0):
-        #     ipdb.set_trace()
-
-        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
+            # ipdb.set_trace()
+        if (i % 20 == 0):
+            coeffs_est, losses_nocoeff, losses_proxy_nocoeff = policies.compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
+            coeffs_est = coeffs_est.view(args.deq_iter, num_coeffs_per_iter)
+            if args.grad_coeff:
+                coeffs = coeffs_est*0.2 + coeffs*0.8
+            [losses_iter_nocoeff[k].append(losses_nocoeff[k].item()) for k in range(args.deq_iter)]
+            [losses_proxy_iter_nocoeff[k].append(losses_proxy_nocoeff[k].item()) for k in range(args.deq_iter)]
+            
+        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done, coeffs)
         loss = loss_dict["loss"]
         loss_end = loss_dict["loss_end"]
         losses_var.append(loss_dict["losses_var"])
@@ -223,12 +242,18 @@ def main():
                                   np.mean(losses) / args.deq_iter, i)
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
                 [writer.add_scalar(f"losses/loss{k}", np.mean(losses_iter[k]), i) for k in range(len(losses_iter))]
+                [writer.add_scalar(f"coeffs/coeff{j}{k}", coeffs[j,k], i) for j in range(args.deq_iter) for k in range(num_coeffs_per_iter)]
+                [writer.add_scalar(f"losses_nocoeff/loss_nocoeff{k}", np.mean(losses_iter_nocoeff[k]), i) for k in range(len(losses_iter_nocoeff))]
+                [writer.add_scalar(f"losses_nocoeff/loss_proxy_nocoeff{k}", np.mean(losses_proxy_iter_nocoeff[k]), i) for k in range(len(losses_proxy_iter_nocoeff))]
+                [writer.add_scalar(f"scales/scale{k}", scales[k], i) for k in range(len(scales))]
 
             losses = []
             losses_end = []
             time_diffs = []
             losses_iter = [[] for _ in range(args.deq_iter)]
             losses_var = [[] for _ in range(args.deq_iter)]
+            losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
+            losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
 
 
             # print('nominal states: ', nominal_states)

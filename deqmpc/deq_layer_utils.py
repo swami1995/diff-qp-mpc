@@ -33,7 +33,26 @@ class GradNormLayerFunction(torch.autograd.Function):
         grad_input = grad_input_flat.view(grad_output.size())
         return grad_input, None
 
+class ScaleMultiplyLayer(nn.Module):
+    def __init__(self,):
+        super(ScaleMultiplyLayer, self).__init__()
+    
+    def forward(self, input, scale):
+        return ScaleMultiplyLayerFunction.apply(input, scale)
 
+class ScaleMultiplyLayerFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, scale):
+        ctx.save_for_backward(scale, input)
+        return input * scale
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        scale, input = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_scale = (grad_output * input).sum(dim=-1).unsqueeze(-1)
+        return grad_input, grad_scale
+    
 if __name__ == "__main__":
     # Test the GradNormLayer
     input_size = 3

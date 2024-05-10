@@ -8,13 +8,27 @@ import ipdb
 import torch.nn.functional as F
 # from policy_utils import SinusoidalPosEmb
 import time
-from deq_layer_utils import GradNormLayer
+from deq_layer_utils import GradNormLayer, ScaleMultiplyLayer
 
 # POSSIBLE OUTPUT TYPES OF DEQ LAYER
 # 0: action prediction u[0]->u[T-1]
 # 1: state prediction x[0]->x[T-1], would be x[1]->x[T-1] only if using DEQLayer
 # 2: state prediction x[0]->x[T-1] and control prediction u[0]->u[T-1]
 
+
+# Things to test architecturally
+# 1. Dual inputs and why it isn't helping
+# 2. No hidden state propagation
+# 3. Delta outputs and why it isn't helping - maybe because of the way we are computing the loss, or the way we are computing the gradients, or inputs are not 'right'
+#      3.1. Probably because of different scale requirements between 1st iteration and subsequent iterations.
+#      3.2. diffusion models predict at a fixed scale and we scale it depending on the 'expected' noise. How to make sure the scales are similar. 
+#           3.1.1 Let the network predict scale
+#           3.1.2 Fix decreasing scale for initial few iterations and then let the network predict the scale or fix a small scale depending on the precision requirements.
+#      3.3. This can help us think more deeply about the tradeoffs between diffusion models and DEQs. : Especially if you have constraints to think about. 
+# 4. why the network worsens the mpc outputs - does using the same as the mpc outputs make it worse - does interpolating between the gt and network output worsen things - likewise for the mpc outputs and network outputs
+# 5. Fundamental architectural changes - GNNs, GATs, etc. - UNet like architectures - skip connections, etc. - take inspiration from diffusion models stuff.
+# 6. Learning rate schedules could probably also help.
+# 7. Also need to test against the interior point and ilqr based differentiable mpc methods
 class DEQLayer(torch.nn.Module):
     '''
     Base class for different DEQ architectures, child classes define `forward`, `setup_input_layer` and `setup_input_layer`
@@ -61,8 +75,8 @@ class DEQLayer(torch.nn.Module):
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
-        x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
-        # x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
+        # x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
         # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
@@ -219,6 +233,87 @@ class DEQLayer(torch.nn.Module):
                 self.hdim, self.nq, self.kernel_width_out)
         elif self.layer_type == "gat":
             NotImplementedError
+
+
+class DEQLayerDelta(DEQLayer):
+    '''
+    Base class for different DEQ architectures, child classes define `forward`, `setup_input_layer` and `setup_input_layer`
+    '''
+    def __init__(self, args, env):
+        super().__init__(args, env)
+
+    # TO BE OVERRIDEN
+    def forward(self, in_obs_dict, in_aux_dict):
+        """
+        compute the policy output for the given observation input and feedback input 
+        """
+        obs, x_prev, z = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"]
+        # if (x_prev.shape[1] != self.T - 1):  # handle the case of orginal DEQLayer not predicting current state
+        #     x_prev = x_prev[:, 1:]
+        bsz = obs.shape[0]
+        _obs = obs.reshape(bsz,1,self.nx)
+        # _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
+        _input = x_prev.reshape(bsz, -1)
+        _input1 = self.input_layer(_input)
+        z_out = self.deq_layer(_input1, z)
+        dx_ref, s = self.output_layer(z_out)
+        # ipdb.set_trace()
+        dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
+        vel_ref = dx_ref[..., self.nq:]
+        dx_ref = dx_ref[..., :self.nq] * self.dt
+        # x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
+        # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([_obs, x_ref], dim=-2)
+        u_ref = torch.zeros_like(x_ref[..., :self.nu])
+        
+        out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref, "s": s}
+        out_aux_dict = {"x": x_ref[:,:], "u": u_ref, "z": z_out}
+        return out_mpc_dict, out_aux_dict
+
+    def output_layer(self, z):
+        if self.layer_type == "mlp":
+            out = self.out_layer(z)
+            out = self.gradnorm(out)
+            out = out
+            scale = self.scale_layer(z)
+            out = self.scale_multiply(out, scale/(out.norm(dim=-1, keepdim=True) + 1e-12).detach().clone())
+            return out, scale
+        elif self.layer_type == "gcn":
+            z = z.view(-1, self.T, self.hdim)
+            z = self.convout(z.permute(0, 2, 1))
+            z = self.mishout(z)
+            z = self.gnout(z)
+            return self.final_layer(z).permute(0, 2, 1)[:, 1:]
+        elif self.layer_type == "gat":
+            NotImplementedError
+
+    # TO BE OVERRIDEN
+    def setup_output_layer(self):  
+        self.out_dim = self.nx * (self.T-1)  # state prediction
+        if self.layer_type == "mlp":
+            self.out_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.hdim, self.out_dim)
+            )
+            self.gradnorm = GradNormLayer(self.out_dim)
+            self.scale_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.hdim, self.hdim),
+                torch.nn.LayerNorm(self.hdim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(self.hdim, 1),
+                torch.nn.Softplus())
+            self.scale_multiply = ScaleMultiplyLayer()
+
+        elif self.layer_type == "gcn":
+            self.convout = torch.nn.Conv1d(
+                self.hdim, self.hdim, self.kernel_width)
+            self.gnout = torch.nn.GroupNorm(self.num_groups, self.hdim)
+            self.mishout = torch.nn.Mish()
+            self.final_layer = torch.nn.Conv1d(
+                self.hdim, self.nq, self.kernel_width_out)
+        elif self.layer_type == "gat":
+            NotImplementedError
+
 
 class DEQLayerHistoryState(DEQLayer):
     '''

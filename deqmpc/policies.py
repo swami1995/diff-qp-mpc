@@ -89,6 +89,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.device = args.device
         self.deq_iter = args.deq_iter
         self.model = DEQLayer(args, env)  #TODO different types
+        # self.model = DEQLayerDelta(args, env)
         self.model.to(self.device)
         self.out_type = args.policy_out_type  # output type of policy
         self.loss_type = args.loss_type  # loss type for policy
@@ -119,11 +120,12 @@ class DEQMPCPolicy(torch.nn.Module):
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
     
         # run the DEQ layer for deq_iter iterations
-        trajs, dyn_res = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
-        return trajs, dyn_res
+        trajs, dyn_res, scales = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve)        
+        return trajs, dyn_res, scales
 
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False):   
         trajs = []    
+        scales = []
         for i in range(self.deq_iter):
             in_obs_dict = {"o": obs}
             # ipdb.set_trace()
@@ -145,6 +147,7 @@ class DEQMPCPolicy(torch.nn.Module):
                 trajs.append((nominal_states_net, nominal_states, nominal_actions))
             else:
                 trajs.append((nominal_states_net.detach().clone(), nominal_states.detach().clone(), nominal_actions.detach().clone()))
+            scales.append(out_mpc_dict["s"].detach().clone().mean().item())
         # ipdb.set_trace()
         dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
         ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
@@ -154,7 +157,7 @@ class DEQMPCPolicy(torch.nn.Module):
             nominal_states, nominal_actions = self.tracking_mpc(
                 x_t, xu_ref, x_ref, u_ref, al_iters=10)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)        
-        return trajs, dyn_res
+        return trajs, dyn_res, scales
 
 class DEQMPCPolicyHistory(DEQMPCPolicy):
     def __init__(self, args, env):
@@ -215,25 +218,77 @@ class DEQMPCPolicyFeedback(DEQMPCPolicy):
 # Loss computation
 ######################
 
-def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
+def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs, coeffs=None):
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
     loss = 0.0
+    losses = []
+    residuals = []
+    lossjs = []
+    loss_proxies = []
+    if coeffs is None:
+        coeffs_pos = coeffs_vel = coeffs_act = torch.ones((len(trajs)), device=gt_states.device)
+    else:
+        coeffs = coeffs.view(len(trajs), -1)
+        coeffs_pos = coeffs[:, 0]
+        if coeffs.shape[1] > 1:
+            coeffs_vel = coeffs[:, 1]
+        else:
+            coeffs_vel = torch.ones((len(trajs)), device=gt_states.device)
+        if coeffs.shape[1] > 2:
+            coeffs_act = coeffs[:, 2]
+        else:
+            coeffs_act = torch.ones((len(trajs)), device=gt_states.device)
     # supervise each DEQMPC iteration
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states, nominal_actions)
-        loss_proxy_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states_net, nominal_actions)
-        loss += loss_j + policy.deq_reg * loss_proxy_j
+        loss_j, res = compute_cost_coeff(policy, policy.out_type, policy.loss_type, gt_states,
+                                    gt_actions, gt_mask, nominal_states, nominal_actions,
+                                    coeffs_pos[j], coeffs_vel[j], coeffs_act[j])
+        loss_proxy_j, res_proxy = compute_cost_coeff(policy, policy.out_type, policy.loss_type, gt_states,
+                                    gt_actions, gt_mask, nominal_states_net, nominal_actions,
+                                    coeffs_pos[j], coeffs_vel[j], coeffs_act[j])
+        losses += [loss_j + policy.deq_reg * loss_proxy_j]
+        loss_proxies += [loss_proxy_j]
+        lossjs += [loss_j]
         # return_dict["losses_var"].append(loss_proxy_j.item())
-        return_dict["losses_iter"].append(loss_proxy_j.item())
-    loss_end = add_loss_based_on_out_type(
-        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+        return_dict["losses_iter"].append(loss_proxy_j.mean().item())
+        residuals.append(res)
+    # ipdb.set_trace()
+    residuals = torch.stack(residuals, dim=1)
+    inv_residuals = 1/(residuals + 1e-8)
+    inv_residuals = inv_residuals / inv_residuals.mean(dim=1, keepdim=True)
+    losses = torch.stack(losses, dim=1)*(inv_residuals.detach().clone())
+    loss = losses.mean(dim=0).sum()
+    loss_end = compute_cost_coeff(
+        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask,
+        nominal_states, nominal_actions, coeffs_pos[-1], coeffs_vel[-1], coeffs_act[-1])[0].mean()
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
     # ipdb.set_trace()
     return return_dict
 
+def compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
+    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
+    losses = []
+    loss_proxies = []
+    # supervise each DEQMPC iteration
+    for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
+        loss_j = compute_decomposed_loss(policy, policy.out_type, policy.loss_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states, nominal_actions)
+        loss_proxy_j = compute_decomposed_loss(policy, policy.out_type, policy.loss_type, gt_states,
+                                           gt_actions, gt_mask, nominal_states_net, nominal_actions)
+        loss_proxies += loss_proxy_j
+        losses += loss_j #+ policy.deq_reg * loss_proxy_j
+        # return_dict["losses_var"].append(loss_proxy_j.item())
+        # return_dict["losses_iter"].append(loss_proxy_j.item())
+    losses = torch.stack(losses, dim=0)
+    loss_proxies = torch.stack(loss_proxies, dim=0)
+    
+    grads = torch.stack([torch.autograd.grad(losses[i] + policy.deq_reg*loss_proxies[i], policy.model.out_layer[0].weight, retain_graph=True)[0].view(-1) for i in range(len(losses))], dim=0).norm(dim=-1)
+    grad_idx = torch.where(grads>1e-8)[0][0]
+    grad_ratios = grads[grad_idx] / grads
+    grad_ratios = torch.where(grad_ratios > 1e6, torch.ones_like(grad_ratios), grad_ratios)
+    # compute moving averages
+    return grad_ratios, losses.reshape((len(trajs), len(loss_j))).mean(dim=-1), loss_proxies.reshape((len(trajs), len(loss_j))).mean(dim=-1)
 
 def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs):
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
@@ -280,15 +335,74 @@ def add_loss_based_on_out_type(policy, out_type, loss_type, gt_states, gt_action
     return loss
 
 
-def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
+def compute_cost_coeff(policy, out_type, loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions, coeffs_act, coeffs_pos, coeffs_vel):
+    loss = 0.0
+    resi = resj = resk = 0.0
+    if out_type == 0 or out_type == 2:
+        # supervise action
+        _, lossk, resk = loss_type_conditioned_compute_loss(nominal_actions[:, :policy.T-1], gt_actions[:, :policy.T-1], gt_mask[:, :policy.T-1], loss_type)
+        loss = lossk*coeffs_act
+    if out_type == 1 or out_type == 2:
+        # supervise state
+        _, lossi, resi = loss_type_conditioned_compute_loss(nominal_states[:, :, :policy.nq], gt_states[:, :, :policy.nq], gt_mask, loss_type)
+        _, lossj, resj = loss_type_conditioned_compute_loss(nominal_states[:, :, policy.nq:], gt_states[:, :, policy.nq:], gt_mask, loss_type)
+        loss += lossi*coeffs_pos + lossj*coeffs_vel
+    if out_type == 3:
+        # supervise configuration
+        _, lossi, resi = loss_type_conditioned_compute_loss(nominal_states[:, :, :policy.nq], gt_states[:, :, :policy.nq], gt_mask, loss_type)
+        loss += lossi*coeffs_pos
+    return loss, resi + resj + resk
+
+def compute_decomposed_loss(policy, out_type, loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions):
+    loss = []
+    if out_type == 0 or out_type == 2:
+        # supervise action
+        loss += [loss_type_conditioned_compute_loss(nominal_actions[:, :policy.T-1], gt_actions[:, :policy.T-1], gt_mask[:, :policy.T-1], loss_type)[0]]
+    if out_type == 1 or out_type == 2:
+        # supervise state
+        loss += [loss_type_conditioned_compute_loss(nominal_states[:, :, :policy.nq], gt_states[:, :, :policy.nq], gt_mask, loss_type)[0]]
+        loss += [loss_type_conditioned_compute_loss(nominal_states[:, :, policy.nq:], gt_states[:, :, policy.nq:], gt_mask, loss_type)[0]]
+    if out_type == 3:
+        # supervise configuration
+        loss += [loss_type_conditioned_compute_loss(nominal_states[:, :, :policy.nq], gt_states[:, :, :policy.nq], gt_mask, loss_type)[0]]
+    return loss
+
+def loss_type_conditioned_compute_loss(pred, targ, mask, loss_type):
+    res = torch.abs((pred - targ) * mask[:, :, None]).sum(dim=-1)
+    if loss_type == "l2":        
+        l2 = torch.norm((pred - targ) * mask[:, :, None], dim=-1).pow(2)
+        return l2.mean(), l2.mean(dim=1), res.mean(dim=1)
+    elif loss_type == "l1":
+        l1 = torch.abs((pred - targ) * mask[:, :, None]).sum(dim=-1)
+        return l1.mean(), l1.mean(dim=1), res.mean(dim=1)
+    elif loss_type == "hinge":
+        l1 = torch.abs((pred - targ) * mask[:, :, None])
+        l2 = ((pred - targ) * mask[:, :, None]).pow(2)
+        hingel = torch.min(l1, l2).sum(dim=-1)
+        return hingel.mean(), hingel.mean(dim=1), res.mean(dim=1)
+
+def compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc, coeffs=None):
     if deq:
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            return compute_loss_deqmpc2(policy, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs, coeffs=coeffs)
         else:
             # deq -- pretrain
-            return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs)
+            return compute_loss_deqmpc(policy.model, gt_states, gt_actions, gt_mask, trajs, coeffs=coeffs)
+    else:
+        # vanilla behavior cloning
+        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs, coeffs=coeffs)
+    
+def compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, trajs, deq, deqmpc):
+    if deq:
+        # deq or deqmpc
+        if deqmpc:
+            # full deqmpc
+            return compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
+        else:
+            # deq -- pretrain
+            return compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs)
     else:
         # vanilla behavior cloning
         return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, trajs)
