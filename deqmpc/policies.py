@@ -110,9 +110,9 @@ class DEQMPCPolicy(torch.nn.Module):
         x_ref = torch.cat([x]*self.T, dim=-1).detach().clone()
         x_ref = x_ref.view(-1, self.T, self.nx)
         nominal_actions = torch.zeros((x.shape[0], self.T, self.nu), device=self.device)
-        # x_ref = x_gt.view(x_ref.shape)
-        z = self.model.init_z(self.bsz).to(self.device)
-        # ipdb.set_trace()
+
+        z = self.model.init_z(x.shape[0]).to(self.device)
+
         out_aux_dict = {"z": z, "x": x_ref, 'u': nominal_actions}
 
         if self.args.solver_type == "al":
@@ -124,7 +124,7 @@ class DEQMPCPolicy(torch.nn.Module):
 
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
         deq_iter = self.deq_iter   
-        opt_from_iter = 0
+        opt_from_iter = 2
 
         trajs = []
         for i in range(deq_iter):
@@ -140,7 +140,6 @@ class DEQMPCPolicy(torch.nn.Module):
 
             # Only run MPC after a few iterations, don't flow MPC gradients through the DEQ
             if qp_solve and i >= opt_from_iter:
-                # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref, al_iters=2)
                 out_aux_dict["x"] = nominal_states.detach().clone()
                 out_aux_dict["u"] = nominal_actions.detach().clone()
@@ -247,7 +246,7 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
 
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
         deq_iter = self.deq_iter   
-        opt_from_iter = 2
+        opt_from_iter = 0
 
         trajs = []
         for i in range(deq_iter):
@@ -349,7 +348,7 @@ def compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_
         return_dict["losses_iter_base"].append(loss_base_j.item())
 
         loss_q_scaling_j = torch.norm(q_scaling - 1.0, dim=1).mean()
-        loss_j = loss_base_j + 0.05 * loss_q_scaling_j
+        loss_j = loss_base_j + 0.02 * loss_q_scaling_j
         return_dict["losses_iter"].append(loss_j.item())
 
         loss += loss_j        

@@ -54,10 +54,11 @@ class DEQLayer(torch.nn.Module):
         _obs = obs.reshape(bsz,1,self.nx)
         # _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
         _input = x_prev.reshape(bsz, -1)
+
         _input1 = self.input_layer(_input)
         z_out = self.deq_layer(_input1, z)
         dx_ref = self.output_layer(z_out)
-        # ipdb.set_trace()
+
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
