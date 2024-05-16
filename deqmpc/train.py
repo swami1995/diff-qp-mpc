@@ -18,7 +18,7 @@ import math
 import numpy as np
 import torch
 import torch.autograd as autograd
-
+from deq_layer_utils import update_scales
 
 # torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
@@ -73,6 +73,7 @@ def main():
     parser.add_argument("--data_noise_std", type=float, default=0.05)
     parser.add_argument("--data_noise_mean", type=float, default=0.3)
     parser.add_argument("--grad_coeff", action="store_true")
+    parser.add_argument("--scaled_output", action="store_true")
 
     args = parser.parse_args()
     seeding(args.seed)
@@ -84,7 +85,7 @@ def main():
         elif (args.lastqp_solve):
             method_name = f"diffmpc_"
         args.name = method_name + args.name + \
-            f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}"
+            f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_hdim{args.hdim}"
         writer = SummaryWriter("./logs/" + args.name)
         print("logging to: ", args.name)
 
@@ -121,6 +122,15 @@ def main():
     gt_trajs = merge_gt_data(gt_trajs)
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
+
+    traj_sample = sample_trajectory(gt_trajs, args.bsz*10, args.H, args.T)
+    if args.env == "pendulum":
+        traj_sample["state"] = utils.unnormalize_states_pendulum(
+            traj_sample["state"])
+    elif args.env == "cartpole1link" or args.env == "cartpole2link":
+        traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
+            traj_sample["state"])
+    args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,4).abs().max(dim=0)[0].to(args.device)
     if args.deq:
         policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
@@ -154,7 +164,12 @@ def main():
     elif args.deq_out_type == 3:
         num_coeffs_per_iter = 1
     coeffs = torch.ones((args.deq_iter, num_coeffs_per_iter), device=args.device)
-
+    # coeffs = torch.tensor([[1.0, 6.0, 8.0, 10.0, 12.0, 14.0], 
+    #                        [0.03, 0.06, 0.08, 0.10, 0.12, 0.14]],
+    #                        device=args.device).t()
+    # coeffs = torch.tensor([[1.0, 6.0, 7.0, 8.0, 9.0, 10.0], 
+    #                        [0.03, 0.06, 0.07, 0.8, 0.9, 0.1]],
+    #                        device=args.device).t()
     # run imitation learning using gt_trajs
     for i in range(20000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
@@ -170,7 +185,7 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        pretrain_done = False if (i < 10000 and args.pretrain) else True
+        pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations
 
         gt_obs = traj_sample["obs"]
@@ -187,7 +202,7 @@ def main():
         # ipdb.set_trace()
         if args.deq:
             start = time.time()
-            trajs, dyn_res, scales = policy(obs_in, gt_states, gt_actions,
+            trajs, dyn_res, scales, init_states = policy(obs_in, gt_states, gt_actions,
                                     gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
             dyn_resids.append(dyn_res)
@@ -203,7 +218,9 @@ def main():
                 coeffs = coeffs_est*0.2 + coeffs*0.8
             [losses_iter_nocoeff[k].append(losses_nocoeff[k].item()) for k in range(args.deq_iter)]
             [losses_proxy_iter_nocoeff[k].append(losses_proxy_nocoeff[k].item()) for k in range(args.deq_iter)]
-            
+        
+        if args.scaled_output:
+            update_scales(policy, trajs, gt_states, init_states, gamma=0.95)
         loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done, coeffs)
         loss = loss_dict["loss"]
         loss_end = loss_dict["loss_end"]
@@ -243,9 +260,11 @@ def main():
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
                 [writer.add_scalar(f"losses/loss{k}", np.mean(losses_iter[k]), i) for k in range(len(losses_iter))]
                 [writer.add_scalar(f"coeffs/coeff{j}{k}", coeffs[j,k], i) for j in range(args.deq_iter) for k in range(num_coeffs_per_iter)]
+                [writer.add_scalar(f"coeffs_res/coeff{k}", loss_dict["iter_weights"].mean(dim=0)[k], i) for k in range(args.deq_iter)]
+                writer.add_scalar("coeffs_res/coeff_ex_var", loss_dict["ex_weights"].var(), i)
                 [writer.add_scalar(f"losses_nocoeff/loss_nocoeff{k}", np.mean(losses_iter_nocoeff[k]), i) for k in range(len(losses_iter_nocoeff))]
                 [writer.add_scalar(f"losses_nocoeff/loss_proxy_nocoeff{k}", np.mean(losses_proxy_iter_nocoeff[k]), i) for k in range(len(losses_proxy_iter_nocoeff))]
-                [writer.add_scalar(f"scales/scale{k}", scales[k], i) for k in range(len(scales))]
+                # [writer.add_scalar(f"scales/scale{k}", policy.model.scales[k][0,0], i) for k in range(len(scales))]
 
             losses = []
             losses_end = []

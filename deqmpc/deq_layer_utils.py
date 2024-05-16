@@ -50,8 +50,20 @@ class ScaleMultiplyLayerFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         scale, input = ctx.saved_tensors
         grad_input = grad_output.clone()
-        grad_scale = (grad_output * input).sum(dim=-1).unsqueeze(-1)
+        grad_scale = (grad_output * input)#.sum(dim=-1).unsqueeze(-1)
         return grad_input, grad_scale
+
+def update_scales(policy, trajs, gt_out, init_states, gamma=0.98):
+    error0 = (gt_out[:, 1:] - init_states[:, 1:]).abs().median(dim=0).values
+    # scale = [error0]
+    policy.model.scales[0].data = policy.model.scales[0].data*gamma + (1-gamma)*error0
+    for i, traj in enumerate(trajs[:-1]):
+        if i >= len(policy.model.scales)-1:
+            break
+        error = traj[1][:, 1:] - gt_out[:, 1:]
+        error = error.abs().median(dim=0).values
+        policy.model.scales[i+1].data = policy.model.scales[i+1].data*gamma + (1-gamma)*error
+    
     
 if __name__ == "__main__":
     # Test the GradNormLayer

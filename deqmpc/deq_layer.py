@@ -75,8 +75,8 @@ class DEQLayer(torch.nn.Module):
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
         dx_ref = dx_ref[..., :self.nq] * self.dt
-        # x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
-        x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
+        x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        # x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
         # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
         x_ref = torch.cat([_obs, x_ref], dim=-2)
         u_ref = torch.zeros_like(x_ref[..., :self.nu])
@@ -241,13 +241,18 @@ class DEQLayerDelta(DEQLayer):
     '''
     def __init__(self, args, env):
         super().__init__(args, env)
-
+        self.max_scale = args.max_scale + 0.1
+        # self.scales = [self.max_scale/(2**(i+1)) for i in range(3)] + [self.max_scale/10 for i in range(3, args.deq_iter)]
+        # self.scales = [torch.ones(self.T-1, self.nx).to(self.max_scale) for i in range(args.deq_iter)]
+        # Define scales as nn.Parameter instead filled with ones
+        self.scales = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(self.T-1, self.nx).to(self.max_scale)) for i in range(args.deq_iter)])
+        self.embedding_params = torch.nn.Parameter(torch.zeros(args.deq_iter, self.hdim))
     # TO BE OVERRIDEN
     def forward(self, in_obs_dict, in_aux_dict):
         """
         compute the policy output for the given observation input and feedback input 
         """
-        obs, x_prev, z = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"]
+        obs, x_prev, z, iter = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"], in_aux_dict["iter"]
         # if (x_prev.shape[1] != self.T - 1):  # handle the case of orginal DEQLayer not predicting current state
         #     x_prev = x_prev[:, 1:]
         bsz = obs.shape[0]
@@ -255,8 +260,8 @@ class DEQLayerDelta(DEQLayer):
         # _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
         _input = x_prev.reshape(bsz, -1)
         _input1 = self.input_layer(_input)
-        z_out = self.deq_layer(_input1, z)
-        dx_ref, s = self.output_layer(z_out)
+        z_out = self.deq_layer(_input1, z + self.embedding_params[iter][None])
+        dx_ref, s = self.output_layer(z_out, iter)
         # ipdb.set_trace()
         dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
         vel_ref = dx_ref[..., self.nq:]
@@ -271,13 +276,16 @@ class DEQLayerDelta(DEQLayer):
         out_aux_dict = {"x": x_ref[:,:], "u": u_ref, "z": z_out}
         return out_mpc_dict, out_aux_dict
 
-    def output_layer(self, z):
+    def output_layer(self, z, iter):
         if self.layer_type == "mlp":
             out = self.out_layer(z)
             out = self.gradnorm(out)
             out = out
-            scale = self.scale_layer(z)
-            out = self.scale_multiply(out, scale/(out.norm(dim=-1, keepdim=True) + 1e-12).detach().clone())
+            # scale = self.scale_layer(z)
+            scale = self.scales[iter].clone()
+            scale[:, :self.nq] = scale[:, :self.nq] / self.dt
+            scale = scale.reshape(-1)[None].repeat(out.shape[0], 1)#, self.T-1)
+            out = self.scale_multiply(out, scale)
             return out, scale
         elif self.layer_type == "gcn":
             z = z.view(-1, self.T, self.hdim)
@@ -296,12 +304,12 @@ class DEQLayerDelta(DEQLayer):
                 torch.nn.Linear(self.hdim, self.out_dim)
             )
             self.gradnorm = GradNormLayer(self.out_dim)
-            self.scale_layer = torch.nn.Sequential(
-                torch.nn.Linear(self.hdim, self.hdim),
-                torch.nn.LayerNorm(self.hdim),
-                torch.nn.ReLU(),
-                torch.nn.Linear(self.hdim, 1),
-                torch.nn.Softplus())
+            # self.scale_layer = torch.nn.Sequential(
+            #     torch.nn.Linear(self.hdim, self.hdim),
+            #     torch.nn.LayerNorm(self.hdim),
+            #     torch.nn.ReLU(),
+            #     torch.nn.Linear(self.hdim, 1),
+            #     torch.nn.Softplus())
             self.scale_multiply = ScaleMultiplyLayer()
 
         elif self.layer_type == "gcn":
