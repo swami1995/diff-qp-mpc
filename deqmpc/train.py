@@ -59,7 +59,7 @@ def main():
     parser.add_argument("--pretrain", action="store_true")
     parser.add_argument("--lastqp_solve", action="store_true")
     parser.add_argument("--qp_solve", action="store_true")
-    parser.add_argument("--pooling", type=str, default="mean")
+    parser.add_argument("--pooling", type=str, default="sum")
     parser.add_argument("--solver_type", type=str, default='al')
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--dtype", type=str, default="double")
