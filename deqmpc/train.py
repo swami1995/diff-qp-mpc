@@ -91,6 +91,7 @@ def main():
 
     kwargs = {"dtype": torch.float64,
               "device": args.device, "requires_grad": False}
+
     if args.env == "pendulum":
         env = PendulumEnv(stabilization=False)
         gt_trajs = get_gt_data(args, env, "sac")
@@ -135,6 +136,7 @@ def main():
         policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
+        # policy = DEQMPCPolicyQ(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -153,8 +155,6 @@ def main():
     dyn_resids = []
     losses_var = []
     losses_iter = [[] for _ in range(args.deq_iter)]
-    losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
-    losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
     if args.deq_out_type == 0:
         num_coeffs_per_iter = 1
     elif args.deq_out_type == 1:
@@ -170,6 +170,11 @@ def main():
     # coeffs = torch.tensor([[1.0, 6.0, 7.0, 8.0, 9.0, 10.0], 
     #                        [0.03, 0.06, 0.07, 0.8, 0.9, 0.1]],
     #                        device=args.device).t()
+
+    losses_iter_opt = [[] for _ in range(args.deq_iter)]
+    losses_iter_nn = [[] for _ in range(args.deq_iter)]
+    losses_iter_base = [[] for _ in range(args.deq_iter)]
+
     # run imitation learning using gt_trajs
     for i in range(20000):
         # sample bsz random trajectories from gt_trajs and a random time step for each
@@ -202,17 +207,16 @@ def main():
         # ipdb.set_trace()
         if args.deq:
             start = time.time()
-            trajs, dyn_res, scales, init_states = policy(obs_in, gt_states, gt_actions,
-                                    gt_mask, iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
+            policy_out = policy(obs_in, gt_states, gt_actions,
+                                gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
-            dyn_resids.append(dyn_res)
+            dyn_resids.append(policy_out["dyn_res"])
         else:
-            trajs = policy(obs_in)
-        
+            policy_out = policy(obs_in)
         # if (i % 2000 == 0):
             # ipdb.set_trace()
         if (i % 20 == 0):
-            coeffs_est, losses_nocoeff, losses_proxy_nocoeff = policies.compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done)
+            coeffs_est, losses_nocoeff, losses_proxy_nocoeff = policies.compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, policy_out["trajs"], args.deq, pretrain_done)
             coeffs_est = coeffs_est.view(args.deq_iter, num_coeffs_per_iter)
             if args.grad_coeff:
                 coeffs = coeffs_est*0.2 + coeffs*0.8
@@ -220,21 +224,33 @@ def main():
             [losses_proxy_iter_nocoeff[k].append(losses_proxy_nocoeff[k].item()) for k in range(args.deq_iter)]
         
         if args.scaled_output:
-            update_scales(policy, trajs, gt_states, init_states, gamma=0.95)
-        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, trajs, args.deq, pretrain_done, coeffs)
+            update_scales(policy, policy_out["trajs"], gt_states, policy_out["init_states"], gamma=0.95)
+
+        # if (i % 1000 == 0):
+        #     ipdb.set_trace()
+
+        # if (i == 5500):
+        #     ipdb.set_trace()
+
+        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, policy_out, args.deq, pretrain_done, coeffs)
         loss = loss_dict["loss"]
-        loss_end = loss_dict["loss_end"]
-        losses_var.append(loss_dict["losses_var"])
-        [losses_iter[k].append(loss_dict["losses_iter"][k]) for k in range(args.deq_iter)]
         time_diffs.append(end-start)
         optimizer.zero_grad()
         loss.backward()
         losses.append(loss.item())
-        losses_end.append(loss_end.item())
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)
         # ipdb.set_trace()
         optimizer.step()
+
+        loss_end = loss_dict["loss_end"]
+        losses_end.append(loss_end.item())
+        losses_var.append(loss_dict["losses_var"])
+        [losses_iter[k].append(loss_dict["losses_iter"][k]) for k in range(args.deq_iter)]
+        [losses_iter_opt[k].append(loss_dict["losses_iter_opt"][k]) for k in range(args.deq_iter)]
+        [losses_iter_nn[k].append(loss_dict["losses_iter_nn"][k]) for k in range(args.deq_iter)]
+        [losses_iter_base[k].append(loss_dict["losses_iter_base"][k]) for k in range(args.deq_iter)]
+
         # Printing
         if i % 100 == 0:
             print("iter: ", i, "deqmpc" if pretrain_done else "deq")
@@ -258,6 +274,7 @@ def main():
                 writer.add_scalar("losses/loss_avg",
                                   np.mean(losses) / args.deq_iter, i)
                 writer.add_scalar("losses/loss_end", np.mean(losses_end), i)
+                
                 [writer.add_scalar(f"losses/loss{k}", np.mean(losses_iter[k]), i) for k in range(len(losses_iter))]
                 [writer.add_scalar(f"coeffs/coeff{j}{k}", coeffs[j,k], i) for j in range(args.deq_iter) for k in range(num_coeffs_per_iter)]
                 [writer.add_scalar(f"coeffs_res/coeff{k}", loss_dict["iter_weights"].mean(dim=0)[k], i) for k in range(args.deq_iter)]
@@ -265,11 +282,16 @@ def main():
                 [writer.add_scalar(f"losses_nocoeff/loss_nocoeff{k}", np.mean(losses_iter_nocoeff[k]), i) for k in range(len(losses_iter_nocoeff))]
                 [writer.add_scalar(f"losses_nocoeff/loss_proxy_nocoeff{k}", np.mean(losses_proxy_iter_nocoeff[k]), i) for k in range(len(losses_proxy_iter_nocoeff))]
                 # [writer.add_scalar(f"scales/scale{k}", policy.model.scales[k][0,0], i) for k in range(len(scales))]
+                [writer.add_scalar(f"losses_opt/losses_iter_opt{k}", np.mean(losses_iter_opt[k]), i) for k in range(len(losses_iter_opt))]
+                [writer.add_scalar(f"losses_nn/losses_iter_nn{k}", np.mean(losses_iter_nn[k]), i) for k in range(len(losses_iter_nn))]
+                [writer.add_scalar(f"losses_base/losses_iter_base{k}", np.mean(losses_iter_base[k]), i) for k in range(len(losses_iter_base))]
+
 
             losses = []
             losses_end = []
             time_diffs = []
             losses_iter = [[] for _ in range(args.deq_iter)]
+            losses_iter_noQreg = [[] for _ in range(args.deq_iter)]
             losses_var = [[] for _ in range(args.deq_iter)]
             losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
             losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]

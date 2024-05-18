@@ -56,7 +56,6 @@ class Dynamics(torch.nn.Module):
         q = state[:, : self.nq].contiguous()
         qdot = state[:, self.nq:].contiguous()
         h = torch.full((bsz, 1), self.dt, **self.kwargs)
-        # ipdb.set_trace()
         next_state = DynamicsFunction.apply(
             q, qdot, tau, h, self.package.dynamics)
         next_state = torch.cat(next_state, dim=-1)

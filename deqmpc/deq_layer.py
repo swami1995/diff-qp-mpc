@@ -237,6 +237,7 @@ class DEQLayer(torch.nn.Module):
                 torch.nn.Mish(),
                 torch.nn.Conv1d(self.hdim, self.nx, self.kernel_width_out, padding='same'),
             )
+            ###################### Implement GradNormLayer for GCN ######################
             # self.convout = torch.nn.Conv1d(
             #     self.hdim, self.hdim, self.kernel_width, padding='same')
             # self.gnout = torch.nn.GroupNorm(self.num_groups, self.hdim)
@@ -527,6 +528,118 @@ class DEQLayerFeedback(DEQLayer):
             xn_emb = self.node_encoder(xn)
             x0_emb = self.x0_encoder(obs[:, 0]).unsqueeze(1).repeat(1, self.T-1, 1)  #TODO switch case for out_type
             inp = torch.cat([x_emb, xn_emb, x0_emb, t], dim=-1).transpose(1, 2).reshape(-1, self.hdim*4, self.T-1)
+            inp = self.input_encoder(inp)
+        elif self.layer_type == "gat":
+            NotImplementedError
+        return inp
+
+class DEQLayerQ(DEQLayer):
+    """
+    Input: current_state, nominal_states_net, nominal_states
+    Output: state prediction, Q scalars (bsz x T)
+    """
+    def __init__(self, args, env):
+        super().__init__(args, env)
+
+    def forward(self, in_obs_dict, in_aux_dict):
+        """
+        compute the policy output for the given observation input and feedback input 
+        """
+        obs, x_prev, z, q, iter = in_obs_dict["o"], in_aux_dict["x"], in_aux_dict["z"], in_aux_dict["q"], in_aux_dict["iter"]
+        # if (x_prev.shape[1] != self.T - 1):  # handle the case of orginal DEQLayer not predicting current state
+        #     x_prev = x_prev[:, 1:]
+        bsz = obs.shape[0]
+        _obs = obs.reshape(bsz,1,self.nx)
+        # _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
+        _x_prev = x_prev#.reshape(bsz, -1)
+        _input = torch.cat([_x_prev, q.reshape(bsz,self.T,1)], dim=-1).reshape(bsz, -1)
+        _input1 = self.input_layer(_input)
+        z_out = self.deq_layer(_input1, z + self.embedding_params[iter][None])
+        output = self.output_layer(z_out)
+        # dx_ref, q_out = output[..., :self.nx*(self.T-1)], output[..., self.nx*(self.T-1):]
+        dx_ref, q_out = output[:, :, :self.nx], output[:, :, self.nx:]
+        q_out = torch.nn.ReLU()(q_out).reshape(-1, self.T-1)
+        q_out = torch.cat([torch.ones_like(q_out[:, -1:]), q_out], dim=1)  # append zero to last action
+        dx_ref = dx_ref.view(-1, self.T - 1, self.nx)
+        vel_ref = dx_ref[..., self.nq:]
+        dx_ref = dx_ref[..., :self.nq] * self.dt
+        x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
+        # x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
+        # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)
+        x_ref = torch.cat([_obs, x_ref], dim=-2)
+        u_ref = torch.zeros_like(x_ref[..., :self.nu])
+        
+        out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref, "q": q_out}
+        out_aux_dict = {"x": x_ref[:,:], "u": u_ref, "z": z_out, "q": q_out}
+        return out_mpc_dict, out_aux_dict
+
+    def setup_input_layer(self):
+        self.in_dim = self.nx + self.nx * (self.T - 1) + 1*(self.T) # current state and state prediction
+        if self.layer_type == "mlp":
+            # ipdb.set_trace()
+            self.inp_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.in_dim, self.hdim),
+                torch.nn.LayerNorm(self.hdim),
+            )
+        elif self.layer_type == "gcn":
+            self.time_emb = torch.nn.Parameter(torch.randn(self.T-1, self.hdim))
+            # Get the node embeddings
+            self.node_encoder = nn.Sequential(
+                nn.Linear(self.nx+1, self.hdim),
+                nn.LayerNorm(self.hdim),
+                nn.Mish()
+            )
+            self.x0_encoder = nn.Sequential(
+                nn.Linear(self.nx, self.hdim),
+                nn.LayerNorm(self.hdim),
+                nn.Mish()
+            )
+
+            self.input_encoder = nn.Sequential(
+                nn.Conv1d(self.hdim*4, self.hdim*4, self.kernel_width, padding='same'),
+                nn.Mish(),
+                nn.Conv1d(self.hdim*4, self.hdim, self.kernel_width, padding='same'),
+                nn.GroupNorm(self.num_groups, self.hdim),
+                # nn.Mish()
+            )
+
+            self.global_pooling = {
+                "max": torch.max,
+                "mean": torch.mean,
+                "sum": torch.sum
+            }[self.pooling]
+        else:
+            NotImplementedError
+
+    def setup_output_layer(self):  
+        
+        if self.layer_type == "mlp":
+            self.out_dim = self.nx * (self.T-1) + 1*(self.T) # state prediction and Q scalars
+            self.out_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.hdim, self.out_dim)
+            )
+            self.gradnorm = GradNormLayer(self.out_dim)
+        elif self.layer_type == "gcn":
+            self.out_dim = self.nx + 1  # state prediction and 1 scalar (Q) for each T
+            self.out_layer = torch.nn.Sequential(
+                torch.nn.Conv1d(self.hdim, self.hdim, self.kernel_width, padding='same'),
+                torch.nn.GroupNorm(self.num_groups, self.hdim),
+                torch.nn.Mish(),
+                torch.nn.Conv1d(self.hdim, self.out_dim, self.kernel_width_out, padding='same'),
+            )
+            # Implement GradNormLayer for GCN
+        else:
+            NotImplementedError
+
+    def input_layer(self, x, obs):
+        if self.layer_type == "mlp":
+            inp = self.inp_layer(x)
+        elif self.layer_type == "gcn":
+            t = self.time_emb.unsqueeze(0).repeat(x.shape[0], 1, 1)#[:,1:]
+            x = x.reshape(-1, self.T, self.nx+1)[:,1:]
+            x_emb = self.node_encoder(x)
+            x0_emb = self.x0_encoder(obs[:, 0]).unsqueeze(1).repeat(1, self.T-1, 1)  #TODO switch case for out_type
+            inp = torch.cat([x_emb, x0_emb, t], dim=-1).transpose(1, 2).reshape(-1, self.hdim*3, self.T-1)
             inp = self.input_encoder(inp)
         elif self.layer_type == "gat":
             NotImplementedError
