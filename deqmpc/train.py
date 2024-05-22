@@ -140,6 +140,12 @@ def main():
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
+            os.makedirs(f"./logs/{args.name}/code/", exist_ok=True)
+            os.makedirs(f"./logs/{args.name}/code/deqmpc/", exist_ok=True)
+            os.makedirs(f"./logs/{args.name}/code/qpth/", exist_ok=True)
+            os.system(f"cp -r {project_dir}/deqmpc/*.py ./logs/{args.name}/code/deqmpc/")
+            os.system(f"cp -r {project_dir}/qpth/*.py ./logs/{args.name}/code/qpth/")
+            # ipdb.set_trace()
     else:
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
@@ -174,6 +180,9 @@ def main():
     losses_iter_opt = [[] for _ in range(args.deq_iter)]
     losses_iter_nn = [[] for _ in range(args.deq_iter)]
     losses_iter_base = [[] for _ in range(args.deq_iter)]
+    loss_iter_q = [[] for _ in range(args.deq_iter)]
+    losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
+    losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -216,7 +225,7 @@ def main():
         # if (i % 2000 == 0):
             # ipdb.set_trace()
         if (i % 20 == 0):
-            coeffs_est, losses_nocoeff, losses_proxy_nocoeff = policies.compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, policy_out["trajs"], args.deq, pretrain_done)
+            coeffs_est, losses_nocoeff, losses_proxy_nocoeff = policies.compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, policy_out, args.deq, pretrain_done)
             coeffs_est = coeffs_est.view(args.deq_iter, num_coeffs_per_iter)
             if args.grad_coeff:
                 coeffs = coeffs_est*0.2 + coeffs*0.8
@@ -250,6 +259,8 @@ def main():
         [losses_iter_opt[k].append(loss_dict["losses_iter_opt"][k]) for k in range(args.deq_iter)]
         [losses_iter_nn[k].append(loss_dict["losses_iter_nn"][k]) for k in range(args.deq_iter)]
         [losses_iter_base[k].append(loss_dict["losses_iter_base"][k]) for k in range(args.deq_iter)]
+        if 'q_scaling' in policy_out:
+            [loss_iter_q[k].append(loss_dict['q_scaling'][k]) for k in range(args.deq_iter)]
 
         # Printing
         if i % 100 == 0:
@@ -285,6 +296,8 @@ def main():
                 [writer.add_scalar(f"losses_opt/losses_iter_opt{k}", np.mean(losses_iter_opt[k]), i) for k in range(len(losses_iter_opt))]
                 [writer.add_scalar(f"losses_nn/losses_iter_nn{k}", np.mean(losses_iter_nn[k]), i) for k in range(len(losses_iter_nn))]
                 [writer.add_scalar(f"losses_base/losses_iter_base{k}", np.mean(losses_iter_base[k]), i) for k in range(len(losses_iter_base))]
+                [writer.add_scalar(f"losses_var/losses_var{k}", np.mean(losses_var[k]), i) for k in range(len(losses_var))]
+                [writer.add_scalar(f"losses_q/losses_q{k}", np.mean(loss_iter_q[k]), i) for k in range(len(loss_iter_q))]
 
 
             losses = []

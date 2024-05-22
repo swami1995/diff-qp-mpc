@@ -126,8 +126,12 @@ class DEQLayer(torch.nn.Module):
             out = self.gradnorm(out)
             return out
         elif self.layer_type == "gcn":
+            bsz = z.shape[0]
             z = z.view(-1, self.T-1, self.hdim).permute(0, 2, 1)
-            return self.out_layer(z).permute(0, 2, 1)
+            out = self.out_layer(z).permute(0, 2, 1)
+            # out = self.gradnorm(out)
+            # out = self.gradnorm(out.reshape(bsz, -1)).view(bsz, self.T-1, -1)
+            return out
             # z = self.convout(z)
             # z = self.mishout(z)
             # z = self.gnout(z)
@@ -237,6 +241,7 @@ class DEQLayer(torch.nn.Module):
                 torch.nn.Mish(),
                 torch.nn.Conv1d(self.hdim, self.nx, self.kernel_width_out, padding='same'),
             )
+            self.gradnorm = GradNormLayer(self.out_dim)
             ###################### Implement GradNormLayer for GCN ######################
             # self.convout = torch.nn.Conv1d(
             #     self.hdim, self.hdim, self.kernel_width, padding='same')
@@ -553,7 +558,7 @@ class DEQLayerQ(DEQLayer):
         # _input = torch.cat([_obs, x_prev], dim=-2).reshape(bsz, -1)
         _x_prev = x_prev#.reshape(bsz, -1)
         _input = torch.cat([_x_prev, q.reshape(bsz,self.T,1)], dim=-1).reshape(bsz, -1)
-        _input1 = self.input_layer(_input)
+        _input1 = self.input_layer(_input, _obs)
         z_out = self.deq_layer(_input1, z + self.embedding_params[iter][None])
         output = self.output_layer(z_out)
         # dx_ref, q_out = output[..., :self.nx*(self.T-1)], output[..., self.nx*(self.T-1):]
@@ -596,7 +601,7 @@ class DEQLayerQ(DEQLayer):
             )
 
             self.input_encoder = nn.Sequential(
-                nn.Conv1d(self.hdim*4, self.hdim*4, self.kernel_width, padding='same'),
+                nn.Conv1d(self.hdim*3, self.hdim*4, self.kernel_width, padding='same'),
                 nn.Mish(),
                 nn.Conv1d(self.hdim*4, self.hdim, self.kernel_width, padding='same'),
                 nn.GroupNorm(self.num_groups, self.hdim),
@@ -627,6 +632,7 @@ class DEQLayerQ(DEQLayer):
                 torch.nn.Mish(),
                 torch.nn.Conv1d(self.hdim, self.out_dim, self.kernel_width_out, padding='same'),
             )
+            self.gradnorm = GradNormLayer(self.out_dim)
             # Implement GradNormLayer for GCN
         else:
             NotImplementedError

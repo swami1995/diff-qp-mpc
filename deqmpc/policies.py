@@ -123,7 +123,7 @@ class DEQMPCPolicy(torch.nn.Module):
         # run the DEQ layer for deq_iter iterations
 
         policy_out = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, qp_solve, lastqp_solve, out_iter)        
-        policy_out["x_ref"] = x_ref
+        policy_out["init_states"] = x_ref
         return policy_out
 
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
@@ -134,6 +134,7 @@ class DEQMPCPolicy(torch.nn.Module):
         scales = []
         for i in range(deq_iter):
             in_obs_dict = {"o": obs}
+            out_aux_dict["iter"] = i
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
             x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
             # if (out_iter == 4900 or out_iter == 5000 or out_iter == 5500):
@@ -146,8 +147,8 @@ class DEQMPCPolicy(torch.nn.Module):
             # Only run MPC after a few iterations, don't flow MPC gradients through the DEQ
             if qp_solve and i >= opt_from_iter:
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref, al_iters=2)
-                out_aux_dict["x"] = nominal_states.detach().clone()
-                out_aux_dict["u"] = nominal_actions.detach().clone()
+                out_aux_dict["x"] = nominal_states#.detach().clone()
+                out_aux_dict["u"] = nominal_actions#.detach().clone()
                 # out_aux_dict["xn"] = out_aux_dict["xn"].detach().clone()
                 # if (out_iter == 5000 or out_iter == 5500):
                 #     ipdb.set_trace()
@@ -238,6 +239,7 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
         # obs is x0
         x_ref = torch.cat([obs]*self.T, dim=-1).detach().clone()
         x_ref = x_ref.view(-1, self.T, self.nx)
+        self.x_init = x_ref
         nominal_actions = torch.zeros((obs.shape[0], self.T, self.nu), device=self.device)
         z = self.model.init_z(self.bsz).to(self.device)
         q = torch.ones_like(x_ref[:,:,0])
@@ -256,8 +258,10 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
         opt_from_iter = 0
 
         trajs = []
+        q_scalings = []
         for i in range(deq_iter):
             in_obs_dict = {"o": obs}
+            out_aux_dict["iter"] = i
             out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
             x_t, x_ref, u_ref, q_scaling = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"], out_mpc_dict["q"]
             # if (out_iter == 4900 or out_iter == 5000 or out_iter == 5500):
@@ -271,17 +275,18 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
             if qp_solve and i >= opt_from_iter:
                 # ipdb.set_trace()
                 nominal_states, nominal_actions = self.tracking_mpc(x_t, xu_ref, x_ref, u_ref, q_scaling, al_iters=2)
-                out_aux_dict["x"] = nominal_states.detach().clone()
-                out_aux_dict["u"] = nominal_actions.detach().clone()
+                # out_aux_dict["x"] = nominal_states.detach().clone()
+                # out_aux_dict["u"] = nominal_actions.detach().clone()
 
                 # if (out_iter == 5000 or out_iter == 5500):
                 #     ipdb.set_trace()
                 
-            if not lastqp_solve:
-                out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
-                out_aux_dict["u"] = out_aux_dict["u"].detach().clone()
-                # out_aux_dict["q"] = out_aux_dict["q"].detach().clone()
-                            
+            # if not lastqp_solve:
+            #     out_aux_dict["x"] = out_aux_dict["x"].detach().clone()
+            #     out_aux_dict["u"] = out_aux_dict["u"].detach().clone()
+            #     out_aux_dict["q"] = out_aux_dict["q"].detach().clone()
+            
+            q_scalings.append(q_scaling)
             if (qp_solve and i < opt_from_iter) or lastqp_solve:
                 trajs.append((nominal_states_net, nominal_states.detach().clone(), nominal_actions.detach().clone()))
             else:
@@ -298,7 +303,7 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
                 x_t, xu_ref, x_ref, u_ref, al_iters=10)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)    
 
-        policy_out = {"trajs": trajs, "dyn_res": dyn_res, "q_scaling": q_scaling}    
+        policy_out = {"trajs": trajs, "dyn_res": dyn_res, "q_scaling": q_scalings}    
         return policy_out
 
 
@@ -417,7 +422,8 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out, coef
     return return_dict
 
 
-def compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
+def compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out):
+    trajs = policy_out["trajs"]
     return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
     losses = []
     loss_proxies = []
@@ -441,35 +447,71 @@ def compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, trajs):
     # compute moving averages
     return grad_ratios, losses.reshape((len(trajs), len(loss_j))).mean(dim=-1), loss_proxies.reshape((len(trajs), len(loss_j))).mean(dim=-1)
 
-def compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out):
-    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter_opt": [], "losses_iter_nn": [], "losses_iter_base": [], "losses_iter": []}
+def compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out, coeffs=None):
+    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter_opt": [], "losses_iter_nn": [], "losses_iter_base": [], "losses_iter": [], "q_scaling": []}
     trajs = policy_out["trajs"]
     q_scaling = policy_out["q_scaling"]
     loss = 0.0
-    # ipdb.set_trace()
     # supervise each DEQMPC iteration
+    losses = []
+    residuals = []
+    loss_opts = []
+    loss_nns = []
+    if coeffs is None:
+        coeffs_pos = coeffs_vel = coeffs_act = torch.ones((len(trajs)), device=gt_states.device)
+    else:
+        coeffs = coeffs.view(len(trajs), -1)
+        coeffs_pos = coeffs[:, 0]
+        if coeffs.shape[1] > 1:
+            coeffs_vel = coeffs[:, 1]
+        else:
+            coeffs_vel = torch.ones((len(trajs)), device=gt_states.device)
+        if coeffs.shape[1] > 2:
+            coeffs_act = coeffs[:, 2]
+        else:
+            coeffs_act = torch.ones((len(trajs)), device=gt_states.device)
+    # supervise each DEQMPC iteration
+    loss_init, res_init = compute_cost_coeff(policy, policy.out_type, policy.loss_type, gt_states,
+                                    gt_actions, gt_mask, policy.x_init, trajs[0][-1]*0,
+                                    coeffs_pos[0], coeffs_vel[0], coeffs_act[0])
+    residuals.append(res_init)
     for j, (nominal_states_net, nominal_states, nominal_actions) in enumerate(trajs):
-        loss_opt_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states, nominal_actions)
-        return_dict["losses_iter_opt"].append(loss_opt_j.item())
-
-        loss_nn_j = add_loss_based_on_out_type(policy, policy.out_type, policy.loss_type, gt_states,
-                                           gt_actions, gt_mask, nominal_states_net, nominal_actions)
-        return_dict["losses_iter_nn"].append(loss_nn_j.item())
-
-        loss_base_j = loss_opt_j + policy.deq_reg * loss_nn_j 
-        return_dict["losses_iter_base"].append(loss_base_j.item())
-
-        loss_q_scaling_j = torch.norm(q_scaling - 1.0, dim=1).mean()
-        loss_j = loss_base_j + 0.02 * loss_q_scaling_j
-        return_dict["losses_iter"].append(loss_j.item())
-
-        loss += loss_j        
-        
-    loss_end = add_loss_based_on_out_type(
-        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
+        loss_opt_j, res = compute_cost_coeff(policy, policy.out_type, policy.loss_type, gt_states,
+                                    gt_actions, gt_mask, nominal_states, nominal_actions,
+                                    coeffs_pos[j], coeffs_vel[j], coeffs_act[j])
+        loss_nn_j, res_nn = compute_cost_coeff(policy, policy.out_type, policy.loss_type, gt_states,
+                                    gt_actions, gt_mask, nominal_states_net, nominal_actions,
+                                    coeffs_pos[j], coeffs_vel[j], coeffs_act[j])
+        q_scaling_j = q_scaling[j]
+        loss_q_scaling_j = torch.abs(q_scaling_j - 1.0).sum(dim=1)
+        losses += [loss_opt_j + policy.deq_reg * loss_nn_j + 0.02 * loss_q_scaling_j]
+        loss_nns += [loss_nn_j]
+        loss_opts += [loss_opt_j]
+        # return_dict["losses_var"].append(loss_proxy_j.item())
+        return_dict["losses_iter_opt"].append(loss_opt_j.mean().item())
+        return_dict["losses_iter_nn"].append(loss_nn_j.mean().item())
+        return_dict["losses_iter_base"].append((loss_opt_j + policy.deq_reg * loss_nn_j).mean().item())
+        return_dict["losses_iter"].append(losses[-1].mean().item())
+        return_dict["q_scaling"].append(loss_q_scaling_j.mean().item())
+        residuals.append(res)
+    ### compute iteration weights based on previous losses and compute example weights based on net residuals
+    ### iteration weights
+    residuals = torch.stack(residuals, dim=1)
+    weight_mask = gt_mask.sum(dim=1) == 1
+    iter_weights = 5**(torch.log(residuals[:,:1]/(10*residuals[:,:-1])))
+    iter_weights[weight_mask] = 1
+    iter_weights = iter_weights / iter_weights.sum(dim=1, keepdim=True)
+    ex_weights = residuals.mean(dim=1, keepdim=True)#**2
+    ex_weights = ex_weights / ex_weights.mean()
+    losses = torch.stack(losses, dim=1)#*(ex_weights.detach().clone())#*(iter_weights.detach().clone())
+    loss = losses.mean(dim=0).sum()
+    loss_end = compute_cost_coeff(
+        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask,
+        nominal_states, nominal_actions, coeffs_pos[-1], coeffs_vel[-1], coeffs_act[-1])[0].mean()
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
+    return_dict["ex_weights"] = ex_weights
+    return_dict["iter_weights"] = iter_weights
     return return_dict
 
 def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out):
@@ -584,10 +626,10 @@ def compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, policy_out, deq, 
         # deq or deqmpc
         if deqmpc:
             # full deqmpc
-            if "q_scaling" in policy_out.keys():
-                return compute_gradratios_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out)
-            else:
-                return compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out)
+            # if "q_scaling" in policy_out.keys():
+            #     return compute_gradratios_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_out)
+            # else:
+            return compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out)
         else:
             # deq -- pretrain
             return compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out)

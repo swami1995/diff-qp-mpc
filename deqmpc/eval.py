@@ -36,7 +36,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    expt = "deqmpc_cp1_Q_hdim256_Qreg0.05_T5_bsz200_deq_iter6"  #TODO: can be argument
+    # expt = "deqmpc_cp1_Q_hdim256_Qreg0.05_T5_bsz200_deq_iter6"  #TODO: can be argument
+    expt = "deqmpc_cartpole_5k_noineq_conditer_L1simplefix_cond_expand4_gcn_nodetach_again_T5_bsz200_deq_iter6_hdim256"
     args_file = "./logs/" + expt + "/args"
     model_file = "./model/" + expt
 
@@ -77,10 +78,10 @@ def main():
 
     gt_trajs = merge_gt_data(gt_trajs)
     if args.deq:
-        # policy = DEQMPCPolicy(args, env).to(args.device)
+        policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
-        policy = DEQMPCPolicyQ(args, env).to(args.device)
+        # policy = DEQMPCPolicyQ(args, env).to(args.device)
     else:
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
@@ -116,8 +117,10 @@ def main():
     ## 
 
     # initial state
-    state = torch.tensor([[0., 0., 0., 0.]], device=args.device)  
-    state = state.repeat(args.bsz, 1)
+    # ipdb.set_trace()
+    state = gt_states[:, 0, :]
+    # state = torch.tensor([[0., 0., 0., 0.]], device=args.device)  
+    # state = state.repeat(args.bsz, 1)
 
     # high = np.array([np.pi, 1])
     # state = torch.tensor([np.random.uniform(low=-high, high=high)], dtype=torch.float32)
@@ -126,14 +129,18 @@ def main():
     state_hist = state[:,None,:]
     input_hist = torch.tensor([])
 
-    NRUNS = 2
+    NRUNS = 50
+    ipdb.set_trace()
     for i in range(NRUNS):      
-        obs_in = state
+        obs_in = state.clone()
+        # ipdb.set_trace()
+        obs_in[:, 1] = (obs_in[:, 1]) % (2*np.pi)
+
         policy_out = policy(obs_in, gt_states, gt_actions,
                             gt_mask, qp_solve=args.qp_solve, lastqp_solve=args.lastqp_solve)
         nominal_state_net, nominal_state, nominal_action = policy_out["trajs"][-1]
         print("nominal states\n", nominal_state)
-        print("nominal actions\n", nominal_action)     
+        # print("nominal actions\n", nominal_action)     
 
         u = nominal_action[:, 0, :]
         state = env.dynamics(state.to(torch.float64), u.to(torch.float64)).to(torch.float32)
@@ -142,7 +149,7 @@ def main():
         input_hist = torch.cat((input_hist, u[:,None,:]), dim=1)
         # print(x_ref)
     
-    print(state_hist[:,-1,:])
+    # print(state_hist[:,-1,:])
     ipdb.set_trace()
 
     #TODO: Compute some metrics
