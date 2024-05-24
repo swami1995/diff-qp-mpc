@@ -84,8 +84,11 @@ def main():
             method_name = f"deqmpc_" 
         elif (args.lastqp_solve):
             method_name = f"diffmpc_"
+        else:
+            method_name = f"deq_"
         args.name = method_name + args.name + \
             f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_hdim{args.hdim}"
+        # args.name = "trial"
         writer = SummaryWriter("./logs/" + args.name)
         print("logging to: ", args.name)
 
@@ -133,8 +136,8 @@ def main():
             traj_sample["state"])
     args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,4).abs().max(dim=0)[0].to(args.device)
     if args.deq:
-        policy = DEQMPCPolicy(args, env).to(args.device)
-        # policy = DEQMPCPolicyHistory(args, env).to(args.device)
+        # policy = DEQMPCPolicy(args, env).to(args.device)
+        policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # policy = DEQMPCPolicyQ(args, env).to(args.device)
         # save arguments

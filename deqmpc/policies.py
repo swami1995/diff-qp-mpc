@@ -113,7 +113,7 @@ class DEQMPCPolicy(torch.nn.Module):
         self.x_init = x_ref
         nominal_actions = torch.zeros((x.shape[0], self.T, self.nu), device=self.device)
 
-        z = self.model.init_z(x.shape[0]).to(self.device)
+        z = self.model.init_z(x.shape[0])
 
         out_aux_dict = {"z": z, "x": x_ref, 'u': nominal_actions}
 
@@ -197,8 +197,9 @@ class DEQMPCPolicyHistory(DEQMPCPolicy):
             x_t = obs_hist[:,-1].reshape(self.bsz, self.nx)
         x_ref = torch.cat([x_t]*self.T, dim=-1).detach().clone()
         x_ref = x_ref.view(-1, self.T, self.nx)
+        self.x_init = x_ref
         nominal_actions = torch.zeros((self.bsz, self.T, self.nu), device=self.device)
-        z = self.model.init_z(self.bsz).to(self.device)
+        z = self.model.init_z(self.bsz)
         out_aux_dict = {"z": z, "x": x_ref, "u": nominal_actions}
 
         if self.args.solver_type == "al":
@@ -219,7 +220,7 @@ class DEQMPCPolicyFeedback(DEQMPCPolicy):
         x_ref = x_ref.view(-1, self.T, self.nx)
         self.x_init = x_ref
         nominal_actions = torch.zeros((obs.shape[0], self.T, self.nu), device=self.device)
-        z = self.model.init_z(self.bsz).to(self.device)
+        z = self.model.init_z(self.bsz)
         # ipdb.set_trace()
         out_aux_dict = {"z": z, "xn": x_ref, "x": x_ref, 'u': nominal_actions}
 
@@ -241,7 +242,7 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
         x_ref = x_ref.view(-1, self.T, self.nx)
         self.x_init = x_ref
         nominal_actions = torch.zeros((obs.shape[0], self.T, self.nu), device=self.device)
-        z = self.model.init_z(self.bsz).to(self.device)
+        z = self.model.init_z(self.bsz)
         q = torch.ones_like(x_ref[:,:,0])
         # ipdb.set_trace()
         out_aux_dict = {"z": z, "x": x_ref, 'u': nominal_actions, 'q': q}
@@ -380,7 +381,7 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out, coef
             coeffs_act = coeffs[:, 2]
         else:
             coeffs_act = torch.ones((len(trajs)), device=gt_states.device)
-    # supervise each DEQMPC iteration
+    # supervise each DEQMPC iteration # replace x_init with gt[0]
     loss_init, res_init = compute_cost_coeff(policy, policy.out_type, policy.loss_type, gt_states,
                                     gt_actions, gt_mask, policy.x_init, trajs[0][-1]*0,
                                     coeffs_pos[0], coeffs_vel[0], coeffs_act[0])
