@@ -30,8 +30,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="pendulum")
     parser.add_argument("--np", type=int, default=3)  # TODO configurations
-    parser.add_argument("--T", type=int, default=300)
-    parser.add_argument('--dt', type=float, default=0.03)
+    parser.add_argument("--T", type=int, default=200)
+    parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-5)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -76,15 +76,15 @@ def main():
     if mode == 2:
         args.warm_start = True
         args.bsz = 1
-        args.Q = 100*torch.Tensor([10, 10, 10, 10, 10, 10, 10, 1, 1, 1, 1, 1, 1, 1])
+        args.Q = 100*torch.Tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
         # args.Q = 100*torch.Tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-        args.R = 1e-6*torch.Tensor([1, 1, 1, 1])
+        args.R = 1*torch.Tensor([1, 1, 1, 1])
         # args.solver_type = "al"
 
         # test controlled dynamics
         # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # state = torch.tensor([.0,1.0,1.0,deg2rad(10.0),deg2rad(0.0),deg2rad(0.0),0,0.,0.,0.,0.,0.], **kwargs).unsqueeze(0)
-        state = torch.tensor([.0,0.0,0.0,deg2rad(10.0),deg2rad(0.0),deg2rad(0.0),0.3+np.pi,0.,0.,0.,0.,0., 0.0, 0.0], **kwargs).unsqueeze(0)
+        state = torch.tensor([1.0,0.0,0.0,deg2rad(10.0),deg2rad(0.0),deg2rad(0.0),np.pi+0.3,0.,0.,0.,0.,0., 0.0, 0.0], **kwargs).unsqueeze(0)
         state = torch.cat([state[:,:3], quat2mrp(euler_to_quaternion(state[:, 3:6])), state[:, 6:]], dim=-1).repeat(args.bsz, 1)
         # state = torch.rand((args.bsz, nx), **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])
@@ -102,7 +102,7 @@ def main():
         for i in range(args.T):
             x_init[:, i, :] = state
             x_ref[:, i, 6] = np.pi        
-        u_ref = env.dynamics.u_hover.repeat(args.bsz, args.T, 1)
+        u_ref = torch.zeros(args.bsz, args.T, nu, **kwargs)
         xu_ref = torch.cat((x_ref, u_ref), dim=-1)
         if (args.solver_type == "al"):
             tracking_mpc.reinitialize(x_init, torch.ones(args.bsz, args.T, 1, **kwargs))

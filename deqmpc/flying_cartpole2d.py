@@ -28,22 +28,16 @@ class FlyingCartpole_dynamics(torch.nn.Module):
         self.bm = bm
         self.L = torch.tensor(L)
         self.bsz = bsz
-        self.Bf = torch.zeros((1,3)).to(device)
-        self.Bf[0,2] = 4*bf
         self.quad_min_throttle = quad_min_throttle
         self.quad_max_throttle = quad_max_throttle
         self.ned = ned
-        self.cross_A_x = cross_A_x
-        self.cross_A_y = cross_A_y
-        self.cross_A_z = cross_A_z
-        self.cross_A = torch.FloatTensor(np.array([cross_A_x, cross_A_y, cross_A_y])).to(device).unsqueeze(0)
         self.nx = self.state_dim = 3 + 3*3 + 2
         self.nu = self.control_dim = 4
         self._max_episode_steps = max_steps
         self.bsz = bsz
         self.dt = dt
-        self.act_scale = 100.0
-        self.u_hover = torch.tensor([(-self.m*gravity[2]-self.bf*4)/self.act_scale/self.kf/4]*4).to(device)
+        self.act_scale = 10.0
+        self.u_hover = torch.tensor([(-self.m*gravity[2])/self.act_scale/self.kf/4]*4).to(device)
         self.cd = torch.tensor(cd).unsqueeze(0).to(device)
         self.ss = torch.tensor([[1.,1,0], [1.,-1,0], [-1.,-1,0], [-1.,1,0]]).to(device).unsqueeze(0)
         self.ss = self.ss/self.ss.norm(dim=-1).unsqueeze(-1)
@@ -58,17 +52,7 @@ class FlyingCartpole_dynamics(torch.nn.Module):
         F = torch.sum(self.kf*u, dim=-1)
         # g = torch.tensor([0,0,-9.81]).to(x)#self.g
         F = torch.stack([torch.zeros_like(F), torch.zeros_like(F), F], dim=-1)
-        if len(m.shape) == 3:
-            cd = self.cd.unsqueeze(0)
-            cross_A = self.cross_A.unsqueeze(0)
-        else:
-            cd = self.cd
-            cross_A = self.cross_A
-        # df = -torch.sign(m)*0.5*1.27*(m*m)*cd*cross_A
-        # Bf = torch.tensor([0.0, 0.0, -30.48576*4]).to(x.device).unsqueeze(0)
-        # df = 0.0
-        f = F + quatrot(q, self.m * self.g)  + self.Bf
-        # ipdb.set_trace()
+        f = F + quatrot(q, self.m * self.g)
         return f
 
     def moments(self, x, u):
@@ -85,7 +69,7 @@ class FlyingCartpole_dynamics(torch.nn.Module):
             ss = ss.unsqueeze(0)
         if ss.dtype != x.dtype:
             ss = ss.to(x.dtype)
-        torque += torch.cross(self.motor_dist * ss, torch.stack([zeros, zeros, self.kf * u + self.bf], dim=-1), dim=-1).sum(dim=-2)
+        torque += torch.cross(self.motor_dist * ss, torch.stack([zeros, zeros, self.kf * u], dim=-1), dim=-1).sum(dim=-2)
         return torque
 
     def wrenches(self, x, u):
@@ -125,7 +109,7 @@ class FlyingCartpole_dynamics(torch.nn.Module):
         state: [r, m, theta, v, w, theta_dot]
         control: [u1, u2, u3, u4]
         """
-        u = self.act_scale * u
+        u = self.act_scale * (u + self.u_hover)
         p, m, v, w, xq = self.get_quad_state(x) # possibly do mrp2quat
         q = mrp2quat(m)
         F, tau = self.wrenches(xq, u)
@@ -163,7 +147,7 @@ class FlyingCartpole_dynamics_jac(FlyingCartpole_dynamics):
         return out_rk4[:, 0], jac_out
 
 class FlyingCartpole(torch.nn.Module):
-    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.2, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.025, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+    def __init__(self, bsz=1,  mass_q=0.5, mass_p=0.1, J=[[0.0023, 0.0, 0.0],[0.0, 0.0023, 0.0], [0.0, 0.0, 0.004]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.175, kf=1.0, bf=0.0, km=0.0245, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
         super(FlyingCartpole, self).__init__()
         self.dynamics = FlyingCartpole_dynamics(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
         self.dynamics = torch.jit.script(self.dynamics)
@@ -183,7 +167,7 @@ class FlyingCartpole(torch.nn.Module):
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         # self.max_torque = 18.3
-        self.action_space = Spaces_np((self.control_dim,), np.array([self.dynamics.u_hover[0]*2]*self.control_dim), np.array([0.0]*self.control_dim)) #12.0
+        self.action_space = Spaces_np((self.control_dim,), np.array([1.5*self.dynamics.u_hover.cpu()[0]]*self.control_dim), np.array([-self.dynamics.u_hover.cpu()[0]]*self.control_dim)) #12.0
         self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(70),deg2rad(70),deg2rad(70),0.5,0.5,0.5,0.5,0.25,0.25,0.25,0.25]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum
@@ -328,24 +312,23 @@ class FlyingCartpole(torch.nn.Module):
         return x
 
 if __name__ == "__main__":
-    env = FlyingCartpole(bsz=10, device='cuda')
+    env = FlyingCartpole(bsz=1, device='cuda')
     quad = env.dynamics
     quad_jac = env.dynamics_derivatives
     # scripted_quad = torch.jit.script(quad)
     # scripted_quad_jac = torch.jit.script(quad_jac)
     # ipdb.set_trace()
-    x = env.reset().requires_grad_(True)
-    # x = torch.tensor([.0,.0,.0,deg2rad(0.0),deg2rad(1.0),deg2rad(0.0),0.,0.,0.,0.,0.,0., 0.0, 0.]).unsqueeze(0).to('cuda')
+    # x = env.reset().requires_grad_(True)
+    x = torch.tensor([.0,.0,.0,deg2rad(0.0),deg2rad(0.0),deg2rad(0.0),0,0.,0.,0.,0.,0., 0.0, 0.]).unsqueeze(0).to('cuda')
     # x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), x[:, 6:]], dim=-1) #quat2mrp
-    # u = torch.tensor([0.0, 0.0, 0.0, 0.0]).unsqueeze(0).repeat(1, 1).to(x).requires_grad_(True)
-    u = quad.u_hover.unsqueeze(0).repeat(1, 1).to(x).requires_grad_(True)
+    u = torch.tensor([0.0, 0.0, 0.0, 0.0]).unsqueeze(0).repeat(1, 1).to(x).requires_grad_(True)
     # ipdb.set_trace()
-    # for i in range(100):
-    #     # x = scripted_quad(x,u)
-    #     # x = quad(x,u)
-    #     x_out, reward, done,_ = env.step(u)
-    #     print(reward)
-    quad_jac(x,u)
+    for i in range(10):
+        # x = scripted_quad(x,u)
+        x = quad(x,u)
+        # x_out, reward, done,_ = env.step(u)
+        print(x)
+    # quad_jac(x,u)
 
     # x.requires_grad = True
     # for i in range(100):
