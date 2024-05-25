@@ -366,7 +366,8 @@ def euler_to_quaternion(e, order=['x','y','z']):
             
     # Reverse antipodal representation to have a non-negative "w"
     # if order in ['xyz']:
-    result *= -1
+    mask = result[:, 0] < 0
+    result[mask] *= -1
     
     return result.reshape(original_shape)
 
