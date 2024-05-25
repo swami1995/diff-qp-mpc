@@ -286,7 +286,7 @@ class MPC(Module):
         cost_lam_hist = [[cost_start], [lamda], [rho]]
         # end1 = time.time()
         # Augmented Lagrangian updates
-        # self.verbose = 1
+        self.verbose = 1
 
         # ipdb.set_trace()
         for i in range(self.al_iter):

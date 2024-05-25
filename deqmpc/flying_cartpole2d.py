@@ -4,14 +4,16 @@ from rexquad_utils import rk4, deg2rad, Spaces, Spaces_np, w2pdotkinematics_mrp,
 from torch.func import hessian, vmap, jacrev
 import ipdb
 
-class RexQuadrotor_dynamics(torch.nn.Module):
+def angle_normalize_2pi(x):
+    return (((x) % (2*np.pi)))
+
+class FlyingCartpole_dynamics(torch.nn.Module):
     # think about mrp vs quat for various things - play with Q cost 
-    def __init__(self, bsz=1,  mass=2.0, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], 
-                    gravity=[0,0,-9.81], motor_dist=0.28, kf=0.0244101, bf=-30.48576, km=0.00029958, bm=-0.367697, 
-                    quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, 
-                    cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu'), jacobian=False):
-        super(RexQuadrotor_dynamics, self).__init__()
-        self.m = mass
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.2, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.025, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu'), jacobian=False):
+        super(FlyingCartpole_dynamics, self).__init__()
+        self.m = mass_q + mass_p
+        self.mq = mass_q
+        self.mp = mass_p
         J = np.array(J)
         if len(J.shape) == 1:
             self.J = torch.diag(torch.FloatTensor(J)).unsqueeze(0).to(device)
@@ -24,23 +26,18 @@ class RexQuadrotor_dynamics(torch.nn.Module):
         self.km = km
         self.bf = bf
         self.bm = bm
+        self.L = torch.tensor(L)
         self.bsz = bsz
-        self.Bf = torch.zeros((1,3)).to(device)
-        self.Bf[0,2] = 4*bf
         self.quad_min_throttle = quad_min_throttle
         self.quad_max_throttle = quad_max_throttle
         self.ned = ned
-        self.cross_A_x = cross_A_x
-        self.cross_A_y = cross_A_y
-        self.cross_A_z = cross_A_z
-        self.cross_A = torch.FloatTensor(np.array([cross_A_x, cross_A_y, cross_A_y])).to(device).unsqueeze(0)
-        self.nx = self.state_dim = 3 + 3*3
+        self.nx = self.state_dim = 3 + 3*3 + 2
         self.nu = self.control_dim = 4
         self._max_episode_steps = max_steps
         self.bsz = bsz
         self.dt = dt
-        self.act_scale = 100.0
-        self.u_hover = torch.tensor([(-self.m*gravity[2]-self.bf*4)/self.act_scale/self.kf/4]*4).to(device)
+        self.act_scale = 10.0
+        self.u_hover = torch.tensor([(-self.m*gravity[2])/self.act_scale/self.kf/4]*4).to(device)
         self.cd = torch.tensor(cd).unsqueeze(0).to(device)
         self.ss = torch.tensor([[1.,1,0], [1.,-1,0], [-1.,-1,0], [-1.,1,0]]).to(device).unsqueeze(0)
         self.ss = self.ss/self.ss.norm(dim=-1).unsqueeze(-1)
@@ -52,20 +49,10 @@ class RexQuadrotor_dynamics(torch.nn.Module):
     def forces(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         m = x[..., 3:6]
         q = mrp2quat(-m)
-        kf = 0.0244101
-        F = torch.sum(kf*u, dim=-1)
+        F = torch.sum(self.kf*u, dim=-1)
         # g = torch.tensor([0,0,-9.81]).to(x)#self.g
         F = torch.stack([torch.zeros_like(F), torch.zeros_like(F), F], dim=-1)
-        if len(m.shape) == 3:
-            cd = self.cd.unsqueeze(0)
-            cross_A = self.cross_A.unsqueeze(0)
-        else:
-            cd = self.cd
-            cross_A = self.cross_A
-        df = -torch.sign(m)*0.5*1.27*(m*m)*cd*cross_A
-        # Bf = torch.tensor([0.0, 0.0, -30.48576*4]).to(x.device).unsqueeze(0)
-        # df = 0
-        f = F + df + quatrot(q, self.m * self.g)  + self.Bf
+        f = F + quatrot(q, self.m * self.g)
         return f
 
     def moments(self, x, u):
@@ -82,20 +69,13 @@ class RexQuadrotor_dynamics(torch.nn.Module):
             ss = ss.unsqueeze(0)
         if ss.dtype != x.dtype:
             ss = ss.to(x.dtype)
-        torque += torch.cross(self.motor_dist * ss, torch.stack([zeros, zeros, self.kf * u + self.bf], dim=-1), dim=-1).sum(dim=-2)
+        torque += torch.cross(self.motor_dist * ss, torch.stack([zeros, zeros, self.kf * u], dim=-1), dim=-1).sum(dim=-2)
         return torque
 
     def wrenches(self, x, u):
         F = self.forces(x, u)
         M = self.moments(x, u)
         return F, M
-
-    def parse_state(self, x):
-        r = x[..., :3]
-        m = x[..., 3:6] # mrp2quat?
-        v = x[..., 6:9]
-        w = x[..., 9:]
-        return r, m, v, w
 
     def rk4_dynamics(self, x, u):
         # x, u = x.unsqueeze(0), u.unsqueeze(0)
@@ -112,11 +92,27 @@ class RexQuadrotor_dynamics(torch.nn.Module):
     def forward(self, x, u):
         return self.rk4_dynamics(x, u)
         
+    def get_quad_state(self, x):
+        r = x[..., :3]
+        m = x[..., 3:6] # mrp2quat?
+        v = x[..., 7:10]
+        w = x[..., 10:13]
+        return r, m, v, w, torch.cat([r, m, v, w], dim=-1)
+
+    def get_pend_state(self, x):
+        theta = x[..., 6:7]  # pendulum angle
+        theta_dot = x[..., 13:14]
+        return theta, theta_dot
+
     def dynamics_(self, x, u):
-        u = self.act_scale * u
-        p, m, v, w = self.parse_state(x) # possibly do mrp2quat
+        """
+        state: [r, m, theta, v, w, theta_dot]
+        control: [u1, u2, u3, u4]
+        """
+        u = self.act_scale * (u + self.u_hover)
+        p, m, v, w, xq = self.get_quad_state(x) # possibly do mrp2quat
         q = mrp2quat(m)
-        F, tau = self.wrenches(x, u)
+        F, tau = self.wrenches(xq, u)
         mdot = w2pdotkinematics_mrp(m, w)
         pdot = quatrot(q, v)
         vdot = F/self.m - torch.cross(w, v, dim=-1)
@@ -127,34 +123,35 @@ class RexQuadrotor_dynamics(torch.nn.Module):
             Jinv = self.Jinv
             J = self.J
         wdot = (Jinv*(tau - torch.cross(w, (J*(w.unsqueeze(-2))).sum(dim=-1), dim=-1)).unsqueeze(-2)).sum(dim=-1)
-        return torch.cat([pdot, mdot, vdot, wdot], dim=-1)
 
-class RexQuadrotor_dynamics_jac(RexQuadrotor_dynamics):
-    def __init__(self, bsz=1,  mass=2.0, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], 
-                    gravity=[0,0,-9.81], motor_dist=0.28, kf=0.0244101, bf=-30.48576, km=0.00029958, bm=-0.367697, 
-                    quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, 
-                    cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
-        super(RexQuadrotor_dynamics_jac, self).__init__(bsz, mass, J, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, True)
+        # add the inverted pendulum
+        theta, theta_dot = self.get_pend_state(x)
+        x_ddot = quatrot(q, vdot)[...,0:1]
+        theta_ddot = (self.g[0][2] * torch.sin(theta) + x_ddot*torch.cos(theta))/self.L
+        # return full state
+        return torch.cat([pdot, mdot, theta_dot, vdot, wdot, theta_ddot], dim=-1)
+
+class FlyingCartpole_dynamics_jac(FlyingCartpole_dynamics):
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.2, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.025, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+        super(FlyingCartpole_dynamics_jac, self).__init__(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, True)
     
     def forward(self, x, u):
         ## use vmap to compute jacobian using autograd.grad
         x = x.unsqueeze(-2).repeat(1, self.state_dim, 1)
         u = u.unsqueeze(-2).repeat(1, self.state_dim, 1)
+        # ipdb.set_trace()
         out_rk4 = self.rk4_dynamics(x, u)
         out = out_rk4*self.identity[None]
         jac_out = torch.autograd.grad([out.sum()], [x, u])
         
         return out_rk4[:, 0], jac_out
 
-class RexQuadrotor(torch.nn.Module):
-    def __init__(self, bsz=1,  mass=2.0, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], 
-                    gravity=[0,0,-9.81], motor_dist=0.28, kf=0.0244101, bf=-30.48576, km=0.00029958, bm=-0.367697, 
-                    quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, 
-                    cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
-        super(RexQuadrotor, self).__init__()
-        self.dynamics = RexQuadrotor_dynamics(bsz, mass, J, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
+class FlyingCartpole(torch.nn.Module):
+    def __init__(self, bsz=1,  mass_q=0.5, mass_p=0.1, J=[[0.0023, 0.0, 0.0],[0.0, 0.0023, 0.0], [0.0, 0.0, 0.004]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.175, kf=1.0, bf=0.0, km=0.0245, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+        super(FlyingCartpole, self).__init__()
+        self.dynamics = FlyingCartpole_dynamics(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
         self.dynamics = torch.jit.script(self.dynamics)
-        self.dynamics_derivatives = RexQuadrotor_dynamics_jac(bsz, mass, J, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device)
+        self.dynamics_derivatives = FlyingCartpole_dynamics_jac(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device)
         self.dynamics_derivatives = torch.jit.script(self.dynamics_derivatives)
         self.bsz = bsz
         self.nx = self.state_dim = self.dynamics.state_dim
@@ -165,15 +162,16 @@ class RexQuadrotor(torch.nn.Module):
         # self.x = self.reset()
         self.device = device
         self.dt = dt
-        self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [1.0]*6).to(device)#.unsqueeze(0)
+        self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [10.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
         # self.Qlqr = torch.tensor([10.0]*3 + [0.01]*3 + [1.0]*3 + [0.01]*3).to(device)#.unsqueeze(0)
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         # self.max_torque = 18.3
-        self.action_space = Spaces_np((self.control_dim,), np.array([18.3]*self.control_dim), np.array([11.5]*self.control_dim)) #12.0
-        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(70),deg2rad(70),deg2rad(70),0.5,0.5,0.5,0.25,0.25,0.25]).to(device)
+        self.action_space = Spaces_np((self.control_dim,), np.array([1.5*self.dynamics.u_hover.cpu()[0]]*self.control_dim), np.array([-self.dynamics.u_hover.cpu()[0]]*self.control_dim)) #12.0
+        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(70),deg2rad(70),deg2rad(70),0.5,0.5,0.5,0.5,0.25,0.25,0.25,0.25]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
-        self.spec_id = "RexQuadrotor-v0"
+        self.targ_pos[6] = np.pi # upright pendulum
+        self.spec_id = "FlyingCartpole-v0"
         self.saved_ckpt_name = "cgac_checkpoint_rexquadrotor_eplen100save"
 
     def forward(self, x, u, jacobian=False):
@@ -181,9 +179,17 @@ class RexQuadrotor(torch.nn.Module):
             return self.dynamics_derivatives(x, u)
         else:
             return self.dynamics(x, u)
+
+    def action_clip(self, action):
+        return torch.clamp(action, torch.Tensor(self.action_space.low).to(self.device), torch.Tensor(self.action_space.high).to(self.device))
+
+    def state_clip(self, state):
+        state[..., 6] = angle_normalize_2pi(state[..., 6])
+        return state
     
     def step(self, u):
         self.num_steps += 1
+        u = self.action_clip(u)  # clip the action
         done_inf = torch.zeros(self.bsz).to(self.device, dtype=torch.bool)
         if u.dtype == np.float64 or u.dtype == np.float32:
             u = torch.tensor(u).to(self.x)
@@ -192,6 +198,7 @@ class RexQuadrotor(torch.nn.Module):
                 # dynamics = lambda y: self.dynamics(y, u)
                 # self.x = rk4(dynamics, self.x, [0, self.dt])
                 self.x = self.dynamics(self.x, u)
+                self.x = self.state_clip(self.x) # clip the state
                 reward = self.reward(self.x, u).cpu().numpy().squeeze()
                 if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or np.isinf(reward) or np.isnan(reward) or reward < -500:
                     x = self.reset()
@@ -202,6 +209,7 @@ class RexQuadrotor(torch.nn.Module):
                 # dynamics = lambda y: self.dynamics(y, u)
                 # self.x = rk4(dynamics, self.x, [0, self.dt])
                 self.x = self.dynamics(self.x, u)
+                self.x = self.state_clip(self.x) # clip the state
                 reward = self.reward(self.x, u).cpu().numpy()
                 if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or np.isinf(reward.sum()) or np.isnan(reward.sum()) or reward.sum() < -500:
                     x = self.reset()
@@ -212,6 +220,7 @@ class RexQuadrotor(torch.nn.Module):
             # dynamics = lambda y: self.dynamics(y, u)
             # self.x = rk4(dynamics, self.x, [0, self.dt])
             self.x = self.dynamics(self.x, u)
+            self.x = self.state_clip(self.x) # clip the state
             reward = self.reward(self.x, u)
             # if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or torch.isinf(reward.sum()) or torch.isnan(reward.sum()) or reward.sum() < -500:
             ifcond = torch.logical_or(torch.isnan(self.x).any(dim=-1), torch.logical_or(torch.isinf(self.x).any(dim=-1), torch.logical_or(torch.isinf(reward), torch.logical_or(torch.isnan(reward), (reward < -500)))))
@@ -227,6 +236,7 @@ class RexQuadrotor(torch.nn.Module):
 
     def stepx(self, x, u):
         done_inf = False
+        u = self.action_clip(u)  # clip the action
         if u.dtype == np.float64 or u.dtype == np.float32:
             u = torch.tensor(u).to(self.x)
             x = torch.tensor(x).to(self.x)
@@ -236,6 +246,7 @@ class RexQuadrotor(torch.nn.Module):
                 # dynamics = lambda y: self.dynamics(y, u)
                 # x = rk4(dynamics, x, [0, self.dt])
                 x = self.dynamics(x, u)
+                self.x = self.state_clip(self.x) # clip the state
                 reward = self.reward(x, u).cpu().numpy().squeeze()
                 if torch.isnan(x).sum() or torch.isinf(x).sum():
                     self.reset()
@@ -247,6 +258,7 @@ class RexQuadrotor(torch.nn.Module):
                 # dynamics = lambda y: self.dynamics(y, u)
                 # x = rk4(dynamics, x, [0, self.dt])
                 x = self.dynamics(x, u)
+                self.x = self.state_clip(self.x) # clip the state
                 reward = self.reward(x, u).cpu().numpy()
                 if torch.isnan(x).sum() or torch.isinf(x).sum():
                     self.reset()
@@ -257,6 +269,7 @@ class RexQuadrotor(torch.nn.Module):
         elif u.dtype == torch.float32 or u.dtype==torch.float64:
             # dynamics = lambda y: self.dynamics(y, u)
             x = self.dynamics(x, u)#rk4(dynamics, x, [0, self.dt])
+            self.x = self.state_clip(self.x) # clip the state
             reward = self.reward(x, u)
             if torch.isnan(x).sum() or torch.isinf(x).sum():
                 self.reset()
@@ -299,49 +312,60 @@ class RexQuadrotor(torch.nn.Module):
         return x
 
 if __name__ == "__main__":
-    quad = RexQuadrotor(bsz=1000, device='cuda').dynamics
-    quad_jac = RexQuadrotor(bsz=1000, device='cuda').dynamics_derivatives
-    scripted_quad = torch.jit.script(quad)
-    scripted_quad_jac = torch.jit.script(quad_jac)
+    env = FlyingCartpole(bsz=1, device='cuda')
+    quad = env.dynamics
+    quad_jac = env.dynamics_derivatives
+    # scripted_quad = torch.jit.script(quad)
+    # scripted_quad_jac = torch.jit.script(quad_jac)
     # ipdb.set_trace()
-    x = RexQuadrotor(bsz=1000, device='cuda').reset()
+    # x = env.reset().requires_grad_(True)
+    x = torch.tensor([.0,.0,.0,deg2rad(0.0),deg2rad(0.0),deg2rad(0.0),0,0.,0.,0.,0.,0., 0.0, 0.]).unsqueeze(0).to('cuda')
+    # x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), x[:, 6:]], dim=-1) #quat2mrp
     u = torch.tensor([0.0, 0.0, 0.0, 0.0]).unsqueeze(0).repeat(1, 1).to(x).requires_grad_(True)
-    x.requires_grad = True
-    for i in range(100):
-        # out = scripted_quad(x,u)
-        # quad_jac(x,u)
-        out_jac = scripted_quad_jac(x,u)
-        # jacobian_computation(x, u, scripted_quad, quad.identity)
     # ipdb.set_trace()
-    ## time the forward pass
-    # compute jacobian using jacrev
-    # scripted_quad_bsz1 = lambda x, u: scripted_quad(x.unsqueeze(0), u.unsqueeze(0)).squeeze(0)
-    # scripted_quad_jac = torch.jit.script(jacrev(quad.forward))
-    import time
-    start = time.time()
-    # with torch.no_grad():
-    for i in range(1000):
-        # out = scripted_quad(x,u)
-        # jacobian_computation(x, u, scripted_quad, quad.identity)
-        ## compute jacobian
-        # jacobian = torch.autograd.functional.jacobian(scripted_quad, (x[0],u[0]))#, vectorize=True)
-        # jacrev = scripted_quad_jac(x[0],u[0])
-        out_jac = scripted_quad_jac(x,u)
-        # jacobian = scripted_quad_jac(x,u)
+    for i in range(10):
+        # x = scripted_quad(x,u)
+        x = quad(x,u)
+        # x_out, reward, done,_ = env.step(u)
+        print(x)
+    # quad_jac(x,u)
+
+    # x.requires_grad = True
+    # for i in range(100):
+    #     # out = scripted_quad(x,u)
+    #     # quad_jac(x,u)
+    #     out_jac = scripted_quad_jac(x,u)
+    #     # jacobian_computation(x, u, scripted_quad, quad.identity)
+    # # ipdb.set_trace()
+    # ## time the forward pass
+    # # compute jacobian using jacrev
+    # # scripted_quad_bsz1 = lambda x, u: scripted_quad(x.unsqueeze(0), u.unsqueeze(0)).squeeze(0)
+    # # scripted_quad_jac = torch.jit.script(jacrev(quad.forward))
+    # import time
+    # start = time.time()
+    # # with torch.no_grad():
+    # for i in range(1000):
+    #     # out = scripted_quad(x,u)
+    #     # jacobian_computation(x, u, scripted_quad, quad.identity)
+    #     ## compute jacobian
+    #     # jacobian = torch.autograd.functional.jacobian(scripted_quad, (x[0],u[0]))#, vectorize=True)
+    #     # jacrev = scripted_quad_jac(x[0],u[0])
+    #     out_jac = scripted_quad_jac(x,u)
+    #     # jacobian = scripted_quad_jac(x,u)
 
 
-    end = time.time()
-    print("scripted time taken: ", end-start)
+    # end = time.time()
+    # print("scripted time taken: ", end-start)
 
-    ## time the unscripted forward pass
-    for i in range(100):
-        out = quad_jac(x,u)
-        # out = quad(x,u)
-    start = time.time()
-    # with torch.no_grad():
-    for i in range(1000):
-        # out = quad(x,u)
-        out = quad_jac(x,u)
-    end = time.time()
-    print("unscripted time taken: ", end-start)
-    print("simple test passed")
+    # ## time the unscripted forward pass
+    # for i in range(100):
+    #     out = quad_jac(x,u)
+    #     # out = quad(x,u)
+    # start = time.time()
+    # # with torch.no_grad():
+    # for i in range(1000):
+    #     # out = quad(x,u)
+    #     out = quad_jac(x,u)
+    # end = time.time()
+    # print("unscripted time taken: ", end-start)
+    # print("simple test passed")

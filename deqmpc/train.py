@@ -134,7 +134,7 @@ def main():
     elif args.env == "cartpole1link" or args.env == "cartpole2link":
         traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
             traj_sample["state"])
-    args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,4).abs().max(dim=0)[0].to(args.device)
+    args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,env.nx).abs().max(dim=0)[0].to(args.device)
     if args.deq:
         # policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
@@ -206,7 +206,12 @@ def main():
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
         pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations
-
+        # if (i < 5000):
+        #     policy.tracking_mpc.ctrl.u_upper = 10*torch.tensor(env.action_space.high).to(args.device)
+        #     policy.tracking_mpc.ctrl.u_lower = 10*torch.tensor(env.action_space.low).to(args.device)
+        # else:
+        #     policy.tracking_mpc.ctrl.u_upper = torch.tensor(env.action_space.high).to(args.device)
+        #     policy.tracking_mpc.ctrl.u_lower = torch.tensor(env.action_space.low).to(args.device)
         gt_obs = traj_sample["obs"]
         noisy_obs = noise_utils.corrupt_observation(
             gt_obs, args.data_noise_type, args.data_noise_std, args.data_noise_mean)

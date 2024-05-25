@@ -712,3 +712,10 @@ class TwoLinkCartpoleEnv:
 #         pass
 
 
+if __name__ == "__main__":
+    dyn = OneLinkCartpoleDynamics()
+    x = torch.tensor([0.0, 0.0, 0.0, 0.0], dtype=torch.float32)
+    u = torch.tensor([10.0], dtype=torch.float32)
+    for i in range(10):
+        x = dyn(x, u)
+        print(x)
