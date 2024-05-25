@@ -76,15 +76,16 @@ def main():
     if mode == 2:
         args.warm_start = True
         args.bsz = 1
-        args.Q = 100*torch.Tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+        args.Q = 1*torch.Tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
         # args.Q = 100*torch.Tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-        args.R = 1*torch.Tensor([1, 1, 1, 1])
+        args.R = 1e-6*torch.Tensor([1, 1, 1, 1])
         # args.solver_type = "al"
 
         # test controlled dynamics
         # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # state = torch.tensor([.0,1.0,1.0,deg2rad(10.0),deg2rad(0.0),deg2rad(0.0),0,0.,0.,0.,0.,0.], **kwargs).unsqueeze(0)
-        state = torch.tensor([1.0,0.0,0.0,deg2rad(10.0),deg2rad(0.0),deg2rad(0.0),np.pi+0.3,0.,0.,0.,0.,0., 0.0, 0.0], **kwargs).unsqueeze(0)
+        # state = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi-0.5,1.0,1.0,1.0,1., 1.0, 1.0, 1.0], **kwargs).unsqueeze(0)
+        state = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi+0.5,1.0,1.0,1.0,1.0,-1.0,1.0,-1.0], **kwargs).unsqueeze(0)
         state = torch.cat([state[:,:3], quat2mrp(euler_to_quaternion(state[:, 3:6])), state[:, 6:]], dim=-1).repeat(args.bsz, 1)
         # state = torch.rand((args.bsz, nx), **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])
