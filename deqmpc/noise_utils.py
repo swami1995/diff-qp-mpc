@@ -9,7 +9,7 @@ def corrupt_observation(states, noise_type, noise_std, noise_mean):
         return states
     elif noise_type == 1:
         # gaussian noise
-        noise = torch.randn_like(states) * noise_std + noise_mean
+        noise = torch.randn_like(states) * noise_std #+ noise_mean
         return states + noise
     elif noise_type == 2:
         # uniform noise

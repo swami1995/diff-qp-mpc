@@ -17,6 +17,7 @@ import sys, time
 from . import qp
 import ipdb
 from . import al_utils
+from . import al_utils_se
 from . import util
 
 class GradMethods(Enum):
@@ -135,6 +136,7 @@ class MPC(Module):
             diag_cost=True, 
             ineqG=None,
             ineqh=None,
+            state_estimator=False,
             dtype=torch.float64
     ):
         super().__init__()
@@ -171,13 +173,16 @@ class MPC(Module):
         self.exit_unconverged = exit_unconverged
         self.detach_unconverged = detach_unconverged
         self.backprop = backprop
+        self.state_estimator = state_estimator
 
         self.slew_rate_penalty = slew_rate_penalty
         self.solver_type = solver_type
         self.add_goal_constraint = add_goal_constraint
         self.diag_cost = diag_cost
         self.al_iter = al_iter
-        self.neq = n_state*(T-1) + n_state
+        self.neq = n_state*(T-1)
+        if not self.state_estimator:
+            self.neq += n_state
         self.nineq = 0
         self.dyn_res_crit = 1e-4
         self.dyn_res_factor = 10
@@ -186,7 +191,7 @@ class MPC(Module):
             self.neq += n_state
         if ineqG is not None:
             self.nineq = ineqG.size(1)
-        if u_lower is not None:
+        if u_lower is not None and self.state_estimator is False:
             self.nineq += n_ctrl*T*2
         if self.x_lower is not None:
             self.nineq += n_state*T*2
@@ -327,12 +332,22 @@ class MPC(Module):
         return x, u
     
     def merit_function(self, xu, Q, q, dx, x0, lamda, rho, grad=False):
-        return al_utils.merit_function(xu, Q, q, dx, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
+        if self.state_estimator:
+            return al_utils_se.merit_function(xu, Q, q, dx, x0, lamda, rho, self.x_lower, self.x_upper, self.diag_cost)
+        else:
+            return al_utils.merit_function(xu, Q, q, dx, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
     def merit_hessian(self, xu, Q, q, dx, dx_jac, x0, lamda, rho):
-        return al_utils.merit_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
+        if self.state_estimator:
+            return al_utils_se.merit_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.diag_cost)
+        else:
+            return al_utils.merit_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
 
     def merit_grad_hess(self, xu, Q, q, dx, dx_jac, x0, lamda, rho):
-        return al_utils.merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
+        if self.state_estimator:
+            return al_utils_se.merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.diag_cost)
+        else:
+            return al_utils.merit_grad_hessian(xu, Q, q, dx, dx_jac, x0, lamda, rho, self.x_lower, self.x_upper, self.u_lower, self.u_upper, self.diag_cost)
+        
     def dyn_res_eq(self, x, u, dx, x0, mask=None):
         " split x into state and control and compute dynamics residual using dx"
         # ipdb.set_trace()
@@ -393,7 +408,10 @@ class MPC(Module):
         return res, res_clamp
     
     def dyn_res(self, xu, dx, x0, res_type='clamp'):
-        res, res_clamp = al_utils.dyn_res(xu, dx, x0, self.x_lower, self.x_upper, self.u_lower, self.u_upper)
+        if self.state_estimator:
+            res, res_clamp = al_utils_se.dyn_res(xu, dx, x0, self.x_lower, self.x_upper)
+        else:
+            res, res_clamp = al_utils.dyn_res(xu, dx, x0, self.x_lower, self.x_upper, self.u_lower, self.u_upper)
         if res_type == 'noclamp':
             return res
         elif res_type == 'clamp':

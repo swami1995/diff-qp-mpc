@@ -365,15 +365,16 @@ def sample_trajectory(gt_trajs, bsz, H, T):
     Returns:
         A list of trajectories, each trajectory is a list of (obs, state, action) tuples (H, T, T).
     """
-    idxs = np.random.randint(H-1, len(gt_trajs["state"]), bsz*2)
-    trajs = {"obs": [], "state": [], "action": [], "mask": []}
+    idxs = np.random.randint(H-1, len(gt_trajs["state"]), bsz*4)
+    trajs = {"obs": [], "obs_action": [], "state": [], "action": [], "mask": []}
     i = 0
     j = 0
     while j < bsz:
-        if gt_trajs["mask"][idxs[i]] == 0:
+        if (gt_trajs["mask"][idxs[i]+1-H:idxs[i]+1] == 0).sum()>0:
             i += 1
             continue
         trajs["obs"].append(gt_trajs["state"][idxs[i]+1 - H : idxs[i]+1])
+        trajs["obs_action"].append(gt_trajs["action"][idxs[i]+1 - H : idxs[i]+1])
         if idxs[i] + T <= len(gt_trajs["state"]):
             trajs["state"].append(gt_trajs["state"][idxs[i] : idxs[i] + T])
             trajs["action"].append(gt_trajs["action"][idxs[i] : idxs[i] + T])
@@ -403,6 +404,7 @@ def sample_trajectory(gt_trajs, bsz, H, T):
     trajs["state"] = torch.stack(trajs["state"])
     trajs["action"] = torch.stack(trajs["action"])
     trajs["mask"] = torch.stack(trajs["mask"])
+    trajs["obs_action"] = torch.stack(trajs["obs_action"])
     for i in reversed(range(T)):
         trajs["mask"][:, i] = torch.prod(trajs["mask"][:, :i+1], dim=1)
     # trajs["state"] = trajs["state"]*trajs["mask"][:, :, None]
