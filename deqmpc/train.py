@@ -137,7 +137,8 @@ def main():
     args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,4).abs().max(dim=0)[0].to(args.device)
     if args.deq:
         # policy = DEQMPCPolicy(args, env).to(args.device)
-        policy = DEQMPCPolicyHistory(args, env).to(args.device)
+        # policy = DEQMPCPolicyHistory(args, env).to(args.device)
+        policy = DEQMPCPolicyHistoryEstPred(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # policy = DEQMPCPolicyQ(args, env).to(args.device)
         # save arguments
@@ -186,6 +187,7 @@ def main():
     loss_iter_q = [[] for _ in range(args.deq_iter)]
     losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
     losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
+    losses_iter_hist = [[] for _ in range(args.deq_iter)]
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -216,10 +218,11 @@ def main():
         gt_actions = traj_sample["action"]
         gt_states = traj_sample["state"]
         gt_mask = traj_sample["mask"]
+        gt_obs_actions = traj_sample["obs_action"]
         # ipdb.set_trace()
         if args.deq:
             start = time.time()
-            policy_out = policy(obs_in, gt_states, gt_actions,
+            policy_out = policy(obs_in, gt_states, gt_actions, gt_obs_actions,
                                 gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
             dyn_resids.append(policy_out["dyn_res"])
@@ -244,7 +247,7 @@ def main():
         # if (i == 5500):
         #     ipdb.set_trace()
 
-        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_mask, policy_out, args.deq, pretrain_done, coeffs)
+        loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_obs, gt_mask, policy_out, args.deq, pretrain_done, coeffs)
         loss = loss_dict["loss"]
         time_diffs.append(end-start)
         optimizer.zero_grad()
@@ -262,6 +265,8 @@ def main():
         [losses_iter_opt[k].append(loss_dict["losses_iter_opt"][k]) for k in range(args.deq_iter)]
         [losses_iter_nn[k].append(loss_dict["losses_iter_nn"][k]) for k in range(args.deq_iter)]
         [losses_iter_base[k].append(loss_dict["losses_iter_base"][k]) for k in range(args.deq_iter)]
+        if 'nominal_x_ests' in policy_out:
+            [losses_iter_hist[k].append(loss_dict['losses_x_ests'][k]) for k in range(args.deq_iter)]
         if 'q_scaling' in policy_out:
             [loss_iter_q[k].append(loss_dict['q_scaling'][k]) for k in range(args.deq_iter)]
 
@@ -301,6 +306,7 @@ def main():
                 [writer.add_scalar(f"losses_base/losses_iter_base{k}", np.mean(losses_iter_base[k]), i) for k in range(len(losses_iter_base))]
                 [writer.add_scalar(f"losses_var/losses_var{k}", np.mean(losses_var[k]), i) for k in range(len(losses_var))]
                 [writer.add_scalar(f"losses_q/losses_q{k}", np.mean(loss_iter_q[k]), i) for k in range(len(loss_iter_q))]
+                [writer.add_scalar(f"losses_hist/losses_hist{k}", np.mean(losses_iter_hist[k]), i) for k in range(len(losses_iter_hist))]
 
 
             losses = []
@@ -311,6 +317,7 @@ def main():
             losses_var = [[] for _ in range(args.deq_iter)]
             losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
             losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
+            losses_iter_hist = [[] for _ in range(args.deq_iter)]
 
 
             # print('nominal states: ', nominal_states)

@@ -1,7 +1,7 @@
 #!/bin/bash
 echo Starting training...
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name cartpole_noisy_noineq_gcn_nodetach --solver_type al --env cartpole1link --H 5 --hdim 256 --nq 2 --test --loss_type l1 --layer_type gcn --data_noise_type 1
+python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name cartpole_noisy_noineq_gcn_nodetach --solver_type al --env cartpole1link --H 5 --hdim 256 --nq 2 --qp_solve --test --loss_type l1 --layer_type gcn --data_noise_type 1
 
 # python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name cartpole_5k_noineq_conditer_L1simplefix_cond_expand4_gcn_nodetach_final --solver_type al --env cartpole1link --qp_solve --H 1 --hdim 256 --nq 2 --save --loss_type l1 --layer_type gcn
 
