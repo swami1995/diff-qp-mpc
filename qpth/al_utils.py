@@ -214,6 +214,7 @@ def block_diag(mats):
 def dyn_res_eq_jac(x, u, dx_jac, x0):
     bsz, T, x_size = x.shape
     u_size = u.shape[-1]
+    # ipdb.set_trace()
     x_next, dynamics_jacobian = dx_jac(
         x[:, :-1].reshape(-1, x_size), u[:, :-1].reshape(-1, u_size)
     )
@@ -419,7 +420,7 @@ class NewtonAL(torch.autograd.Function):
             with torch.enable_grad():
                 x_est.requires_grad_(True)
                 grad, Hess, Hess_clip = meritGHfnQ(x_est)
-            # ipdb.set_trace()
+
             # Solve for the newton step
             stepsz = 0
             # Hess_clip = Hess = torch.eye(Hess.shape[-1], device=Hess.device, dtype=Hess.dtype).repeat(bsz, 1, 1) 

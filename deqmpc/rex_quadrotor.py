@@ -40,6 +40,7 @@ class RexQuadrotor_dynamics(torch.nn.Module):
         self.bsz = bsz
         self.dt = dt
         self.act_scale = 100.0
+        self.u_hover = torch.tensor([(-self.m*gravity[2]-self.bf*4)/self.act_scale/self.kf/4]*4).to(device)
         self.cd = torch.tensor(cd).unsqueeze(0).to(device)
         self.ss = torch.tensor([[1.,1,0], [1.,-1,0], [-1.,-1,0], [-1.,1,0]]).to(device).unsqueeze(0)
         self.ss = self.ss/self.ss.norm(dim=-1).unsqueeze(-1)

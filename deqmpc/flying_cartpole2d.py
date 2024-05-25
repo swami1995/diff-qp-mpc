@@ -9,7 +9,7 @@ def angle_normalize_2pi(x):
 
 class FlyingCartpole_dynamics(torch.nn.Module):
     # think about mrp vs quat for various things - play with Q cost 
-    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.1, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.0244101, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu'), jacobian=False):
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.2, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.025, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu'), jacobian=False):
         super(FlyingCartpole_dynamics, self).__init__()
         self.m = mass_q + mass_p
         self.mq = mass_q
@@ -55,8 +55,7 @@ class FlyingCartpole_dynamics(torch.nn.Module):
     def forces(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         m = x[..., 3:6]
         q = mrp2quat(-m)
-        kf = 0.0244101
-        F = torch.sum(kf*u, dim=-1)
+        F = torch.sum(self.kf*u, dim=-1)
         # g = torch.tensor([0,0,-9.81]).to(x)#self.g
         F = torch.stack([torch.zeros_like(F), torch.zeros_like(F), F], dim=-1)
         if len(m.shape) == 3:
@@ -65,10 +64,10 @@ class FlyingCartpole_dynamics(torch.nn.Module):
         else:
             cd = self.cd
             cross_A = self.cross_A
-        df = -torch.sign(m)*0.5*1.27*(m*m)*cd*cross_A
+        # df = -torch.sign(m)*0.5*1.27*(m*m)*cd*cross_A
         # Bf = torch.tensor([0.0, 0.0, -30.48576*4]).to(x.device).unsqueeze(0)
-        # df = 0
-        f = F + df + quatrot(q, self.m * self.g)  + self.Bf
+        # df = 0.0
+        f = F + quatrot(q, self.m * self.g)  + self.Bf
         # ipdb.set_trace()
         return f
 
@@ -143,19 +142,20 @@ class FlyingCartpole_dynamics(torch.nn.Module):
 
         # add the inverted pendulum
         theta, theta_dot = self.get_pend_state(x)
-        vdot_W = quatrot(q, vdot)
-        theta_ddot = (self.g[0][2] * torch.sin(theta) + vdot_W[:,0:1]*torch.cos(theta))/self.L
+        x_ddot = quatrot(q, vdot)[...,0:1]
+        theta_ddot = (self.g[0][2] * torch.sin(theta) + x_ddot*torch.cos(theta))/self.L
         # return full state
         return torch.cat([pdot, mdot, theta_dot, vdot, wdot, theta_ddot], dim=-1)
 
 class FlyingCartpole_dynamics_jac(FlyingCartpole_dynamics):
-    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.1, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.0244101, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.2, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.025, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
         super(FlyingCartpole_dynamics_jac, self).__init__(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, True)
     
     def forward(self, x, u):
         ## use vmap to compute jacobian using autograd.grad
         x = x.unsqueeze(-2).repeat(1, self.state_dim, 1)
         u = u.unsqueeze(-2).repeat(1, self.state_dim, 1)
+        # ipdb.set_trace()
         out_rk4 = self.rk4_dynamics(x, u)
         out = out_rk4*self.identity[None]
         jac_out = torch.autograd.grad([out.sum()], [x, u])
@@ -163,7 +163,7 @@ class FlyingCartpole_dynamics_jac(FlyingCartpole_dynamics):
         return out_rk4[:, 0], jac_out
 
 class FlyingCartpole(torch.nn.Module):
-    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.1, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.0244101, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.2, J=[[0.01566089, 0.00000318037, 0.0],[0.00000318037, 0.01562078, 0.0], [0.0, 0.0, 0.02226868]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.28, kf=0.025, bf=-30.48576, km=0.00029958, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
         super(FlyingCartpole, self).__init__()
         self.dynamics = FlyingCartpole_dynamics(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
         self.dynamics = torch.jit.script(self.dynamics)
@@ -183,7 +183,7 @@ class FlyingCartpole(torch.nn.Module):
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         # self.max_torque = 18.3
-        self.action_space = Spaces_np((self.control_dim,), np.array([18.3]*self.control_dim), np.array([11.5]*self.control_dim)) #12.0
+        self.action_space = Spaces_np((self.control_dim,), np.array([self.dynamics.u_hover[0]*2]*self.control_dim), np.array([0.0]*self.control_dim)) #12.0
         self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(70),deg2rad(70),deg2rad(70),0.5,0.5,0.5,0.5,0.25,0.25,0.25,0.25]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum
@@ -331,21 +331,21 @@ if __name__ == "__main__":
     env = FlyingCartpole(bsz=10, device='cuda')
     quad = env.dynamics
     quad_jac = env.dynamics_derivatives
-    scripted_quad = torch.jit.script(quad)
-    scripted_quad_jac = torch.jit.script(quad_jac)
+    # scripted_quad = torch.jit.script(quad)
+    # scripted_quad_jac = torch.jit.script(quad_jac)
     # ipdb.set_trace()
-    x = env.reset()
+    x = env.reset().requires_grad_(True)
     # x = torch.tensor([.0,.0,.0,deg2rad(0.0),deg2rad(1.0),deg2rad(0.0),0.,0.,0.,0.,0.,0., 0.0, 0.]).unsqueeze(0).to('cuda')
     # x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), x[:, 6:]], dim=-1) #quat2mrp
     # u = torch.tensor([0.0, 0.0, 0.0, 0.0]).unsqueeze(0).repeat(1, 1).to(x).requires_grad_(True)
-    u = quad.u_hover.unsqueeze(0).repeat(1, 1).to(x)
+    u = quad.u_hover.unsqueeze(0).repeat(1, 1).to(x).requires_grad_(True)
     # ipdb.set_trace()
-    for i in range(100):
-        # x = scripted_quad(x,u)
-        # x = quad(x,u)
-        x_out, reward, done,_ = env.step(u)
-        print(reward)
-
+    # for i in range(100):
+    #     # x = scripted_quad(x,u)
+    #     # x = quad(x,u)
+    #     x_out, reward, done,_ = env.step(u)
+    #     print(reward)
+    quad_jac(x,u)
 
     # x.requires_grad = True
     # for i in range(100):
