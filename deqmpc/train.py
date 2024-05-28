@@ -117,6 +117,9 @@ def main():
     elif args.env == "cartpole2link":
         env = CartpoleEnv(nx=6, dt=0.03, stabilization=False, kwargs=kwargs)
         gt_trajs = get_gt_data(args, env, "cgac")
+    elif args.env == "FlyingCartpole":
+        env = FlyingCartpole(max_steps=args.T, bsz=args.bsz, device=args.device)
+        gt_trajs = get_gt_data(args, env, "cgac")
     else:
         raise NotImplementedError
 
@@ -136,9 +139,9 @@ def main():
             traj_sample["state"])
     args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,env.nx).abs().max(dim=0)[0].to(args.device)
     if args.deq:
-        # policy = DEQMPCPolicy(args, env).to(args.device)
+        policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
-        policy = DEQMPCPolicyHistoryEstPred(args, env).to(args.device)
+        # policy = DEQMPCPolicyHistoryEstPred(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # policy = DEQMPCPolicyQ(args, env).to(args.device)
         # save arguments
@@ -227,8 +230,12 @@ def main():
         # ipdb.set_trace()
         if args.deq:
             start = time.time()
-            policy_out = policy(obs_in, gt_states, gt_actions, gt_obs_actions,
-                                gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
+            if isinstance(policy, DEQMPCPolicyHistoryEstPred):
+                policy_out = policy(obs_in, gt_states, gt_actions, gt_obs_actions,
+                                    gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
+            else:
+                policy_out = policy(obs_in, gt_states, gt_actions,
+                                    gt_mask, out_iter=i, qp_solve=args.qp_solve and pretrain_done, lastqp_solve=args.lastqp_solve and pretrain_done)
             end = time.time()
             dyn_resids.append(policy_out["dyn_res"])
         else:
