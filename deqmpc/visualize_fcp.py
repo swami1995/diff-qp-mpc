@@ -85,7 +85,8 @@ def main():
         # state = torch.tensor([[0.0, 0.1, 0.0, 0.0, 0.0, 0.0]], **kwargs)
         # state = torch.tensor([.0,1.0,1.0,deg2rad(10.0),deg2rad(0.0),deg2rad(0.0),0,0.,0.,0.,0.,0.], **kwargs).unsqueeze(0)
         # state = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi-0.5,1.0,1.0,1.0,1., 1.0, 1.0, 1.0], **kwargs).unsqueeze(0)
-        state = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi+0.5,1.0,1.0,1.0,1.0,-1.0,1.0,-1.0], **kwargs).unsqueeze(0)
+        # state = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi+0.5,1.0,1.0,1.0,1.0,-1.0,1.0,-1.0], **kwargs).unsqueeze(0)
+        state = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),0.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0], **kwargs).unsqueeze(0)/2
         state = torch.cat([state[:,:3], quat2mrp(euler_to_quaternion(state[:, 3:6])), state[:, 6:]], dim=-1).repeat(args.bsz, 1)
         # state = torch.rand((args.bsz, nx), **kwargs)
         # high = np.array([1, np.pi, np.pi, 1, 1, 1])

@@ -147,7 +147,7 @@ class FlyingCartpole_dynamics_jac(FlyingCartpole_dynamics):
         return out_rk4[:, 0], jac_out
 
 class FlyingCartpole(torch.nn.Module):
-    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.1, J=[[0.0023, 0.0, 0.0],[0.0, 0.0023, 0.0], [0.0, 0.0, 0.004]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.175, kf=1.0, bf=0.0, km=0.0245, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.4, J=[[0.0023, 0.0, 0.0],[0.0, 0.0023, 0.0], [0.0, 0.0, 0.004]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.175, kf=1.0, bf=0.0, km=0.0245, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
         super(FlyingCartpole, self).__init__()
         self.dynamics = FlyingCartpole_dynamics(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
         self.dynamics = torch.jit.script(self.dynamics)
@@ -162,17 +162,17 @@ class FlyingCartpole(torch.nn.Module):
         # self.x = self.reset()
         self.device = device
         self.dt = dt
-        self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [10.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
+        self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [80.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
         # self.Qlqr = torch.tensor([10.0]*3 + [0.01]*3 + [1.0]*3 + [0.01]*3).to(device)#.unsqueeze(0)
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         # self.max_torque = 18.3
         self.action_space = Spaces_np((self.control_dim,), np.array([2.0*self.dynamics.u_hover.cpu()[0]]*self.control_dim), np.array([-self.dynamics.u_hover.cpu()[0]]*self.control_dim)) #12.0
-        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
+        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum
         self.spec_id = "FlyingCartpole-v0"
-        self.saved_ckpt_name = "cgac_checkpoint_rexquadrotor_eplen100save"
+        self.saved_ckpt_name = "cgac_checkpoint_FlyingCartpole_swingup400maxu21_rew801_initrew1finrew5_0alphapk75_thres1000_massp04_fixmaskmem_best"
 
     def forward(self, x, u, jacobian=False):
         if jacobian:
@@ -200,7 +200,7 @@ class FlyingCartpole(torch.nn.Module):
                 self.x = self.dynamics(self.x, u)
                 self.x = self.state_clip(self.x) # clip the state
                 reward = self.reward(self.x, u).cpu().numpy().squeeze()
-                if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or np.isinf(reward) or np.isnan(reward) or reward < -500:
+                if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or np.isinf(reward) or np.isnan(reward) or reward < -1000:
                     x = self.reset()
                     done_inf = True
                     reward = 0
@@ -211,7 +211,7 @@ class FlyingCartpole(torch.nn.Module):
                 self.x = self.dynamics(self.x, u)
                 self.x = self.state_clip(self.x) # clip the state
                 reward = self.reward(self.x, u).cpu().numpy()
-                if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or np.isinf(reward.sum()) or np.isnan(reward.sum()) or reward.sum() < -500:
+                if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or np.isinf(reward.sum()) or np.isnan(reward.sum()) or reward.sum() < -1000:
                     x = self.reset()
                     done_inf = True
                     reward = np.array([0.0])
@@ -223,7 +223,7 @@ class FlyingCartpole(torch.nn.Module):
             self.x = self.state_clip(self.x) # clip the state
             reward = self.reward(self.x, u)
             # if torch.isnan(self.x).sum() or torch.isinf(self.x).sum() or torch.isinf(reward.sum()) or torch.isnan(reward.sum()) or reward.sum() < -500:
-            ifcond = torch.logical_or(torch.isnan(self.x).any(dim=-1), torch.logical_or(torch.isinf(self.x).any(dim=-1), torch.logical_or(torch.isinf(reward), torch.logical_or(torch.isnan(reward), (reward < -500)))))
+            ifcond = torch.logical_or(torch.isnan(self.x).any(dim=-1), torch.logical_or(torch.isinf(self.x).any(dim=-1), torch.logical_or(torch.isinf(reward), torch.logical_or(torch.isnan(reward), (reward < -1000)))))
             if ifcond.any():
                 self.reset(torch.where(ifcond))
                 done_inf[ifcond] = 1
@@ -282,7 +282,7 @@ class FlyingCartpole(torch.nn.Module):
 
     def reward(self, x, u):
         cost = (((x - self.targ_pos)**2)*self.Qlqr/2).sum(dim=-1)/100 + ((u**2)*self.Rlqr/2).sum(dim=-1)/10
-        mask = (cost > 500)
+        mask = (cost > 1000)
         rew = torch.exp(-cost/2+2)
         rew[mask] = -cost[mask]
         # if torch.isnan(rew).sum() or torch.isinf(rew).sum():
@@ -300,7 +300,7 @@ class FlyingCartpole(torch.nn.Module):
         elif len(x_window.shape) == 1:
             x_window = x_window.unsqueeze(0)
         x = (torch.rand((bsz, self.state_dim))*2-1).to(self.x_window)*self.x_window 
-        x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), np.pi+x[:,6], x[:, 7:]], dim=-1) #quat2mrp
+        x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), np.pi+x[:,6:7], x[:, 7:]], dim=-1) #quat2mrp
         if reset_ids is not None:
             self.x[reset_ids] = x
         else:

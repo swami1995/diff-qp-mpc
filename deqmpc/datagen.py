@@ -16,6 +16,7 @@ import qpth.AL_mpc as mpc
 import ipdb
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from rex_quadrotor import RexQuadrotor
+from flying_cartpole2d import FlyingCartpole
 from my_envs.cartpole import CartpoleEnv, Cartpole2linkEnv
 from ppo_train import PPO, GaussianPolicy, CGACGaussianPolicy, CGACRunningMeanStd
 import pickle
@@ -239,7 +240,7 @@ def get_pendulum_expert_traj_sac(env, num_traj):
 def get_expert_traj_cgac(env, num_traj):
     """
     Get expert trajectories for pendulum environment using the saved CGAC checkpoint."""
-    device = torch.device("cuda" if True else "cpu")
+    device = torch.device("cpu")#cuda" if True else "cpu")
     policy = CGACGaussianPolicy(env.observation_space.shape[0], env.action_space.shape[0], [512,256], env.action_space, True).to(device)
     rms_obs = CGACRunningMeanStd((env.observation_space.shape[0],), device=device).to(device)
     # checkpoint = torch.load("/home/sgurumur/locuslab/pytorch-soft-actor-critic/checkpoints/sac_checkpoint_Pendulum-v0_bestT200")
@@ -263,6 +264,8 @@ def get_expert_traj_cgac(env, num_traj):
             reward_traj += reward
         print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
         if reward_traj.item() < 100 and 'rexquadrotor' in env.spec_id:
+            continue
+        if len(traj) < 150 and 'FlyingCartpole' in env.spec_id:
             continue
         trajectories.append(traj)
         reward_trajs.append(reward_traj.item())
@@ -555,9 +558,10 @@ if __name__ == "__main__":
     # env = RexQuadrotor(bsz=1)
     # env = CartpoleEnv(nx=4, dt=0.05, stabilization=False, kwargs=kwargs)
     # ipdb.set_trace()
-    env = Cartpole2linkEnv(dt=0.05, stabilization=False, kwargs=kwargs)
+    # env = Cartpole2linkEnv(dt=0.05, stabilization=False, kwargs=kwargs)
+    env = FlyingCartpole(bsz=1, max_steps=200)
     # env = IntegratorEnv()
     # save_expert_traj(env, 300, "sac")
     # save_expert_traj(env, 2, "mpc")
-    save_expert_traj(env, 300, "cgac")
+    save_expert_traj(env, 2000, "cgac")
     # test_qp_mpc(env)
