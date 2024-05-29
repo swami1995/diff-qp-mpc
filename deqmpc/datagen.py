@@ -275,7 +275,7 @@ def get_expert_traj_cgac(env, num_traj):
     # dynamics = lambda y: env.dynamics(y, torch.tensor(traj[0][1])[None])
     # print(env.dynamics(torch.tensor(trajectories[0][0][0])[None], torch.tensor(trajectories[0][0][1])[None]) - torch.tensor(trajectories[0][1][0])[None])
     # print(rk4(dynamics, torch.tensor(traj[0][0])[None], [0, env.dt]) - torch.tensor(traj[1][0])[None])
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return trajectories
 
 def save_expert_traj(env, num_traj, type="mpc"):
@@ -322,7 +322,7 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "rb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-swing_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     return gt_trajs
