@@ -1,7 +1,7 @@
 #!/bin/bash
 echo Starting training...
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name FlyingCartpole_lr1e3_ineqfix_unnormfix --solver_type al --env FlyingCartpole --qp_solve --H 1 --hdim 512 --nq 7 --loss_type l1 --layer_type gcn
+python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name fcp_test --solver_type al --env FlyingCartpole --qp_solve --H 1 --hdim 512 --nq 7 --loss_type l1 --layer_type gcn --save
 
 # --num_trajs_data 2
 

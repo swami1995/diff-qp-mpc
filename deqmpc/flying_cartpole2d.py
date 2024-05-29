@@ -147,7 +147,7 @@ class FlyingCartpole_dynamics_jac(FlyingCartpole_dynamics):
         return out_rk4[:, 0], jac_out
 
 class FlyingCartpole(torch.nn.Module):
-    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.1, J=[[0.0023, 0.0, 0.0],[0.0, 0.0023, 0.0], [0.0, 0.0, 0.004]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.175, kf=1.0, bf=0.0, km=0.025, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
+    def __init__(self, bsz=1,  mass_q=2.0, mass_p=0.4, J=[[0.0023, 0.0, 0.0],[0.0, 0.0023, 0.0], [0.0, 0.0, 0.004]], L=0.5, gravity=[0,0,-9.81], motor_dist=0.175, kf=1.0, bf=0.0, km=0.0245, bm=-0.367697, quad_min_throttle = 1148.0, quad_max_throttle = 1832.0, ned=False, cross_A_x=0.25, cross_A_y=0.25, cross_A_z=0.5, cd=[0.0, 0.0, 0.0], max_steps=100, dt=0.05, device=torch.device('cpu')):
         super(FlyingCartpole, self).__init__()
         self.dynamics = FlyingCartpole_dynamics(bsz, mass_q, mass_p, J, L, gravity, motor_dist, kf, bf, km, bm, quad_min_throttle, quad_max_throttle, ned, cross_A_x, cross_A_y, cross_A_z, cd, max_steps, dt, device, False)
         self.dynamics = torch.jit.script(self.dynamics)
@@ -167,14 +167,15 @@ class FlyingCartpole(torch.nn.Module):
         # self.Qlqr = torch.tensor([10.0]*3 + [0.01]*3 + [1.0]*3 + [0.01]*3).to(device)#.unsqueeze(0)
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
-        self.ubound = 0.2*self.dynamics.u_hover.cpu()[0]
-        self.action_space = Spaces_np((self.control_dim,), np.array([self.ubound]*self.control_dim), np.array([-self.ubound]*self.control_dim)) #12.0
-        # self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
-        self.x_window = torch.tensor([0.1,0.1,0.1,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]).to(device)
+        self.ubound = 1*self.dynamics.u_hover.cpu()[0]
+        self.action_space = Spaces_np((self.control_dim,), np.array([0.2*self.ubound]*self.control_dim), np.array([-0.2*self.ubound]*self.control_dim)) #12.0
+        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
+        # self.x_window = torch.tensor([0.1,0.1,0.1,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
+        self.targ_pos[0:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum
         self.spec_id = "FlyingCartpole-v0"
-        self.saved_ckpt_name = "cgac_checkpoint_FlyingCartpole_swingup300_ub0.2x0.2x_L0.5_ent7.5_memfix_seed5_ok"
+        self.saved_ckpt_name = "cgac_checkpoint_FlyingCartpole_swingup400maxu21_rew801_initrew1finrew5_0alphapk75_thres1000_massp04_fixmaskmem_best"
 
     def forward(self, x, u, jacobian=False):
         if jacobian:
