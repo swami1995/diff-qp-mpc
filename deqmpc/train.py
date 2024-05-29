@@ -74,6 +74,7 @@ def main():
     parser.add_argument("--data_noise_mean", type=float, default=0.3)
     parser.add_argument("--grad_coeff", action="store_true")
     parser.add_argument("--scaled_output", action="store_true")
+    parser.add_argument("--num_trajs_data", type=int, default=1000000)
 
     args = parser.parse_args()
     seeding(args.seed)
@@ -126,7 +127,7 @@ def main():
     # gt_trajs = get_gt_data(args, env, "mpc")
     # gt_trajs = get_gt_data(args, env, "cgac")
     # ipdb.set_trace()
-    gt_trajs = merge_gt_data(gt_trajs)
+    gt_trajs = merge_gt_data(gt_trajs, num_trajs=args.num_trajs_data)
     args.Q = env.Qlqr.to(args.device)
     args.R = env.Rlqr.to(args.device)
 
@@ -210,6 +211,10 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
+        elif args.env == "FlyingCartpole":
+            traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
+            traj_sample["state"])
+            traj_sample["obs"] = utils.unnormalize_states_flyingcartpole(traj_sample["obs"])
         pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations
         # if (i < 5000):
