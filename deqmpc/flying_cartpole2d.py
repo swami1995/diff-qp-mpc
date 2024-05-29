@@ -167,7 +167,7 @@ class FlyingCartpole(torch.nn.Module):
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         # self.max_torque = 18.3
-        self.action_space = Spaces_np((self.control_dim,), np.array([2.0*self.dynamics.u_hover.cpu()[0]]*self.control_dim), np.array([-self.dynamics.u_hover.cpu()[0]]*self.control_dim)) #12.0
+        self.action_space = Spaces_np((self.control_dim,), np.array([100.0*self.dynamics.u_hover.cpu()[0]]*self.control_dim), np.array([-100.0*self.dynamics.u_hover.cpu()[0]]*self.control_dim)) #12.0
         self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum

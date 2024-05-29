@@ -137,6 +137,9 @@ def main():
     elif args.env == "cartpole1link" or args.env == "cartpole2link":
         traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
             traj_sample["state"])
+    elif args.env == "FlyingCartpole":
+        traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
+            traj_sample["state"])
     args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,env.nx).abs().max(dim=0)[0].to(args.device)
     if args.deq:
         policy = DEQMPCPolicy(args, env).to(args.device)

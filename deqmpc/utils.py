@@ -287,3 +287,21 @@ def unnormalize_states_cartpole_nlink(nominal_states):
         prev_angle = nominal_states[:, i, 1:nq]
     return nominal_states
 
+
+def unnormalize_states_flyingcartpole(nominal_states):
+    nq = nominal_states.shape[2] // 2
+    angle_0 = nominal_states[:, 0, nq-1]
+    prev_angle = angle_0
+    for i in range(nominal_states.shape[1]):
+        mask = torch.abs(nominal_states[:, i, nq-1] - prev_angle) > np.pi / 2
+        mask_sign = torch.sign(nominal_states[:, i, nq-1] - prev_angle)
+        if mask.any():
+            nominal_states[:, i, nq-1] = (
+                (nominal_states[:, i, nq-1] -
+                 mask_sign * 2 * np.pi)*mask.float()
+                + nominal_states[:, i, nq-1]*(1-mask.float())
+            )
+        prev_angle = nominal_states[:, i, nq-1]
+        
+    return nominal_states
+

@@ -338,8 +338,8 @@ def merge_gt_data(gt_trajs, num_trajs=2):
     """
     merged_gt_traj = {"state": [], "action": [], "mask": []}
     for i, traj in enumerate(gt_trajs):
-        # if i >= num_trajs:
-        #     break
+        if i >= num_trajs:
+            break
         for state, action in traj:
             merged_gt_traj["state"].append(state)
             merged_gt_traj["action"].append(action)
