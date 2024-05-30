@@ -322,11 +322,43 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "rb") as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}-ub2_new.pkl", "rb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub2-clip_new.pkl", "rb") as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}-swing_new.pkl", "rb") as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
+    # ipdb.set_trace()
+    # gt_trajs = [traj for traj in gt_trajs if len(traj) > 199]
+    # gtdata = merge_trajs_data(gt_trajs)
     # ipdb.set_trace()
     return gt_trajs
 
+def merge_trajs_data(gt_trajs, num_trajs=2000000):
+    """
+    Merge ground truth data for imitation learning.
+    Args:
+        gt_trajs: A list of trajectories, each trajectory is a list of (state, action) tuples.
+    Returns:
+        A list of (state, action) tuples.
+    """
+    # merged_gt_traj = {"state": [], "action": []}
+    merged_states = []
+    merged_actions = []
+    for i, traj in enumerate(gt_trajs):
+        states = []
+        actions = []
+        if i >= num_trajs:
+            break
+        for state, action in traj:
+            states.append(state)
+            actions.append(action)
+        states = torch.tensor(np.array(states), dtype=torch.float32)
+        actions = torch.tensor(np.array(actions), dtype=torch.float32)
+        merged_states.append(states)
+        merged_actions.append(actions)
+    merged_states = torch.stack(merged_states, dim=0)
+    merged_actions = torch.stack(merged_actions, dim=0) 
+    return merged_states, merged_actions
 
 def merge_gt_data(gt_trajs, num_trajs=2):
     """

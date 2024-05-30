@@ -86,6 +86,10 @@ def main():
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
     policy.load_state_dict(torch.load(model_file))
+    eval_policy(args, env, policy, gt_trajs)
+
+
+def eval_policy(args, env, policy, gt_trajs):
     policy.eval()
     torch.no_grad()
 
@@ -134,12 +138,13 @@ def main():
     for i in range(NRUNS):      
         obs_in = state.clone()
         # ipdb.set_trace()
-        obs_in[:, 1] = (obs_in[:, 1]) % (2*np.pi)
+        # obs_in[:, 1] = (obs_in[:, 1]) % (2*np.pi)
+        obs_in = env.state_clip(obs_in)
 
         policy_out = policy(obs_in, gt_states, gt_actions,
                             gt_mask, qp_solve=args.qp_solve, lastqp_solve=args.lastqp_solve)
         nominal_state_net, nominal_state, nominal_action = policy_out["trajs"][-1]
-        print("nominal states\n", nominal_state)
+        # print("nominal states\n", nominal_state)
         # print("nominal actions\n", nominal_action)     
 
         u = nominal_action[:, 0, :]

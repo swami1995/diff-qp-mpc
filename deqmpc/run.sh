@@ -1,9 +1,10 @@
 #!/bin/bash
 echo Starting training...
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name FlyingCartpole_lr1e3_ineqfix_unnormfix --solver_type al --env FlyingCartpole --qp_solve --H 1 --hdim 512 --nq 6 --save --loss_type l1 --layer_type gcn
+python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix --solver_type al --env FlyingCartpole --H 1 --qp_solve --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --load --ckpt deqmpc__FlyingCartpole_lr1e3_ineqfix_T5_bsz200_deq_iter6_hdim256 --eval
 
-# --num_trajs_data 2
+#--load --ckpt deq__FlyingCartpole_lr1e3_ineqfix_unnormfix_T5_bsz200_deq_iter6_hdim256
+#--num_trajs_data 2
 
 # python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name cartpole_noisy_noineq_gcn_nodetach --solver_type al --env cartpole1link --H 5 --hdim 256 --nq 2 --qp_solve --test --loss_type l1 --layer_type gcn --data_noise_type 1
 

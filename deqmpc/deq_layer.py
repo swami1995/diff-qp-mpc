@@ -53,7 +53,10 @@ class DEQLayer(torch.nn.Module):
         self.deq_expand = 4
         self.kernel_width_out = 1
         self.num_groups = 4
+        self.pos_scale = args.pos_scale
+        self.vel_scale = args.vel_scale
 
+        self.mulnogradlayer = ScaleMultiplyLayer()
         self.setup_input_layer()
         self.setup_deq_layer()
         self.setup_output_layer()
@@ -75,8 +78,8 @@ class DEQLayer(torch.nn.Module):
         dx_ref = self.output_layer(z_out)
         # ipdb.set_trace()
         dx_ref = dx_ref.reshape(-1, self.T - 1, self.nx)
-        vel_ref = dx_ref[..., self.nq:]
-        dx_ref = dx_ref[..., :self.nq] * self.dt
+        vel_ref = dx_ref[..., self.nq:]#self.mulnogradlayer(dx_ref[..., self.nq:], self.vel_scale)
+        dx_ref = dx_ref[..., :self.nq]*self.dt#self.mulnogradlayer(dx_ref[..., :self.nq], self.pos_scale)# self.dt
         x_ref = torch.cat([dx_ref + x_prev[..., :1, :self.nq], vel_ref], dim=-1)
         # x_ref = torch.cat([x_prev[..., 1:, :self.nq] + dx_ref, vel_ref + x_prev[..., 1:, self.nq:]], dim=-1)
         # x_ref = torch.cat([dx_ref + _obs[:, :, :self.nq], vel_ref], dim=-1)

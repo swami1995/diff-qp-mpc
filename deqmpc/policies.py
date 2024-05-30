@@ -495,6 +495,7 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out, coef
         residuals.append(res)
     ### compute iteration weights based on previous losses and compute example weights based on net residuals
     ### iteration weights
+    ipdb.set_trace()
     residuals = torch.stack(residuals, dim=1)
     weight_mask = gt_mask.sum(dim=1) == 1
     iter_weights = 5**(torch.log(residuals[:,:1]/(10*residuals[:,:-1])))
@@ -871,7 +872,14 @@ class Tracking_MPC(torch.nn.Module):
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
             self.R = torch.ones(self.nu, dtype=self.dtype, device=self.device)
         self.Q = torch.cat([self.Q, self.R], dim=0).to(self.dtype)
+        self.aux_Q = self.Q*0.5
         self.Q = torch.diag(self.Q).repeat(self.bsz, self.T, 1, 1)
+        self.aux_Q[3:] = 0.0
+        self.aux_x = torch.zeros_like(self.aux_Q)
+        self.aux_x[:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.aux_x)
+        self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)
+        self.aux_p = -(self.aux_Q * self.aux_x.unsqueeze(-2)).sum(dim=-1)
+        
 
         self.u_init = torch.randn(
             self.bsz, self.T, self.nu, dtype=self.dtype, device=self.device
@@ -932,6 +940,7 @@ class Tracking_MPC(torch.nn.Module):
         else:
             Q = self.Q
         self.compute_p(xu_ref, Q)
+        Q = Q + self.aux_Q
         # ipdb.set_trace()
         if self.args.solver_type == "al":
             self.ctrl.al_iter = al_iters
@@ -962,7 +971,7 @@ class Tracking_MPC(torch.nn.Module):
         # self.p[:, :, : self.nx] = -(
         #     self.Q[:, :, : self.nx, : self.nx] * x_ref.unsqueeze(-2)
         # ).sum(dim=-1)
-        self.p = -(Q * x_ref.unsqueeze(-2)).sum(dim=-1)
+        self.p = -(Q * x_ref.unsqueeze(-2)).sum(dim=-1) + self.aux_p
         return self.p
 
     def reinitialize(self, x, mask):
