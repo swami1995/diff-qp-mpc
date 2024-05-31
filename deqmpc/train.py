@@ -19,6 +19,7 @@ import numpy as np
 import torch
 import torch.autograd as autograd
 from deq_layer_utils import update_scales
+from eval import eval_policy
 
 # torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
@@ -43,7 +44,7 @@ def main():
     # parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument("--qp_iter", type=int, default=1)
     parser.add_argument("--eps", type=float, default=1e-2)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warm_start", type=bool, default=True)
     parser.add_argument("--bsz", type=int, default=128)
     parser.add_argument("--device", type=str, default=None)
@@ -75,8 +76,19 @@ def main():
     parser.add_argument("--grad_coeff", action="store_true")
     parser.add_argument("--scaled_output", action="store_true")
     parser.add_argument("--num_trajs_data", type=int, default=1000000)
+    parser.add_argument("--eval", action="store_true")
 
     args = parser.parse_args()
+    if args.eval:
+        args_file = "./logs/" + args.ckpt + "/args"
+        args1 = torch.load(args_file)
+        args1.load = True
+        args1.ckpt = args.ckpt
+        args1.bsz = 200
+        args1.test = True
+        args1.eval = True
+        args1.save = False
+        args = args1
     seeding(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     args.device = device if args.device is None else args.device
@@ -87,7 +99,7 @@ def main():
             method_name = f"diffmpc_"
         else:
             method_name = f"deq_"
-        args.name = method_name + args.name + \
+        args.name = f"{method_name}_{args.env}_{args.name}" + \
             f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_hdim{args.hdim}"
         # args.name = "trial"
         writer = SummaryWriter("./logs/" + args.name)
@@ -129,9 +141,10 @@ def main():
     # ipdb.set_trace()
     gt_trajs = merge_gt_data(gt_trajs, num_trajs=args.num_trajs_data)
     args.Q = env.Qlqr.to(args.device)
+    args.Qaux = env.Qaux.to(args.device)
     args.R = env.Rlqr.to(args.device)
 
-    traj_sample = sample_trajectory(gt_trajs, args.bsz*10, args.H, args.T)
+    traj_sample = sample_trajectory(gt_trajs, 2000, args.H, args.T)
     if args.env == "pendulum":
         traj_sample["state"] = utils.unnormalize_states_pendulum(
             traj_sample["state"])
@@ -141,13 +154,17 @@ def main():
     elif args.env == "FlyingCartpole":
         traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
             traj_sample["state"])
-    args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(args.bsz*50,env.nx).abs().max(dim=0)[0].to(args.device)
+    args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(2000*args.T,env.nx).abs().max(dim=0)[0].to(args.device)
+    args.pos_scale = ((traj_sample["state"][:, 1:, :args.nq] - traj_sample["state"][:, :1, :args.nq])*traj_sample["mask"][:, 1:, None]).abs().sort(dim=0)[0][-100].to(args.device) # .sort(dim=0)[0][-100]
+    args.vel_scale = (traj_sample["state"][:, 1:, args.nq:]*traj_sample["mask"][:, 1:, None]).abs().sort(dim=0)[0][-100].to(args.device) # .sort(dim=0)[0][-100]
+    # ipdb.set_trace()
     if args.deq:
-        policy = DEQMPCPolicy(args, env).to(args.device)
+        # policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyHistoryEstPred(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # policy = DEQMPCPolicyQ(args, env).to(args.device)
+        policy = DEQMPCPolicyEE2(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -156,6 +173,7 @@ def main():
             os.makedirs(f"./logs/{args.name}/code/qpth/", exist_ok=True)
             os.system(f"cp -r {project_dir}/deqmpc/*.py ./logs/{args.name}/code/deqmpc/")
             os.system(f"cp -r {project_dir}/qpth/*.py ./logs/{args.name}/code/qpth/")
+            os.system(f"cp -r {project_dir}/deqmpc/run.sh ./logs/{args.name}/code/deqmpc/")
             # ipdb.set_trace()
     else:
         # policy = NNMPCPolicy(args, env).to(args.device)
@@ -165,6 +183,10 @@ def main():
 
     if args.load:
         policy.load_state_dict(torch.load(f"./model/{args.ckpt}"))
+    
+    if args.eval:
+        eval_policy(args, env, policy, gt_trajs)
+        return None
     optimizer = torch.optim.Adam(policy.model.parameters(), lr=args.lr)
     losses = []
     losses_end = []
@@ -215,6 +237,7 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
             traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_flyingcartpole(traj_sample["obs"])
+        # ipdb.set_trace()
         pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations
         # if (i < 5000):

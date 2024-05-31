@@ -86,6 +86,10 @@ def main():
         # policy = NNMPCPolicy(args, env).to(args.device)
         policy = NNPolicy(args, env).to(args.device)
     policy.load_state_dict(torch.load(model_file))
+    eval_policy(args, env, policy, gt_trajs)
+
+
+def eval_policy(args, env, policy, gt_trajs):
     policy.eval()
     torch.no_grad()
 
@@ -119,6 +123,7 @@ def main():
     # initial state
     # ipdb.set_trace()
     state = gt_states[:, 0, :]
+    # state = env.reset(bsz=args.bsz)
     # state = torch.tensor([[0., 0., 0., 0.]], device=args.device)  
     # state = state.repeat(args.bsz, 1)
 
@@ -130,24 +135,25 @@ def main():
     input_hist = torch.tensor([])
 
     NRUNS = 50
-    ipdb.set_trace()
+    # ipdb.set_trace()
     for i in range(NRUNS):      
         obs_in = state.clone()
         # ipdb.set_trace()
-        obs_in[:, 1] = (obs_in[:, 1]) % (2*np.pi)
+        # obs_in[:, 1] = (obs_in[:, 1]) % (2*np.pi)
+        obs_in = env.state_clip(obs_in)
 
         policy_out = policy(obs_in, gt_states, gt_actions,
                             gt_mask, qp_solve=args.qp_solve, lastqp_solve=args.lastqp_solve)
         nominal_state_net, nominal_state, nominal_action = policy_out["trajs"][-1]
-        print("nominal states\n", nominal_state)
-        # print("nominal actions\n", nominal_action)     
-
+        # print("nominal states\n", nominal_state)
+        # print("nominal actions\n", nominal_action) 
+        ipdb.set_trace()
         u = nominal_action[:, 0, :]
         state = env.dynamics(state.to(torch.float64), u.to(torch.float64)).to(torch.float32)
         state_hist = torch.cat((state_hist, state[:,None,:]), dim=1)
-        # ipdb.set_trace()
         input_hist = torch.cat((input_hist, u[:,None,:]), dim=1)
         # print(x_ref)
+        
     
     # print(state_hist[:,-1,:])
     ipdb.set_trace()

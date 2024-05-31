@@ -1,7 +1,9 @@
 #!/bin/bash
 echo Starting training...
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name fcp_test --solver_type al --env FlyingCartpole --qp_solve --H 1 --hdim 512 --nq 7 --loss_type l1 --layer_type gcn --save
+# python train.py --deq --deq_iter 6 --bsz 200 --T 6 --name fcp_test --solver_type al --env FlyingCartpole --qp_solve --H 1 --hdim 512 --nq 7 --loss_type l1 --layer_type gcn
+
+python train.py --deq --deq_iter 6 --bsz 200 --T 6 --name fcp_ee --solver_type al --env FlyingCartpole --H 1 --hdim 512 --nq 7 --loss_type l1 --layer_type gcn --ckpt deq__FlyingCartpole_fcp_ee_T6_bsz200_deq_iter6_hdim512 --eval
 
 # --num_trajs_data 2
 
