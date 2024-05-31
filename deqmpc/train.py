@@ -87,7 +87,10 @@ def main():
         args1.bsz = 200
         args1.test = True
         args1.eval = True
+        args1.save = False
         args = args1
+        args.qp_solve = True
+        ipdb.set_trace()
     seeding(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     args.device = device if args.device is None else args.device

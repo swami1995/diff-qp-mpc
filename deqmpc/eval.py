@@ -122,7 +122,8 @@ def eval_policy(args, env, policy, gt_trajs):
 
     # initial state
     # ipdb.set_trace()
-    state = gt_states[:, 0, :]
+    # state = gt_states[:, 0, :]
+    state = env.reset(bsz=args.bsz)
     # state = torch.tensor([[0., 0., 0., 0.]], device=args.device)  
     # state = state.repeat(args.bsz, 1)
 

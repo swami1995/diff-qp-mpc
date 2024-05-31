@@ -872,13 +872,13 @@ class Tracking_MPC(torch.nn.Module):
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
             self.R = torch.ones(self.nu, dtype=self.dtype, device=self.device)
         self.Q = torch.cat([self.Q, self.R], dim=0).to(self.dtype)
-        self.aux_Q = self.Q*0.5
+        self.aux_Q = self.Q*0.2
         self.Q = torch.diag(self.Q).repeat(self.bsz, self.T, 1, 1)
         self.aux_Q[3:] = 0.0
         self.aux_x = torch.zeros_like(self.aux_Q)
         self.aux_x[:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.aux_x)
-        self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)
-        self.aux_p = -(self.aux_Q * self.aux_x.unsqueeze(-2)).sum(dim=-1)
+        self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)*0.0
+        self.aux_p = -(self.aux_Q * self.aux_x.unsqueeze(-2)).sum(dim=-1)*0.0
         
 
         self.u_init = torch.randn(
