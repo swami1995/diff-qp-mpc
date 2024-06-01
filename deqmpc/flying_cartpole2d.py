@@ -164,18 +164,20 @@ class FlyingCartpole(torch.nn.Module):
         self.dt = dt
         # self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [10.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
         self.Qlqr = torch.tensor([10.0]*3 + [0.0]*3 + [10.0] + [.0]*6 + [0]).to(device)#.unsqueeze(0)
-        self.Qaux = torch.tensor([0.0] + [0.0] + [.0] + [1.0]*3 + [.0] + [.1]*3 + [.1]*3 + [.1]).to(device)#.unsqueeze(0)
+        self.Qaux = torch.tensor([0.0] + [0.0] + [.0] + [.1]*3 + [.0] + [0.1]*3 + [0.1]*3 + [0.1]).to(device)#.unsqueeze(0)
   
         # self.Qlqr = torch.tensor([10.0]*3 + [0.01]*3 + [1.0]*3 + [0.01]*3).to(device)#.unsqueeze(0)
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         self.ubound = 1*self.dynamics.u_hover.cpu()[0]
         self.action_space = Spaces_np((self.control_dim,), np.array([2*self.ubound]*self.control_dim), np.array([-1*self.ubound]*self.control_dim)) #12.0
-        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
+        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),0.1,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
         # self.x_window = torch.tensor([0.1,0.1,0.1,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]).to(device)
-        self.targ_pos = torch.zeros(self.state_dim).to(self.device)
+        # self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         # self.targ_pos[0:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.device)
-        self.targ_pos[6] = np.pi # upright pendulum
+        # self.targ_pos[6] = np.pi # upright pendulum
+        self.targ_pos = torch.tensor([ 7.4720e-02, -1.3457e-01,  2.4619e-01,  0,  0,
+         0,  np.pi,  0,  0,  0, 0, 0, 0, 0]).to(self.device)
         self.spec_id = "FlyingCartpole-v0"
         self.saved_ckpt_name = "cgac_checkpoint_FlyingCartpole_swingup300_ub0.2x0.2x_L0.5_ent7.5_memfix_seed5_ok_consistent"
 

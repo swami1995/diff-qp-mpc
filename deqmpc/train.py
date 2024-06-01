@@ -84,7 +84,7 @@ def main():
         args1 = torch.load(args_file)
         args1.load = True
         args1.ckpt = args.ckpt
-        args1.bsz = 200
+        args1.bsz = 10
         args1.test = True
         args1.eval = True
         args1.save = False
@@ -94,11 +94,11 @@ def main():
     args.device = device if args.device is None else args.device
     if args.save:
         if (args.qp_solve):
-            method_name = f"deqmpc_" 
+            method_name = f"deqmpc" 
         elif (args.lastqp_solve):
-            method_name = f"diffmpc_"
+            method_name = f"diffmpc"
         else:
-            method_name = f"deq_"
+            method_name = f"deq"
         args.name = f"{method_name}_{args.env}_{args.name}" + \
             f"_T{args.T}_bsz{args.bsz}_deq_iter{args.deq_iter}_hdim{args.hdim}"
         # args.name = "trial"
