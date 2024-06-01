@@ -14,11 +14,13 @@ sys.path.insert(0, project_dir)
 import qpth.AL_mpc as mpc
 # import qpth.sl1qp_mpc as mpc
 import ipdb
+import argparse
 from envs import PendulumEnv, PendulumDynamics, IntegratorEnv, IntegratorDynamics
 from rex_quadrotor import RexQuadrotor
 from flying_cartpole2d import FlyingCartpole
 from my_envs.cartpole import CartpoleEnv, Cartpole2linkEnv
 from ppo_train import PPO, GaussianPolicy, CGACGaussianPolicy, CGACRunningMeanStd
+from policies import *
 import pickle
 from rexquad_utils import rk4
 
@@ -237,6 +239,23 @@ def get_pendulum_expert_traj_sac(env, num_traj):
     # ipdb.set_trace()
     return trajectories
 
+def check_termination(state, num_goals, goal, env):
+    """
+    Check if the state is within the goal region.
+    Args:
+        state: The state of the environment.
+        num_goals: The number of goals.
+        goal: The goal state.
+        env: The environment.
+    Returns:
+        A boolean value indicating if the state is within the goal region.
+    """
+    if torch.norm(state[0, :3] - goal[:3]) < 0.15 and (torch.norm(state[0, 6] - goal[6]) < 0.1):
+        num_goals += 1
+    else:
+        num_goals = 0
+    return num_goals
+
 def get_expert_traj_cgac(env, num_traj):
     """
     Get expert trajectories for pendulum environment using the saved CGAC checkpoint."""
@@ -251,28 +270,98 @@ def get_expert_traj_cgac(env, num_traj):
     reward_trajs = []
     while len(trajectories) < num_traj:
         state = env.reset()#.float()
+        num_goals = 0
         state_rms = rms_obs(state.float())
         traj = []
         done = False
         reward_traj = 0
-        goal_reached = False
-        goal_reached_count = 0
         while not done:
             action = policy.sample(state_rms)[2]
             next_state, reward, done, _ = env.step(action)
+            num_goals = check_termination(next_state, num_goals, env.targ_pos, env)
             traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
             state = next_state#.float()
             state_rms = rms_obs(state.float())
             reward_traj += reward
-            if (torch.norm(state - env.targ_pos) < 0.15):
-                goal_reached = True
-                goal_reached_count += 1
-                # ipdb.set_trace()
+            if num_goals > 5:
+                break
+        print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
+        # if reward_traj.item() < 100 and 'rexquadrotor' in env.spec_id:
+        #     continue
+        # if len(traj) < 150 and 'FlyingCartpole' in env.spec_id:
+        #     continue
+        trajectories.append(traj)
+        reward_trajs.append(reward_traj.item())
+        # ipdb.set_trace()
+    print(
+        f"Average reward: {np.mean(reward_trajs)}, Avg traj length: {np.mean([len(traj) for traj in trajectories])}"
+    )
+    # dynamics = lambda y: env.dynamics(y, torch.tensor(traj[0][1])[None])
+    # print(env.dynamics(torch.tensor(trajectories[0][0][0])[None], torch.tensor(trajectories[0][0][1])[None]) - torch.tensor(trajectories[0][1][0])[None])
+    # print(rk4(dynamics, torch.tensor(traj[0][0])[None], [0, env.dt]) - torch.tensor(traj[1][0])[None])
+    ipdb.set_trace()
+    return trajectories
+
+def get_expert_traj_cgac_mpc(env, num_traj):
+    """
+    Get expert trajectories for pendulum environment using the saved CGAC checkpoint."""
+    device = torch.device("cpu")#cuda" if True else "cpu")
+    policy = CGACGaussianPolicy(env.observation_space.shape[0], env.action_space.shape[0], [512,256], env.action_space, True).to(device)
+    rms_obs = CGACRunningMeanStd((env.observation_space.shape[0],), device=device).to(device)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--nq", type=int, default=7)  # observation (configurations) for the policy
+    parser.add_argument("--T", type=int, default=10)  # look-ahead horizon length (including current time step)
+    parser.add_argument("--H", type=int, default=1)  # observation history length (including current time step)
+    parser.add_argument("--qp_iter", type=int, default=2)
+    parser.add_argument("--eps", type=float, default=1e-2)
+    parser.add_argument("--warm_start", type=bool, default=True)
+    parser.add_argument("--bsz", type=int, default=1)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--solver_type", type=str, default='al')
+    parser.add_argument("--dtype", type=str, default="double")
+    args = parser.parse_args()
+    args.env = env
+    args.Q = env.Qlqr.to(args.device)
+    args.Qaux = env.Qaux.to(args.device)
+    args.R = env.Rlqr.to(args.device)
+
+    mpc_policy = Tracking_MPC(args, env).to(device)
+    # checkpoint = torch.load("/home/sgurumur/locuslab/pytorch-soft-actor-critic/checkpoints/sac_checkpoint_Pendulum-v0_bestT200")
+    checkpoint = torch.load(f"ckpts/cgac/{env.saved_ckpt_name}")
+    policy.load_state_dict(checkpoint["policy_state_dict"])
+    rms_obs.load_state_dict(checkpoint["rms_obs"])
+    trajectories = []
+    reward_trajs = []
+    goal = env.targ_pos
+    while len(trajectories) < num_traj:
+        state = env.reset()#.float()
+        num_goals = 0
+        state_rms = rms_obs(state.float())
+        traj = []
+        done = False
+        reward_traj = 0
+        while not done:
+            switch = (torch.norm(state[0, 6] - goal[6]) < 0.2) and (torch.norm(state[0, 13] - goal[13]) < 0.3)
+            if switch:   
+                print("switching to MPC...")
+                x_ref = goal.repeat(args.T, 1)
+                mpc_policy.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1))
+                u_ref = torch.zeros(args.T, env.nu)
+                xu_ref = torch.cat([x_ref, u_ref], dim=-1)
+                _, nominal_actions = mpc_policy(state, xu_ref, x_ref, u_ref, al_iters=5)
+                action = nominal_actions[0][0].unsqueeze(0)
+                # ipdb.set_trace()       
             else:
-                goal_reached = False
-                goal_reached_count = 0
-            if goal_reached_count >= 2:
-                done = True
+                action = policy.sample(state_rms)[2]
+            next_state, reward, done, _ = env.step(action)
+            num_goals = check_termination(next_state, num_goals, goal, env)
+            traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
+            state = next_state#.float()
+            state_rms = rms_obs(state.float())
+            reward_traj += reward
+            if num_goals > 5:
+                break
         print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
         # if reward_traj.item() < 100 and 'rexquadrotor' in env.spec_id:
         #     continue
@@ -313,13 +402,13 @@ def save_expert_traj(env, num_traj, type="mpc"):
         else:
             raise NotImplementedError
     elif type == "cgac":
-        expert_traj = get_expert_traj_cgac(env, num_traj)
+        expert_traj = get_expert_traj_cgac_mpc(env, num_traj)
 
     ## save expert trajectories to a file in data folder
     if os.path.exists("data") == False:
         os.makedirs("data")
 
-    with open(f"data/expert_traj_{type}-{env.spec_id}-clip_new.pkl", "wb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-clip_new.pkl", "wb") as f:
         pickle.dump(expert_traj, f)
 
 
