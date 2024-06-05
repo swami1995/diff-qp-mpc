@@ -163,8 +163,8 @@ class FlyingCartpole(torch.nn.Module):
         self.device = device
         self.dt = dt
         # self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [10.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
-        self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [10.0] + [1.0]*6 + [1]).to(device)#.unsqueeze(0)
-        self.Qaux = torch.tensor([0.0] + [0.0] + [.0] + [.0]*3 + [.0] + [0.0]*3 + [0.0]*3 + [0.0]).to(device)#.unsqueeze(0)
+        self.Qlqr = torch.tensor([10.0]*3 + [0.0]*3 + [10.0] + [.0]*6 + [0]).to(device)#.unsqueeze(0)
+        self.Qaux = torch.tensor([0.0] + [0.0] + [.0] + [1.0]*3 + [.0] + [0.1]*3 + [0.1]*3 + [0.1]).to(device)#.unsqueeze(0)
   
         # self.Qlqr = torch.tensor([10.0]*3 + [0.01]*3 + [1.0]*3 + [0.01]*3).to(device)#.unsqueeze(0)
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)

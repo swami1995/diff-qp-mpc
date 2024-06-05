@@ -342,14 +342,14 @@ def get_expert_traj_cgac_mpc(env, num_traj):
         done = False
         reward_traj = 0
         while not done:
-            switch = (torch.norm(state[0, 6] - goal[6]) < 0.2) and (torch.norm(state[0, 13] - goal[13]) < 0.3)
+            switch = (torch.norm(state[0, 6] - goal[6]) < 0.15) and (torch.norm(state[0, 13] - goal[13]) < 0.25)
             if switch:   
                 print("switching to MPC...")
                 x_ref = goal.repeat(args.T, 1)
                 mpc_policy.reinitialize(x_ref, torch.ones(args.bsz, args.T, 1))
                 u_ref = torch.zeros(args.T, env.nu)
                 xu_ref = torch.cat([x_ref, u_ref], dim=-1)
-                _, nominal_actions = mpc_policy(state, xu_ref, x_ref, u_ref, al_iters=5)
+                _, nominal_actions = mpc_policy(state, xu_ref, x_ref, u_ref, al_iters=10)
                 action = nominal_actions[0][0].unsqueeze(0)
                 # ipdb.set_trace()       
             else:
@@ -376,7 +376,7 @@ def get_expert_traj_cgac_mpc(env, num_traj):
     # dynamics = lambda y: env.dynamics(y, torch.tensor(traj[0][1])[None])
     # print(env.dynamics(torch.tensor(trajectories[0][0][0])[None], torch.tensor(trajectories[0][0][1])[None]) - torch.tensor(trajectories[0][1][0])[None])
     # print(rk4(dynamics, torch.tensor(traj[0][0])[None], [0, env.dt]) - torch.tensor(traj[1][0])[None])
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return trajectories
 
 def save_expert_traj(env, num_traj, type="mpc"):
@@ -408,7 +408,7 @@ def save_expert_traj(env, num_traj, type="mpc"):
     if os.path.exists("data") == False:
         os.makedirs("data")
 
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-clip_new.pkl", "wb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-stab-clip_new.pkl", "wb") as f:
         pickle.dump(expert_traj, f)
 
 
@@ -423,7 +423,7 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub2-clip-stab_new.pkl", "rb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-stab-clip_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     return gt_trajs
