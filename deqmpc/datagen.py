@@ -237,6 +237,26 @@ def get_pendulum_expert_traj_sac(env, num_traj):
     # ipdb.set_trace()
     return trajectories
 
+def check_termination(state, num_goals, goal, env, done_traj):
+    """
+    Check if the state is within the goal region.
+    Args:
+        state: The state of the environment.
+        num_goals: The number of goals.
+        goal: The goal state.
+        env: The environment.
+    Returns:
+        A boolean value indicating if the state is within the goal region.
+    """
+    # if torch.norm(state[0, :3] - goal[:3]) < 0.15 and ((state[0, 6] - goal[6]) < 0.1):
+    #     num_goals += 1
+    # else:
+    #     num_goals = 0
+    mask = torch.logical_and(torch.norm(state[:, :3] - goal[None,:3]) < 0.15, ((state[:, 6] - goal[None,6]) < 0.1))
+    num_goals = torch.where(done_traj, num_goals, torch.where(mask, num_goals + 1, torch.zeros_like(num_goals)))
+    # if mask.float().mean() > 0:
+    #     print(mask.mean())
+    return num_goals*0
 def get_expert_traj_cgac(env, num_traj):
     """
     Get expert trajectories for pendulum environment using the saved CGAC checkpoint."""
@@ -251,24 +271,42 @@ def get_expert_traj_cgac(env, num_traj):
     reward_trajs = []
     while len(trajectories) < num_traj:
         state = env.reset()#.float()
+        bsz = env.bsz
+        num_goals = torch.zeros(bsz)
         state_rms = rms_obs(state.float())
-        traj = []
+        traj = [[] for _ in range(bsz)]
+        states = []
         done = False
-        reward_traj = 0
-        while not done:
+        reward_traj = torch.zeros(bsz)
+        done_traj = torch.zeros(bsz, dtype=torch.bool)
+        while not done_traj.all():
             action = policy.sample(state_rms)[2]
+            # ipdb.set_trace()
             next_state, reward, done, _ = env.step(action)
-            traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
+            num_goals = check_termination(next_state, num_goals, env.goal, env, done_traj)
+            for i in range(bsz):
+                if done_traj[i]:
+                    continue
+                traj[i].append((state[i].detach().cpu().numpy(), action[i].detach().cpu().numpy()))
+                reward_traj[i] += reward[i]
+            states.append(state.detach().cpu().numpy())
             state = next_state#.float()
             state_rms = rms_obs(state.float())
-            reward_traj += reward
-        print(f"Trajectory length: {len(traj)}, reward: {reward_traj.item()}")
-        if reward_traj.item() < 100 and 'rexquadrotor' in env.spec_id:
-            continue
-        if len(traj) < 150 and 'FlyingCartpole' in env.spec_id:
-            continue
-        trajectories.append(traj)
-        reward_trajs.append(reward_traj.item())
+            
+            done_traj = torch.logical_or(torch.logical_or(done_traj, num_goals > 10), done)
+            # if (num_goals > 10).all():
+            #     break
+        # states = np.stack(states, axis=1)
+        # ipdb.set_trace()
+        print(f"Trajectory length: {np.mean([len(traj[i]) for i in range(bsz)])}, reward: {reward_traj.mean().item()}")
+        if 'rexquadrotor' in env.spec_id:
+            mask = reward_traj.item() >= 100
+        if 'FlyingCartpole' in env.spec_id:
+            mask = num_goals >= -10 #and len(traj) < 150
+        for i in range(bsz):
+            if mask[i]:
+                trajectories.append(traj[i])
+                reward_trajs.append(reward_traj[i].item())
     print(
         f"Average reward: {np.mean(reward_trajs)}, Avg traj length: {np.mean([len(traj) for traj in trajectories])}"
     )
@@ -307,7 +345,7 @@ def save_expert_traj(env, num_traj, type="mpc"):
     if os.path.exists("data") == False:
         os.makedirs("data")
 
-    with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "wb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub03-clip-s_new.pkl", "wb") as f:
         pickle.dump(expert_traj, f)
 
 
@@ -322,10 +360,13 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-full-clip_new.pkl", "rb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub03-clip-s_new.pkl", "rb") as f:
     # with open(f"data/expert_traj_{type}-{env.spec_id}-ub2_new.pkl", "rb") as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub2-clip_new.pkl", "rb") as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}-ub2-clip_new.pkl", "rb") as f:
     # with open(f"data/expert_traj_{type}-{env.spec_id}-swing_new.pkl", "rb") as f:
     # with open(f"data/expert_traj_{type}-{env.spec_id}_new.pkl", "rb") as f:
+    # with open(f"data/expert_traj_{type}-{env.spec_id}-ub2-clip-stab_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     # gt_trajs = [traj for traj in gt_trajs if len(traj) > 199]
@@ -591,7 +632,7 @@ if __name__ == "__main__":
     # env = CartpoleEnv(nx=4, dt=0.05, stabilization=False, kwargs=kwargs)
     # ipdb.set_trace()
     # env = Cartpole2linkEnv(dt=0.05, stabilization=False, kwargs=kwargs)
-    env = FlyingCartpole(bsz=1, max_steps=200)
+    env = FlyingCartpole(bsz=100, max_steps=200)
     # env = IntegratorEnv()
     # save_expert_traj(env, 300, "sac")
     # save_expert_traj(env, 2, "mpc")

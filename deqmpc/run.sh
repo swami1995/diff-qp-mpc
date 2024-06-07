@@ -1,7 +1,21 @@
 #!/bin/bash
 echo Starting training...
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_mpcxyzRegcost --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --lastqp_solve 
+python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeq_andersongoodgradlast_addmemzsimple_03data --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --grad_type last_step_grad --fp_type anderson --addmem --qp_solve
+
+# python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeq_singlebptt_03data --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --save --loss_type l1 --layer_type gcn --grad_type bptt --fp_type single --qp_solve
+
+# python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_mpcxyzRegcostpolepos_clipstab --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --qp_solve --eval --load --ckpt deqmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcostpolepos_clipstab_T5_bsz200_deq_iter6_hdim256
+
+# deqmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcostpolepos_T5_bsz200_deq_iter6_hdim256
+# diffmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcostpolepos_T5_bsz200_deq_iter6_hdim256
+# diffmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcostpolepos_clipstab_T5_bsz200_deq_iter6_hdim256
+# deqmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcostpolepos_clipstab_T5_bsz200_deq_iter6_hdim256
+# deqmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcost_T5_bsz200_deq_iter6_hdim256
+# diffmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcost_T5_bsz200_deq_iter6_hdim256
+# diffmpc__FlyingCartpole_lr1e3_ineqfix_T5_bsz200_deq_iter6_hdim256
+# deqmpc__FlyingCartpole_lr1e3_ineqfix_T5_bsz200_deq_iter6_hdim256
+
 
 # --load --ckpt deqmpc__FlyingCartpole_lr1e3_ineqfix_T5_bsz200_deq_iter6_hdim256 --eval
 

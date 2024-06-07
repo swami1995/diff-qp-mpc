@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import ipdb
-
+import argparse
 
 # def animate_pendulum(env, theta, torque):
 #     """
@@ -46,6 +46,12 @@ import ipdb
 
 #     # Display the animation
 #     plt.show()
+
+def merge_args(args1, args2):
+    dict_args1 = vars(args1)
+    dict_args2 = vars(args2)
+    dict_args2.update(dict_args1)
+    return argparse.Namespace(**dict_args2)
 
 def animate_pendulum(X, nq=1):
     # get a random starting state between min state and max state

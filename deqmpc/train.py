@@ -21,7 +21,7 @@ import torch.autograd as autograd
 from deq_layer_utils import update_scales
 from eval import eval_policy
 
-# torch.set_default_device('cuda')
+torch.set_default_device('cuda')
 np.set_printoptions(precision=4, suppress=True)
 # import tensorboard from pytorch
 
@@ -78,6 +78,17 @@ def main():
     parser.add_argument("--num_trajs_data", type=int, default=1000000)
     parser.add_argument("--eval", action="store_true")
 
+    # DEQ specific arguments
+    parser.add_argument("--fp_type", type=str, default='anderson', choices=['single', 'multi', 'broyden', 'anderson'])
+    parser.add_argument("--inner_deq_iters", type=int, default=4)
+    parser.add_argument("--grad_type", type=str, default='fp_grad', choices=['fp_grad', 'last_step_grad', 'bptt'])
+    parser.add_argument("--addmem", action="store_true")
+    # Anderson/Broyden parameters
+    parser.add_argument("--m", type=int, default=5)
+    parser.add_argument("--max_steps", type=float, default=10)
+    parser.add_argument("--acc_type", type=str, default='good', choices=['good', 'bad'])
+
+
     args = parser.parse_args()
     if args.eval:
         args_file = "./logs/" + args.ckpt + "/args"
@@ -88,8 +99,10 @@ def main():
         args1.test = True
         args1.eval = True
         args1.save = False
-        args = args1
-        args.qp_solve = True
+        args1.qp_solve = args.qp_solve
+        args1.lastqp_solve = args.lastqp_solve
+        args = utils.merge_args(args, args1)
+        
         ipdb.set_trace()
     seeding(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -217,6 +230,7 @@ def main():
     losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
     losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
     losses_iter_hist = [[] for _ in range(args.deq_iter)]
+    deq_stats = {"fwd_err": [[] for _ in range(args.deq_iter)], "fwd_steps": [[] for _ in range(args.deq_iter)]}
 
     # run imitation learning using gt_trajs
     for i in range(20000):
@@ -308,6 +322,9 @@ def main():
         [losses_iter_opt[k].append(loss_dict["losses_iter_opt"][k]) for k in range(args.deq_iter)]
         [losses_iter_nn[k].append(loss_dict["losses_iter_nn"][k]) for k in range(args.deq_iter)]
         [losses_iter_base[k].append(loss_dict["losses_iter_base"][k]) for k in range(args.deq_iter)]
+        if "deq_stats" in policy_out:
+            [deq_stats["fwd_err"][k].append(policy_out["deq_stats"]["fwd_err"][k].item()) for k in range(args.deq_iter)]
+            [deq_stats["fwd_steps"][k].append(policy_out["deq_stats"]["fwd_steps"][k].item()) for k in range(args.deq_iter)]
         if 'nominal_x_ests' in policy_out:
             [losses_iter_hist[k].append(loss_dict['losses_x_ests'][k]) for k in range(args.deq_iter)]
         if 'q_scaling' in policy_out:
@@ -350,7 +367,8 @@ def main():
                 [writer.add_scalar(f"losses_var/losses_var{k}", np.mean(losses_var[k]), i) for k in range(len(losses_var))]
                 [writer.add_scalar(f"losses_q/losses_q{k}", np.mean(loss_iter_q[k]), i) for k in range(len(loss_iter_q))]
                 [writer.add_scalar(f"losses_hist/losses_hist{k}", np.mean(losses_iter_hist[k]), i) for k in range(len(losses_iter_hist))]
-
+                [writer.add_scalar(f"deq_stats/fwd_err{k}", np.mean(deq_stats["fwd_err"][k]), i) for k in range(args.deq_iter)]
+                [writer.add_scalar(f"deq_stats/fwd_steps{k}", np.mean(deq_stats["fwd_steps"][k]), i) for k in range(args.deq_iter)]
 
             losses = []
             losses_end = []
@@ -361,6 +379,7 @@ def main():
             losses_iter_nocoeff = [[] for _ in range(args.deq_iter)]
             losses_proxy_iter_nocoeff = [[] for _ in range(args.deq_iter)]
             losses_iter_hist = [[] for _ in range(args.deq_iter)]
+            deq_stats = {"fwd_err": [[] for _ in range(args.deq_iter)], "fwd_steps": [[] for _ in range(args.deq_iter)]}
 
 
             # print('nominal states: ', nominal_states)

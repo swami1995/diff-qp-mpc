@@ -1,4 +1,4 @@
-import numpy as nq
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.autograd as autograd
@@ -88,8 +88,12 @@ class DEQMPCPolicy(torch.nn.Module):
         self.deq_reg = args.deq_reg
         self.device = args.device
         self.deq_iter = args.deq_iter
-        self.model = DEQLayer(args, env)  #TODO different types
         # self.model = DEQLayerDelta(args, env)
+        self.addmem = args.addmem
+        if args.addmem:
+            self.model = DEQLayerMem(args, env)
+        else:
+            self.model = DEQLayer(args, env)  #TODO different types
         self.model.to(self.device)
         self.out_type = args.policy_out_type  # output type of policy
         self.loss_type = args.loss_type  # loss type for policy
@@ -117,6 +121,9 @@ class DEQMPCPolicy(torch.nn.Module):
 
         out_aux_dict = {"z": z, "x": x_ref, 'u': nominal_actions}
 
+        if self.addmem:
+            out_aux_dict["mem"] = self.model.init_mem(x.shape[0])
+
         if self.args.solver_type == "al":
             self.tracking_mpc.reinitialize(x, mask[:, :, None])
     
@@ -129,7 +136,8 @@ class DEQMPCPolicy(torch.nn.Module):
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
         deq_iter = self.deq_iter   
         opt_from_iter = 0
-
+        deq_stats = {"fwd_steps": [], "fwd_err": []}
+        # ipdb.set_trace()
         trajs = []
         scales = []
         for i in range(deq_iter):
@@ -162,9 +170,13 @@ class DEQMPCPolicy(torch.nn.Module):
                 # scales.append(out_mpc_dict["s"].detach().clone().mean().item())
                 # Only supervise DEQ training or joint iterations for DEQMPC
                 trajs.append((nominal_states_net, nominal_states, nominal_actions))
-
-        dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
-        ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
+            
+            if "deq_fwd_err" in out_aux_dict and out_aux_dict["deq_fwd_err"] is not None:
+                deq_stats["fwd_err"].append(out_aux_dict["deq_fwd_err"])
+                deq_stats["fwd_steps"].append(out_aux_dict["deq_fwd_steps"])
+        dyn_res = ((self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
+        ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, self.T-1, -1).norm(dim=-1)*mask[:, :-1]).norm(dim=-1).mean().item()
+        # ipdb.set_trace()
         self.network_time = []
         self.mpc_time = []
 
@@ -172,7 +184,9 @@ class DEQMPCPolicy(torch.nn.Module):
             nominal_states, nominal_actions = self.tracking_mpc(
                 x_t, xu_ref, x_ref, u_ref, al_iters=10)
             trajs[-1] = (nominal_states_net, nominal_states, nominal_actions)        
-        policy_out = {"trajs": trajs, "dyn_res": dyn_res, "scales": scales}    
+        policy_out = {"trajs": trajs, "dyn_res": dyn_res, "scales": scales}
+        if len(deq_stats["fwd_err"]) > 0:
+            policy_out["deq_stats"] = deq_stats
         return policy_out
 
 class DEQMPCPolicyHistory(DEQMPCPolicy):
@@ -495,7 +509,7 @@ def compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out, coef
         residuals.append(res)
     ### compute iteration weights based on previous losses and compute example weights based on net residuals
     ### iteration weights
-    ipdb.set_trace()
+    # ipdb.set_trace()
     residuals = torch.stack(residuals, dim=1)
     weight_mask = gt_mask.sum(dim=1) == 1
     iter_weights = 5**(torch.log(residuals[:,:1]/(10*residuals[:,:-1])))
@@ -872,15 +886,31 @@ class Tracking_MPC(torch.nn.Module):
             # self.Qf = torch.ones(self.nx, dtype=torch.float32, device=self.device)
             self.R = torch.ones(self.nu, dtype=self.dtype, device=self.device)
         self.Q = torch.cat([self.Q, self.R], dim=0).to(self.dtype)
-        self.aux_Q = self.Q*0.2
-        self.Q = torch.diag(self.Q).repeat(self.bsz, self.T, 1, 1)
-        self.aux_Q[3:] = 0.0
-        self.aux_x = torch.zeros_like(self.aux_Q)
-        self.aux_x[:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.aux_x)
-        self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)*0.0
-        self.aux_p = -(self.aux_Q * self.aux_x.unsqueeze(-2)).sum(dim=-1)*0.0
-        
+        self.aux_cost = ''#polepos'#quad_pos'
+        if self.aux_cost == 'quad_pos':
+            self.aux_Q = self.Q*0.2
+            self.aux_Q[3:] = 0.0
+            self.aux_x = torch.zeros_like(self.aux_Q)
+            self.aux_x[:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.aux_x)
+            self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)
+            self.aux_p = -(self.aux_Q * self.aux_x.unsqueeze(-2)).sum(dim=-1)
+            self.q_mask = torch.ones(self.bsz, dtype=self.dtype, device=self.device)
+        elif self.aux_cost == 'polepos':
+            self.aux_Q = self.Q*0.5
+            self.aux_Q[:6] = 0.0
+            self.aux_Q[7:] = 0.0
+            self.aux_x = torch.zeros_like(self.aux_Q)
+            self.aux_x[6] = np.pi
+            self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)
+            self.aux_p = -(self.aux_Q * self.aux_x.unsqueeze(-2)).sum(dim=-1)
+            self.q_mask = torch.ones(self.bsz, dtype=self.dtype, device=self.device)
+        else:
+            self.aux_Q = self.Q*0.2
+            self.aux_p = torch.zeros_like(self.aux_Q)
+            self.aux_Q = torch.diag(self.aux_Q).repeat(self.bsz, self.T, 1, 1)*0.0
+            self.q_mask = torch.ones(self.bsz, dtype=self.dtype, device=self.device)
 
+        self.Q = torch.diag(self.Q).repeat(self.bsz, self.T, 1, 1)
         self.u_init = torch.randn(
             self.bsz, self.T, self.nu, dtype=self.dtype, device=self.device
         )
@@ -939,6 +969,8 @@ class Tracking_MPC(torch.nn.Module):
             Q = self.Q * q_scaling[:,:,None,None]
         else:
             Q = self.Q
+        # self.q_mask = torch.logical_and((x0[:, 6] - np.pi).abs() < 0.1 , (x0[:, -1]).abs() < 0.3).float()
+        aux_Q = self.aux_Q*self.q_mask[:, None, None, None]
         self.compute_p(xu_ref, Q)
         Q = Q + self.aux_Q
         # ipdb.set_trace()
@@ -971,7 +1003,7 @@ class Tracking_MPC(torch.nn.Module):
         # self.p[:, :, : self.nx] = -(
         #     self.Q[:, :, : self.nx, : self.nx] * x_ref.unsqueeze(-2)
         # ).sum(dim=-1)
-        self.p = -(Q * x_ref.unsqueeze(-2)).sum(dim=-1) + self.aux_p
+        self.p = -(Q * x_ref.unsqueeze(-2)).sum(dim=-1) + self.aux_p*self.q_mask[:, None, None]
         return self.p
 
     def reinitialize(self, x, mask):
