@@ -311,7 +311,7 @@ def get_expert_traj_cgac_mpc(env, num_traj):
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--nq", type=int, default=7)  # observation (configurations) for the policy
-    parser.add_argument("--T", type=int, default=10)  # look-ahead horizon length (including current time step)
+    parser.add_argument("--T", type=int, default=20)  # look-ahead horizon length (including current time step)
     parser.add_argument("--H", type=int, default=1)  # observation history length (including current time step)
     parser.add_argument("--qp_iter", type=int, default=2)
     parser.add_argument("--eps", type=float, default=1e-2)
@@ -342,7 +342,7 @@ def get_expert_traj_cgac_mpc(env, num_traj):
         done = False
         reward_traj = 0
         while not done:
-            switch = (torch.norm(state[0, 6] - goal[6]) < 0.15) and (torch.norm(state[0, 13] - goal[13]) < 0.25)
+            switch = (torch.norm(state[0, 6] - goal[6]) < 0.3) and (torch.norm(state[0, 13] - goal[13]) < 0.5)
             if switch:   
                 print("switching to MPC...")
                 x_ref = goal.repeat(args.T, 1)
@@ -351,9 +351,10 @@ def get_expert_traj_cgac_mpc(env, num_traj):
                 xu_ref = torch.cat([x_ref, u_ref], dim=-1)
                 _, nominal_actions = mpc_policy(state, xu_ref, x_ref, u_ref, al_iters=10)
                 action = nominal_actions[0][0].unsqueeze(0)
-                # ipdb.set_trace()       
+            # ipdb.set_trace()          
             else:
                 action = policy.sample(state_rms)[2]
+            action = torch.clamp(action, env.action_space.low, env.action_space.high)
             next_state, reward, done, _ = env.step(action)
             num_goals = check_termination(next_state, num_goals, goal, env)
             traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
@@ -367,6 +368,8 @@ def get_expert_traj_cgac_mpc(env, num_traj):
         #     continue
         # if len(traj) < 150 and 'FlyingCartpole' in env.spec_id:
         #     continue
+        if len(traj) >= 199:
+            continue
         trajectories.append(traj)
         reward_trajs.append(reward_traj.item())
         # ipdb.set_trace()
@@ -376,7 +379,7 @@ def get_expert_traj_cgac_mpc(env, num_traj):
     # dynamics = lambda y: env.dynamics(y, torch.tensor(traj[0][1])[None])
     # print(env.dynamics(torch.tensor(trajectories[0][0][0])[None], torch.tensor(trajectories[0][0][1])[None]) - torch.tensor(trajectories[0][1][0])[None])
     # print(rk4(dynamics, torch.tensor(traj[0][0])[None], [0, env.dt]) - torch.tensor(traj[1][0])[None])
-    # ipdb.set_trace()
+    ipdb.set_trace()
     return trajectories
 
 def save_expert_traj(env, num_traj, type="mpc"):

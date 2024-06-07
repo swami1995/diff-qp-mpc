@@ -162,16 +162,18 @@ class FlyingCartpole(torch.nn.Module):
         # self.x = self.reset()
         self.device = device
         self.dt = dt
-        # self.Qlqr = torch.tensor([10.0]*3 + [10.0]*3 + [10.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
-        self.Qlqr = torch.tensor([10.0]*3 + [0.0]*3 + [10.0] + [.0]*6 + [0]).to(device)#.unsqueeze(0)
-        self.Qaux = torch.tensor([0.0] + [0.0] + [.0] + [1.0]*3 + [.0] + [0.1]*3 + [0.1]*3 + [0.1]).to(device)#.unsqueeze(0)
+        self.Qlqr = torch.tensor([1.0]*3 + [1.0]*3 + [100.0] + [1.0]*6 + [1.0]).to(device)#.unsqueeze(0)
+        # self.Qlqr = torch.tensor([10.0]*3 + [0.0]*3 + [10.0] + [.0]*6 + [0]).to(device)#.unsqueeze(0)
+        self.Qaux = torch.tensor([0.0] + [0.0] + [.0] + [.0]*3 + [.0] + [0.0]*3 + [0.0]*3 + [0.0]).to(device)#.unsqueeze(0)
   
         # self.Qlqr = torch.tensor([10.0]*3 + [0.01]*3 + [1.0]*3 + [0.01]*3).to(device)#.unsqueeze(0)
         self.Rlqr = torch.tensor([1e-8]*self.control_dim).to(device)#.unsqueeze(0)
         self.observation_space = Spaces_np((self.state_dim,))
         self.ubound = 1*self.dynamics.u_hover.cpu()[0]
         self.action_space = Spaces_np((self.control_dim,), np.array([0.3*self.ubound]*self.control_dim), np.array([-0.3*self.ubound]*self.control_dim)) #12.0
-        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),0.1,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
+        # ipdb.set_trace()
+        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).to(device)
+        # self.x_window = torch.tensor([0.0,0.0,0.0,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,.0,.0,.0,.0,.0,.0,.0]).to(device)
         # self.x_window = torch.tensor([0.1,0.1,0.1,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         # self.targ_pos[0:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.device)
@@ -307,8 +309,8 @@ class FlyingCartpole(torch.nn.Module):
         elif len(x_window.shape) == 1:
             x_window = x_window.unsqueeze(0)
         x = (torch.rand((bsz, self.state_dim))*2-1).to(self.x_window)*self.x_window 
-        x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), x[:, 6:]], dim=-1) #quat2mrp
-        x = self.state_clip(x)
+        x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), np.pi + x[:, 6:7], x[:, 7:]], dim=-1) #quat2mrp
+        # x = self.state_clip(x)
         if reset_ids is not None:
             self.x[reset_ids] = x
         else:

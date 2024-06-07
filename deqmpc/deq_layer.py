@@ -252,6 +252,60 @@ class DEQLayer(torch.nn.Module):
         elif self.layer_type == "gat":
             NotImplementedError
 
+class DEQBCLayer(DEQLayer):
+    def __init__(self, args, env):
+        super().__init__(args, env)
+
+    def forward(self, in_obs_dict, in_aux_dict):
+        obs, a_prev, z, iter = in_obs_dict["o"], in_aux_dict["u"], in_aux_dict["z"], in_aux_dict["iter"]
+        bsz = obs.shape[0]
+        _obs = obs.reshape(bsz, self.nx)
+        _re = a_prev.reshape(bsz, self.nu)
+        _input = torch.cat([_re, _obs], dim=-1)
+        _input1 = self.input_layer(_input)
+        z_out = self.deq_layer(_input1, z + self.embedding_params[iter][None])
+        u_out = self.output_layer(z_out)
+        # ipdb.set_trace()
+        u_out = u_out.reshape(-1, 1, self.nu)
+        # ipdb.set_trace()
+        out_mpc_dict = {"u": u_out}
+        out_aux_dict = {"u": u_out, "z": z_out}
+        return out_mpc_dict, out_aux_dict
+    
+    def input_layer(self, input):
+        if self.layer_type == "mlp":
+            inp = self.inp_layer(input)
+        elif self.layer_type == "gcn":
+            NotImplementedError
+        elif self.layer_type == "gat":
+            NotImplementedError
+        return inp
+    
+    def setup_input_layer(self):
+        self.in_dim = self.nu + self.nx
+        if self.layer_type == "mlp":
+            self.inp_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.in_dim, self.hdim),
+                torch.nn.LayerNorm(self.hdim),
+                # torch.nn.ReLU()
+            )
+        elif self.layer_type == "gcn":
+            NotImplementedError
+        elif self.layer_type == "gat":
+            NotImplementedError
+
+    def setup_output_layer(self):
+        self.out_dim = self.nu
+        if self.layer_type == "mlp":
+            self.out_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.hdim, self.out_dim)
+            )
+            self.gradnorm = GradNormLayer(self.out_dim)
+        elif self.layer_type == "gcn":
+            NotImplementedError
+        elif self.layer_type == "gat":
+            NotImplementedError
+
 class DEQLayerEE(DEQLayer):
     def __init__(self, args, env):
         super().__init__(args, env)
