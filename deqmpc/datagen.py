@@ -411,7 +411,7 @@ def save_expert_traj(env, num_traj, type="mpc"):
     if os.path.exists("data") == False:
         os.makedirs("data")
 
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-stab-clip_new.pkl", "wb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-swing-clip_new.pkl", "wb") as f:
         pickle.dump(expert_traj, f)
 
 
@@ -426,7 +426,7 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-stab-clip_new.pkl", "rb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-swing-clip_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
     # ipdb.set_trace()
     return gt_trajs

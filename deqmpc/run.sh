@@ -5,7 +5,7 @@ echo Starting training...
 
 # python train.py --deq --deq_iter 6 --bsz 200 --T 10 --name fcp_ee --solver_type al --env FlyingCartpole --H 1 --hdim 512 --nq 7 --loss_type l1 --layer_type gcn --ckpt deqmpc_FlyingCartpole_fcp_test_ub2-clip-stab_T6_bsz200_deq_iter6_hdim512 --eval
 
-python train.py --deq --bc --deq_iter 6 --bsz 200 --T 10 --name stab_l2 --env FlyingCartpole --H 1 --hdim 256 --nq 7 --loss_type l1 --layer_type mlp --save --ckpt deqbc_FlyingCartpole_stab_l2_T10_bsz200_deq_iter6_hdim256 --eval
+python train.py --deq --bc --deq_iter 6 --bsz 200 --T 200 --name swing_l1_no-emb --env FlyingCartpole --H 1 --hdim 256 --nq 7 --loss_type l1 --layer_type mlp --save --ckpt deqbc_FlyingCartpole_swing_l1_no-emb_T200_bsz200_deq_iter6_hdim256 --eval
 
 # --num_trajs_data 2
 

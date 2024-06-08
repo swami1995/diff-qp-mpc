@@ -172,9 +172,9 @@ class FlyingCartpole(torch.nn.Module):
         self.ubound = 1*self.dynamics.u_hover.cpu()[0]
         self.action_space = Spaces_np((self.control_dim,), np.array([0.3*self.ubound]*self.control_dim), np.array([-0.3*self.ubound]*self.control_dim)) #12.0
         # ipdb.set_trace()
-        self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).to(device)
+        # self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).to(device)
         # self.x_window = torch.tensor([0.0,0.0,0.0,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,.0,.0,.0,.0,.0,.0,.0]).to(device)
-        # self.x_window = torch.tensor([0.1,0.1,0.1,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]).to(device)
+        self.x_window = torch.tensor([0.1,0.1,0.1,deg2rad(5.0),deg2rad(5.0),deg2rad(5.0),0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         # self.targ_pos[0:3] = torch.tensor([7.4720e-02, -1.3457e-01,  2.4619e-01]).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum
@@ -309,7 +309,7 @@ class FlyingCartpole(torch.nn.Module):
         elif len(x_window.shape) == 1:
             x_window = x_window.unsqueeze(0)
         x = (torch.rand((bsz, self.state_dim))*2-1).to(self.x_window)*self.x_window 
-        x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), np.pi + x[:, 6:7], x[:, 7:]], dim=-1) #quat2mrp
+        x = torch.cat([x[:,:3], quat2mrp(euler_to_quaternion(x[:, 3:6])), 0*np.pi + x[:, 6:7], x[:, 7:]], dim=-1) #quat2mrp
         # x = self.state_clip(x)
         if reset_ids is not None:
             self.x[reset_ids] = x

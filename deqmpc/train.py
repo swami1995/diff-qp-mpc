@@ -238,10 +238,10 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        elif args.env == "FlyingCartpole":
-            traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
-            traj_sample["state"])
-            traj_sample["obs"] = utils.unnormalize_states_flyingcartpole(traj_sample["obs"])
+        # elif args.env == "FlyingCartpole":
+        #     traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
+        #     traj_sample["state"])
+        #     traj_sample["obs"] = utils.unnormalize_states_flyingcartpole(traj_sample["obs"])
         # ipdb.set_trace()
         pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations

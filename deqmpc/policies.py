@@ -753,10 +753,10 @@ def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out):
     loss = 0.0
     loss_j = 0.0
     for j, (action) in enumerate(actions):
-        loss_j = torch.norm((action - gt_actions[:,0:1,:]) * gt_mask[:, :, None], dim=-1).mean()
-        # loss_j = torch.abs((action - gt_actions[:,0:1,:]) * gt_mask[:, :, None]).sum(dim=-1).mean()
-        # loss += torch.abs((action - gt_actions[:,0:1,:]) *
-        #                       gt_mask[:, :, None])[:,:policy.T-1].sum(dim=-1).mean()
+        if policy.loss_type == "l2":
+            loss_j = torch.norm((action - gt_actions[:,0:1,:]) * gt_mask[:, :, None], dim=-1).mean()
+        elif policy.loss_type == "l1":
+            loss_j = torch.abs((action - gt_actions[:,0:1,:]) * gt_mask[:, :, None]).sum(dim=-1).mean()
         return_dict["losses_iter"].append(loss_j.item())
         loss += loss_j
     loss_end = loss_j

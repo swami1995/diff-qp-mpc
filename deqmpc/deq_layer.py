@@ -263,7 +263,7 @@ class DEQBCLayer(DEQLayer):
         _re = a_prev.reshape(bsz, self.nu)
         _input = torch.cat([_re, _obs], dim=-1)
         _input1 = self.input_layer(_input)
-        z_out = self.deq_layer(_input1, z + self.embedding_params[iter][None])
+        z_out = self.deq_layer(_input1, z)
         u_out = self.output_layer(z_out)
         # ipdb.set_trace()
         u_out = u_out.reshape(-1, 1, self.nu)
