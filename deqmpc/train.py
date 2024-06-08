@@ -159,17 +159,17 @@ def main():
         traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
             traj_sample["state"])
     args.max_scale = ((traj_sample["state"] - traj_sample["state"][:, :1])*traj_sample["mask"][:, :, None]).reshape(num_samples*args.T,env.nx).abs().max(dim=0)[0].to(args.device)
-    # args.pos_scale = ((traj_sample["state"][:, 1:, :args.nq] - traj_sample["state"][:, :1, :args.nq])*traj_sample["mask"][:, 1:, None]).abs().sort(dim=0)[0][-100].to(args.device) # .sort(dim=0)[0][-100]
-    # args.vel_scale = (traj_sample["state"][:, 1:, args.nq:]*traj_sample["mask"][:, 1:, None]).abs().sort(dim=0)[0][-100].to(args.device) # .sort(dim=0)[0][-100]
+    args.pos_scale = ((traj_sample["state"][:, 1:, :args.nq] - traj_sample["state"][:, :1, :args.nq])*traj_sample["mask"][:, 1:, None]).abs().sort(dim=0)[0][-100].to(args.device) # .sort(dim=0)[0][-100]
+    args.vel_scale = (traj_sample["state"][:, 1:, args.nq:]*traj_sample["mask"][:, 1:, None]).abs().sort(dim=0)[0][-100].to(args.device) # .sort(dim=0)[0][-100]
     # ipdb.set_trace()
     if args.deq:
-        # policy = DEQMPCPolicy(args, env).to(args.device)
+        policy = DEQMPCPolicy(args, env).to(args.device)
         # policy = DEQMPCPolicyHistory(args, env).to(args.device)
         # policy = DEQMPCPolicyHistoryEstPred(args, env).to(args.device)
         # policy = DEQMPCPolicyFeedback(args, env).to(args.device)
         # policy = DEQMPCPolicyQ(args, env).to(args.device)
         # policy = DEQMPCPolicyEE2(args, env).to(args.device)
-        policy = DEQBCPolicy(args, env).to(args.device)
+        # policy = DEQBCPolicy(args, env).to(args.device)
         # save arguments
         if args.save:
             torch.save(args, "./logs/" + args.name + "/args")
@@ -238,10 +238,10 @@ def main():
             traj_sample["state"] = utils.unnormalize_states_cartpole_nlink(
                 traj_sample["state"])
             traj_sample["obs"] = utils.unnormalize_states_pendulum(traj_sample["obs"])
-        # elif args.env == "FlyingCartpole":
-        #     traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
-        #     traj_sample["state"])
-        #     traj_sample["obs"] = utils.unnormalize_states_flyingcartpole(traj_sample["obs"])
+        elif args.env == "FlyingCartpole":
+            traj_sample["state"] = utils.unnormalize_states_flyingcartpole(
+            traj_sample["state"])
+            traj_sample["obs"] = utils.unnormalize_states_flyingcartpole(traj_sample["obs"])
         # ipdb.set_trace()
         pretrain_done = False if (i < 5000 and args.pretrain) else True
         # warm start only after 1000 iterations

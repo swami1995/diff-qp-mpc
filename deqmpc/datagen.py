@@ -426,9 +426,14 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-swing-clip_new.pkl", "rb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub03-clip-s_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
-    # ipdb.set_trace()
+    # states = [[] for _ in range(len(gt_trajs))]
+    # for j in range(len(gt_trajs)):
+    #     for i in range(len(gt_trajs[j])):
+    #         states[j].append(gt_trajs[j][i][0])
+    # states = torch.tensor(states, dtype=torch.float32)
+    ipdb.set_trace()
     return gt_trajs
 
 

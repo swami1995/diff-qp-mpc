@@ -135,7 +135,7 @@ def eval_policy(args, env, policy, gt_trajs):
     state_hist = state[:,None,:]
     input_hist = torch.tensor([])
 
-    NRUNS = 200
+    NRUNS = 100
     # ipdb.set_trace()
     for i in range(NRUNS):      
         obs_in = state.clone()
@@ -153,7 +153,7 @@ def eval_policy(args, env, policy, gt_trajs):
         elif args.bc:
             u = policy_out["actions"][-1].squeeze(1) 
         # ipdb.set_trace()
-        u = gt_actions[:, i, :]
+        # u = gt_actions[:, i, :]
         u = env.action_clip(u)
         # print("nominal states\n", nominal_state)
         # print("nominal actions\n", nominal_action)
