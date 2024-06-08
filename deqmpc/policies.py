@@ -139,8 +139,9 @@ class DEQMPCPolicy(torch.nn.Module):
             x_t, x_ref, u_ref = out_mpc_dict["x_t"], out_mpc_dict["x_ref"], out_mpc_dict["u_ref"]
             # if (out_iter == 4900 or out_iter == 5000 or out_iter == 5500):
             # ipdb.set_trace()
-            # x_ref[:, :, :3] = x_gt[:, :, :3]
-            # x_ref[:, :, 6] = x_gt[:, :, 6]
+            # x_ref[:, 1:, :3] = x_gt[:, 1:, :3]
+            # x_ref[:, 1:, 6] = x_gt[:, 1:, 6]
+            # x_ref[:, 0] = x_gt[:, 0]
             xu_ref = torch.cat([x_ref, u_ref], dim=-1)
             nominal_states_net = x_ref
             nominal_states = nominal_states_net
@@ -167,6 +168,7 @@ class DEQMPCPolicy(torch.nn.Module):
 
         dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
         ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
+        ipdb.set_trace()
         self.network_time = []
         self.mpc_time = []
 
