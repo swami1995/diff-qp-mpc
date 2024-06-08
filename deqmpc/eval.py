@@ -95,6 +95,7 @@ def eval_policy(args, env, policy, gt_trajs):
 
     ## THESE ARE NOT USED TECHNICALLY
     # sample bsz random trajectories from gt_trajs and a random time step for each
+    args.T = 200
     traj_sample = sample_trajectory(gt_trajs, args.bsz, args.H, args.T)
     traj_sample = {k: v.to(args.device) for k, v in traj_sample.items()}
 
@@ -122,8 +123,8 @@ def eval_policy(args, env, policy, gt_trajs):
 
     # initial state
     # ipdb.set_trace()
-    state = gt_states[:, 0, :]
-    # state = env.reset(bsz=args.bsz)
+    # state = gt_states[:, 0, :]
+    state = env.reset(bsz=args.bsz)
     # state = torch.tensor([[0., 0., 0., 0.]], device=args.device)  
     # state = state.repeat(args.bsz, 1)
 
@@ -134,26 +135,36 @@ def eval_policy(args, env, policy, gt_trajs):
     state_hist = state[:,None,:]
     input_hist = torch.tensor([])
 
-    NRUNS = 80
+    NRUNS = 100
     # ipdb.set_trace()
     for i in range(NRUNS):      
         obs_in = state.clone()
-        # ipdb.set_trace()
-        # obs_in[:, 1] = (obs_in[:, 1]) % (2*np.pi)
         obs_in = env.state_clip(obs_in)
 
-        policy_out = policy(obs_in, gt_states, gt_actions,
-                            gt_mask, qp_solve=args.qp_solve, lastqp_solve=args.lastqp_solve)
-        nominal_state_net, nominal_state, nominal_action = policy_out["trajs"][-1]
-        # print("nominal states\n", nominal_state)
-        # print("nominal actions\n", nominal_action) 
+        if args.deq:
+            policy_out = policy(obs_in, gt_states, gt_actions,
+                                gt_mask, qp_solve=args.qp_solve, lastqp_solve=args.lastqp_solve)
+        else:
+            raise NotImplementedError
+        
+        if args.qp_solve or args.lastqp_solve:
+            nominal_state_net, nominal_state, nominal_action = policy_out["trajs"][-1]      
+            u = nominal_action[:, 0, :]
+        elif args.bc:
+            u = policy_out["actions"][-1].squeeze(1) 
         # ipdb.set_trace()
-        u = nominal_action[:, 0, :]
+        # u = gt_actions[:, i, :]
+        u = env.action_clip(u)
+        # print("nominal states\n", nominal_state)
+        # print("nominal actions\n", nominal_action)
+        # ipdb.set_trace()
         state = env.dynamics(state.to(torch.float64), u.to(torch.float64)).to(torch.float32)
         state = env.state_clip(state)
         state_hist = torch.cat((state_hist, state[:,None,:]), dim=1)
         input_hist = torch.cat((input_hist, u[:,None,:]), dim=1)
         # print(x_ref)
+        # ipdb.set_trace()
+        # print(torch.norm(state[4] - gt_states[4, i+1, :]))
         
     
     # print(state_hist[:,-1,:])

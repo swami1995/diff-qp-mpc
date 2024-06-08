@@ -163,6 +163,7 @@ class CGACGaussianPolicy(nn.Module):
                 (action_space.high - action_space.low) / 2.)
             self.action_bias = torch.FloatTensor(
                 (action_space.high + action_space.low) / 2.)
+            ipdb.set_trace()
 
     def forward(self, state):
         x = self.layers(state)

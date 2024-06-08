@@ -433,6 +433,44 @@ class DEQMPCPolicyQ(DEQMPCPolicy):
         policy_out = {"trajs": trajs, "dyn_res": dyn_res, "q_scaling": q_scalings}    
         return policy_out
 
+class DEQBCPolicy(torch.nn.Module):
+    def __init__(self, args, env):
+        super().__init__()
+        self.args = args
+        self.nu = env.nu
+        self.nx = env.nx
+        self.nq = args.nq
+        self.T = args.T
+        self.dt = env.dt
+        self.bsz = args.bsz
+        self.deq_reg = args.deq_reg
+        self.device = args.device
+        self.deq_iter = args.deq_iter
+        self.model = DEQBCLayer(args, env)
+        self.model.to(self.device)
+        self.loss_type = args.loss_type  # loss type for policy
+        self.network_time = []
+        self.action_clip = env.action_clip
+
+    def forward(self, x, x_gt, u_gt, mask, out_iter=0, qp_solve=True, lastqp_solve=False):
+        action = torch.zeros((x.shape[0], 1, self.nu), device=self.device)
+        z = self.model.init_z(x.shape[0])
+        out_aux_dict = {"z": z, 'u': action}
+        policy_out = self.deqmpc_iter(x, out_aux_dict, x_gt, u_gt, mask, out_iter)
+        return policy_out
+    
+    def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, out_iter=0): 
+        deq_iter = self.deq_iter
+        actions = []
+        for i in range(deq_iter):
+            in_obs_dict = {"o": obs}
+            out_aux_dict["iter"] = i
+            out_mpc_dict, out_aux_dict = self.model(in_obs_dict, out_aux_dict)
+            action = out_mpc_dict["u"]
+            actions.append(action)     
+            # ipdb.set_trace()
+        policy_out = {"actions": actions, "dyn_res": 0.0}    
+        return policy_out
 
 ######################
 # Loss computation
@@ -712,13 +750,18 @@ def compute_loss_deqmpc_qscaling(policy, gt_states, gt_actions, gt_mask, policy_
     return return_dict
 
 def compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out):
-    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter": []}
-    trajs = policy_out["trajs"]
+    return_dict = {"loss": 0.0, "loss_end": 0.0, "losses_var": [], "losses_iter_opt": [], "losses_iter_nn": [], "losses_iter_base": [], "losses_iter": [], "q_scaling": []}
+    actions = policy_out["actions"]
     loss = 0.0
-    nominal_states, nominal_actions = trajs
-    loss = add_loss_based_on_out_type(
-        policy, policy.out_type, policy.loss_type, gt_states, gt_actions, gt_mask, nominal_states, nominal_actions)
-    loss_end = torch.Tensor([0.0])
+    loss_j = 0.0
+    for j, (action) in enumerate(actions):
+        if policy.loss_type == "l2":
+            loss_j = torch.norm((action - gt_actions[:,0:1,:]) * gt_mask[:, :, None], dim=-1).mean()
+        elif policy.loss_type == "l1":
+            loss_j = torch.abs((action - gt_actions[:,0:1,:]) * gt_mask[:, :, None]).sum(dim=-1).mean()
+        return_dict["losses_iter"].append(loss_j.item())
+        loss += loss_j
+    loss_end = loss_j
     return_dict["loss"] = loss
     return_dict["loss_end"] = loss_end
     return return_dict
@@ -819,9 +862,10 @@ def compute_loss(policy, gt_states, gt_actions, gt_obs, gt_mask, policy_out, deq
         else:
             # deq -- pretrain
             return compute_loss_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out, coeffs=coeffs)
+            # return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out, coeffs=coeffs)
     else:
         # vanilla behavior cloning
-        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out, coeffs=coeffs)
+        return compute_loss_bc(policy, gt_states, gt_actions, gt_mask, policy_out)
     
 def compute_grad_coeff(policy, gt_states, gt_actions, gt_mask, policy_out, deq, deqmpc):
     if deq:

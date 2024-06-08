@@ -423,7 +423,7 @@ def get_expert_traj_cgac_mpc(env, num_traj):
         done = False
         reward_traj = 0
         while not done:
-            switch = (torch.norm(state[0, 6] - goal[6]) < 0.15) and (torch.norm(state[0, 13] - goal[13]) < 0.25)
+            switch = (torch.norm(state[0, 6] - goal[6]) < 0.3) and (torch.norm(state[0, 13] - goal[13]) < 0.5)
             if switch:   
                 print("switching to MPC...")
                 x_ref = goal.repeat(args.T, 1)
@@ -432,9 +432,10 @@ def get_expert_traj_cgac_mpc(env, num_traj):
                 xu_ref = torch.cat([x_ref, u_ref], dim=-1)
                 _, nominal_actions = mpc_policy(state, xu_ref, x_ref, u_ref, al_iters=10)
                 action = nominal_actions[0][0].unsqueeze(0)
-                # ipdb.set_trace()       
+            # ipdb.set_trace()          
             else:
                 action = policy.sample(state_rms)[2]
+            action = torch.clamp(action, env.action_space.low, env.action_space.high)
             next_state, reward, done, _ = env.step(action)
             num_goals = check_termination(next_state, num_goals, goal, env)
             traj.append((state[0].detach().cpu().numpy(), action[0].detach().cpu().numpy()))
@@ -460,7 +461,7 @@ def get_expert_traj_cgac_mpc(env, num_traj):
     # dynamics = lambda y: env.dynamics(y, torch.tensor(traj[0][1])[None])
     # print(env.dynamics(torch.tensor(trajectories[0][0][0])[None], torch.tensor(trajectories[0][0][1])[None]) - torch.tensor(trajectories[0][1][0])[None])
     # print(rk4(dynamics, torch.tensor(traj[0][0])[None], [0, env.dt]) - torch.tensor(traj[1][0])[None])
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return trajectories
 
 def save_expert_traj(env, num_traj, type="mpc"):
@@ -492,7 +493,7 @@ def save_expert_traj(env, num_traj, type="mpc"):
     if os.path.exists("data") == False:
         os.makedirs("data")
 
-    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-L0.50-swing.pkl", "wb") as f:
+    with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-swing-clip_new.pkl", "wb") as f:
         pickle.dump(expert_traj, f)
 
 
@@ -507,15 +508,14 @@ def get_gt_data(args, env, type="mpc"):
         A list of trajectories, each trajectory is a list of (state, action) tuples.
     """
     # with open('data/expert_traj_mpc-Pendulum-v0.pkl', 'rb') as f:#f'data/expert_traj_{type}-{env.spec_id}.pkl', 'rb') as f:
-    # with open(f"data/expert_traj_{type}-{env.spec_id}-ub0.3-swing-clip_new.pkl", "rb") as f:
     with open(f"data/expert_traj_{type}-{env.spec_id}-ub03-clip-s_new.pkl", "rb") as f:
         gt_trajs = pickle.load(f)
-    # states = [[] for i in range(len(gt_trajs))]
+    # states = [[] for _ in range(len(gt_trajs))]
     # for j in range(len(gt_trajs)):
-    #     for i in range(len(gt_trajs[0])):
+    #     for i in range(len(gt_trajs[j])):
     #         states[j].append(gt_trajs[j][i][0])
-
-    # ipdb.set_trace()
+    # states = torch.tensor(states, dtype=torch.float32)
+    ipdb.set_trace()
     return gt_trajs
 
 
