@@ -166,9 +166,8 @@ class DEQMPCPolicy(torch.nn.Module):
                 # Only supervise DEQ training or joint iterations for DEQMPC
                 trajs.append((nominal_states_net, nominal_states, nominal_actions))
 
-        dyn_res = (self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
-        ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, -1).norm(dim=1).mean().item()
-        ipdb.set_trace()
+        dyn_res = ((self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, 4, -1).norm(dim=-1)*mask[:, :-1]).mean().item()
+        # ipdb.set_trace()
         self.network_time = []
         self.mpc_time = []
 
