@@ -136,7 +136,7 @@ class DEQMPCPolicy(torch.nn.Module):
     def deqmpc_iter(self, obs, out_aux_dict, x_gt, u_gt, mask, qp_solve=False, lastqp_solve=False, out_iter=0): 
         deq_iter = self.deq_iter   
         opt_from_iter = 0
-        deq_stats = {"fwd_steps": [], "fwd_err": []}
+        deq_stats = {"fwd_steps": [], "fwd_err": [], "jac_loss": []}
         # ipdb.set_trace()
         trajs = []
         scales = []
@@ -174,6 +174,7 @@ class DEQMPCPolicy(torch.nn.Module):
             if "deq_fwd_err" in out_aux_dict and out_aux_dict["deq_fwd_err"] is not None:
                 deq_stats["fwd_err"].append(out_aux_dict["deq_fwd_err"])
                 deq_stats["fwd_steps"].append(out_aux_dict["deq_fwd_steps"])
+                deq_stats["jac_loss"].append(out_aux_dict["jac_loss"])
         dyn_res = ((self.tracking_mpc.dyn(x_gt[:, :-1].reshape(-1, self.nx).double(
         ), u_gt[:, :-1].reshape(-1, self.nu).double()) - x_gt[:,1:].reshape(-1, self.nx)).reshape(self.bsz, self.T-1, -1).norm(dim=-1)*mask[:, :-1]).norm(dim=-1).mean().item()
         # ipdb.set_trace()
@@ -616,8 +617,16 @@ def compute_gradratios_deqmpc(policy, gt_states, gt_actions, gt_mask, policy_out
     losses = torch.stack(losses, dim=0)
     loss_proxies = torch.stack(loss_proxies, dim=0)
     
-    grads = torch.stack([torch.autograd.grad(losses[i] + policy.deq_reg*loss_proxies[i], policy.model.out_layer[0].weight, retain_graph=True)[0].view(-1) for i in range(len(losses))], dim=0).norm(dim=-1)
-    grad_idx = torch.where(grads>1e-8)[0][0]
+    grads = torch.stack([torch.autograd.grad(losses[i] + policy.deq_reg*loss_proxies[i], policy.model.out_layer[0].weight, retain_graph=True)[0].view(-1) for i in range(len(losses))], dim=0).norm(dim=-1) 
+    # ipdb.set_trace()
+    # if (grads < 1e-8).all():
+    #     ipdb.set_trace()
+    if not (grads > 1e-8).all():
+        ipdb.set_trace()
+    try:
+        grad_idx = torch.where(grads>1e-8)[0][0]
+    except:
+        ipdb.set_trace()
     grad_ratios = grads[grad_idx] / grads
     grad_ratios = torch.where(grad_ratios > 1e6, torch.ones_like(grad_ratios), grad_ratios)
     # compute moving averages

@@ -171,9 +171,12 @@ class FlyingCartpole(torch.nn.Module):
         self.x_window = torch.tensor([5.0,5.0,5.0,deg2rad(45.0),deg2rad(45.0),deg2rad(45.0),np.pi,1.0,1.0,1.0,1.0,1.0,1.0,1.0]).to(device)
         self.targ_pos = torch.zeros(self.state_dim).to(self.device)
         self.targ_pos[6] = np.pi # upright pendulum
-        self.goal = torch.tensor([ 7.4720e-02, -1.3457e-01,  2.4619e-01,  5.9315e-05,  8.8729e-05,
-         9.2153e-02,  3.1420e+00,  6.5756e-04,  5.3479e-04,  1.1379e-03,
-        -2.6658e-04, -2.3303e-04,  3.0988e-04, -3.1224e-04])
+        # self.goal = torch.tensor([ 7.4720e-02, -1.3457e-01,  2.4619e-01,  5.9315e-05,  8.8729e-05,
+        #  9.2153e-02,  3.1420e+00,  6.5756e-04,  5.3479e-04,  1.1379e-03,
+        # -2.6658e-04, -2.3303e-04,  3.0988e-04, -3.1224e-04])
+        self.goal = torch.tensor([-4.8198e-01, -1.7375e-02,  2.6890e-01, -7.3554e-05,  2.2614e-04,
+        -2.1837e-01,  3.1425e+00, -2.9245e-02,  1.3690e-02, -2.9136e-03,
+         6.3533e-04,  1.2356e-03,  2.3545e-03,  2.1940e-04])
         self.spec_id = "FlyingCartpole-v0"
         # self.saved_ckpt_name = "cgac_checkpoint_FlyingCartpole_swingup400maxu21_rew801_initrew1finrew5_0alphapk75_thres1000_massp04_fixmaskmem_best"
         self.saved_ckpt_name = "cgac_checkpoint_FlyingCartpole_swingup300_ub0.3x0.3x_L0.5_ent7.5_memfix_seed7_ok"

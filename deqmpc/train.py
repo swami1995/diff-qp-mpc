@@ -306,9 +306,15 @@ def main():
 
         loss_dict = policies.compute_loss(policy, gt_states, gt_actions, gt_obs, gt_mask, policy_out, args.deq, pretrain_done, coeffs)
         loss = loss_dict["loss"]
+        net_jac_loss = 0.0#sum(policy_out["deq_stats"]["jac_loss"])
         time_diffs.append(end-start)
         optimizer.zero_grad()
-        loss.backward()
+        # ipdb.set_trace()
+        # if net_jac_loss.isnan() or net_jac_loss.isinf():
+        #     ipdb.set_trace()
+        (loss + 0.0*net_jac_loss).backward()
+        if policy.model.convdeq1.weight.grad.isnan().any():
+            ipdb.set_trace()
         losses.append(loss.item())
         # gradient clipping
         # torch.nn.utils.clip_grad_norm_(policy.model.parameters(), 4)

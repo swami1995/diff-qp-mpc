@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.autograd as autograd
 import ipdb
 from fp_solvers import broyden, anderson
+import numpy as np
 
 class GradNormLayer(nn.Module):
     def __init__(self, input_size):
@@ -65,6 +66,28 @@ def update_scales(policy, trajs, gt_out, init_states, gamma=0.98):
         error = traj[1][:, 1:] - gt_out[:, 1:]
         error = error.abs().median(dim=0).values
         policy.model.scales[i+1].data = policy.model.scales[i+1].data*gamma + (1-gamma)*error
+
+def jac_loss_estimate(f0, z0, vecs=2, create_graph=True):
+    """Estimating tr(J^TJ)=tr(JJ^T) via Hutchinson estimator
+
+    Args:
+        f0 (torch.Tensor): Output of the function f (whose J is to be analyzed)
+        z0 (torch.Tensor): Input to the function f
+        vecs (int, optional): Number of random Gaussian vectors to use. Defaults to 2.
+        create_graph (bool, optional): Whether to create backward graph (e.g., to train on this loss). 
+                                       Defaults to True.
+
+    Returns:
+        torch.Tensor: A 1x1 torch tensor that encodes the (shape-normalized) jacobian loss
+    """
+    vecs = vecs
+    result = 0
+    for i in range(vecs):
+        v = torch.randn(*z0.shape).to(z0)
+        vJ = torch.autograd.grad(f0, z0, v, retain_graph=True, create_graph=create_graph)[0]
+        result += vJ.norm()**2
+    return result / vecs / np.prod(z0.shape)
+
 
 class GatedResidual(nn.Module):
     def __init__(self, dim):
@@ -136,7 +159,7 @@ class DEQFixedPointLayer(nn.Module):
 
     def forward(self, x, zi=None, iter=0):
         if self.fp_type == 'single' or self.fp_type == 'multi':
-            logs = {"forward_steps": None, "forward_rel_err": None}
+            logs = {"forward_steps": None, "forward_rel_err": None, "jac_loss": 0.0}
             z = self.fp_operator(x, zi)
         elif self.fp_type == 'broyden' or self.fp_type == 'anderson':
             z, logs = self.fp_operator(x, zi, iter)
@@ -149,6 +172,8 @@ class DEQFixedPoint(nn.Module):
         self.solver = solver
         self.grad_type = kwargs['grad_type']
         self.kwargs = kwargs
+        self.training = True
+        self.hook = None
         
     def forward(self, x, zi=None, iter=0):
         # compute forward pass and re-engage autograd tape
@@ -156,24 +181,39 @@ class DEQFixedPoint(nn.Module):
             zi = torch.zeros_like(x)
         with torch.no_grad():
             z, self.forward_res, self.forward_steps, self.forward_rel_err = self.solver(lambda z : self.f(x, z), zi, solver_name=f'forward{iter}', **self.kwargs)
-        z = self.f(x, z)
         
         # set up Jacobian vector product (without additional forward calls)
-        if self.grad_type == 'fp_grad':
-            z0 = z.clone().detach().requires_grad_()
-            f0 = self.f(x, z0)
-        def backward_hook(grad):
+        jac_loss = 0
+        if self.training:
+            z = z.clone().detach().requires_grad_()
+            for i in range(2):
+                z = self.f(x, z)
+                # z = z
+            if True:#self.grad_type == 'fp_grad':
+                # z = z#.clone().detach().requires_grad_()
+                z0 = self.f(x, z)#.requires_grad_(True))
+            # Jacobian-related computations, see additional step above. For instance:
+            jac_loss = jac_loss_estimate(z0, z, vecs=1)
             # ipdb.set_trace()
-            if self.grad_type == 'last_step_grad':
-                return grad
-            elif self.grad_type == 'fp_grad':
-                g, self.backward_res, self.backward_steps, self.backward_rel_err = self.solver(lambda y : autograd.grad(f0, z0, y, retain_graph=True)[0] + grad,
-                                                   grad, solver_name=f'backward{iter}', **self.kwargs)
-            return g
+            if torch.autograd.grad(jac_loss, z, retain_graph=True)[0].isnan().sum():
+                ipdb.set_trace()
 
-        z.register_hook(backward_hook)
-        logs = {'forward_steps': self.forward_steps, 'forward_rel_err': self.forward_rel_err}
-        return z, logs
+            def backward_hook(grad):
+                # ipdb.set_trace()
+                # if self.hook is not None:
+                #     self.hook.remove()
+                #     torch.cuda.synchronize()
+                if self.grad_type == 'last_step_grad':
+                    return grad
+                elif self.grad_type == 'fp_grad':
+                    g, self.backward_res, self.backward_steps, self.backward_rel_err = self.solver(lambda y : autograd.grad(z, z0, y, retain_graph=True)[0] + grad,
+                                                    grad*0, solver_name=f'backward{iter}', **self.kwargs)
+                return g
+
+            # self.hook = 
+            # z0#.register_hook(backward_hook)
+        logs = {'forward_steps': self.forward_steps, 'forward_rel_err': self.forward_rel_err, 'jac_loss': jac_loss}
+        return z0, logs
     
 if __name__ == "__main__":
     # Test the GradNormLayer

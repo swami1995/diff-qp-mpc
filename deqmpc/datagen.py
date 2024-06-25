@@ -371,6 +371,22 @@ def get_gt_data(args, env, type="mpc"):
     # ipdb.set_trace()
     # gt_trajs = [traj for traj in gt_trajs if len(traj) > 199]
     # gtdata = merge_trajs_data(gt_trajs)
+
+    # states = [[] for i in range(len(gt_trajs))]
+    # for j in range(len(gt_trajs)):
+    #     for i in range(len(gt_trajs[0])):
+    #         states[j].append(gt_trajs[j][i][0])
+    # states = torch.tensor(np.array(states), dtype=torch.float32)
+    # mask = torch.logical_and((states - env.goal[None, None])[:,:,:3].norm(dim=-1) < 0.25, (states - env.goal[None, None])[:,:,6] < 0.1)
+    # cum_sum = torch.zeros_like(mask[:,0], dtype=torch.long)
+    # idxs = torch.zeros_like(mask[:,0], dtype=torch.long)
+    # for i in range(200):
+    #     cum_sum += 1
+    #     cum_sum *= mask[:,i]
+    #     if (cum_sum > 10).any():
+    #         cum_sum_mask = torch.logical_and(cum_sum > 10, idxs == 0)
+    #         idxs[cum_sum_mask] = i
+    # gt_trajs = [traj[:idxs[j]+1] for j, traj in enumerate(gt_trajs)]
     # ipdb.set_trace()
     return gt_trajs
 

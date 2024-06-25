@@ -1,9 +1,11 @@
 #!/bin/bash
 echo Starting training...
 
-python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeq_andersongoodgradlast_addmemzsimple_03data --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --grad_type last_step_grad --fp_type anderson --addmem --qp_solve
+# python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeqinpGN_andersongoodgradlast_addmemzsimple_phontom3ReLUjac00_03sdata --solver_type al --env FlyingCartpole --H 1 --hdim 512 --nq 7 --save --loss_type l1 --layer_type gcn --grad_type last_step_grad --fp_type anderson --addmem
 
-# python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeq_singlebptt_03data --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --save --loss_type l1 --layer_type gcn --grad_type bptt --fp_type single --qp_solve
+# python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeq_andersongoodgradlast_addmemzsimple_phontom3jac00_03sdata --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --grad_type last_step_grad --fp_type anderson --addmem --load --ckpt testnans/trial_policy
+
+python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_innerdeq_singlebpttRelu_03data --solver_type al --env FlyingCartpole --H 1 --hdim 1024 --nq 7 --save --loss_type l1 --layer_type gcn --grad_type bptt --fp_type single
 
 # python train.py --deq --deq_iter 6 --bsz 200 --T 5 --name lr1e3_ineqfix_mpcxyzRegcostpolepos_clipstab --solver_type al --env FlyingCartpole --H 1 --hdim 256 --nq 7 --test --loss_type l1 --layer_type gcn --qp_solve --eval --load --ckpt deqmpc__FlyingCartpole_lr1e3_ineqfix_mpcxyzRegcostpolepos_clipstab_T5_bsz200_deq_iter6_hdim256
 

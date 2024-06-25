@@ -91,7 +91,7 @@ class DEQLayer(torch.nn.Module):
         
         out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref}
         out_aux_dict = {"x": x_ref[:,:], "u": u_ref, "z": z_out, 
-                        "deq_fwd_err": logs["forward_rel_err"], "deq_fwd_steps": logs["forward_steps"]}
+                        "deq_fwd_err": logs["forward_rel_err"], "deq_fwd_steps": logs["forward_steps"], "jac_loss": logs["jac_loss"]}
         return out_mpc_dict, out_aux_dict
 
     def input_layer(self, x, obs, emb):
@@ -182,18 +182,18 @@ class DEQLayer(torch.nn.Module):
             self.node_encoder = nn.Sequential(
                 nn.Linear(self.nx, self.hdim),
                 nn.LayerNorm(self.hdim),
-                nn.Mish()
+                nn.ReLU()
             )
 
             self.x0_encoder = nn.Sequential(
                 nn.Linear(self.nx, self.hdim),
                 nn.LayerNorm(self.hdim),
-                nn.Mish()
+                nn.ReLU()
             )
 
             self.input_encoder = nn.Sequential(
                 nn.Conv1d(self.hdim*4, self.hdim*4, self.kernel_width, padding='same'),
-                nn.Mish(),
+                nn.ReLU(),
                 nn.Conv1d(self.hdim*4, self.hdim, self.kernel_width, padding='same'),
                 nn.GroupNorm(self.num_groups, self.hdim),
                 # nn.Mish()
@@ -226,8 +226,8 @@ class DEQLayer(torch.nn.Module):
                 self.hdim, self.hdim*self.deq_expand, self.kernel_width, padding='same')
             self.convdeq2 = torch.nn.Conv1d(
                 self.hdim*self.deq_expand, self.hdim, self.kernel_width, padding='same')
-            self.mishdeq1 = torch.nn.Mish()
-            self.mishdeq2 = torch.nn.Mish()
+            self.mishdeq1 = torch.nn.ReLU()
+            self.mishdeq2 = torch.nn.ReLU()
             self.gndeq1 = torch.nn.GroupNorm(
                 self.num_groups, self.hdim*self.deq_expand)
             self.gndeq2 = torch.nn.GroupNorm(self.num_groups, self.hdim)
@@ -247,7 +247,7 @@ class DEQLayer(torch.nn.Module):
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Conv1d(self.hdim, self.hdim, self.kernel_width, padding='same'),
                 torch.nn.GroupNorm(self.num_groups, self.hdim),
-                torch.nn.Mish(),
+                torch.nn.ReLU(),
                 torch.nn.Conv1d(self.hdim, self.nx, self.kernel_width_out, padding='same'),
             )
             self.gradnorm = GradNormLayer(self.out_dim)
@@ -298,7 +298,7 @@ class DEQLayerMem(DEQLayer):
         
         out_mpc_dict = {"x_t": obs, "x_ref": x_ref, "u_ref": u_ref}
         out_aux_dict = {"x": x_ref[:,:], "u": u_ref, "z": z_out, "mem": mem,
-                        "deq_fwd_err": logs["forward_rel_err"], "deq_fwd_steps": logs["forward_steps"]}
+                        "deq_fwd_err": logs["forward_rel_err"], "deq_fwd_steps": logs["forward_steps"], "jac_loss": logs["jac_loss"]}
         return out_mpc_dict, out_aux_dict
 
     def input_layer(self, x, obs, emb, mem):
@@ -381,18 +381,18 @@ class DEQLayerMem(DEQLayer):
             self.node_encoder = nn.Sequential(
                 nn.Linear(self.nx, self.hdim),
                 nn.LayerNorm(self.hdim),
-                nn.Mish()
+                nn.ReLU()
             )
 
             self.x0_encoder = nn.Sequential(
                 nn.Linear(self.nx, self.hdim),
                 nn.LayerNorm(self.hdim),
-                nn.Mish()
+                nn.ReLU()
             )
 
             self.input_encoder = nn.Sequential(
                 nn.Conv1d(self.hdim*5, self.hdim*4, self.kernel_width, padding='same'),
-                nn.Mish(),
+                nn.ReLU(),
                 nn.Conv1d(self.hdim*4, self.hdim, self.kernel_width, padding='same'),
                 nn.GroupNorm(self.num_groups, self.hdim),
                 # nn.Mish()
@@ -418,7 +418,7 @@ class DEQLayerMem(DEQLayer):
             self.out_layer = torch.nn.Sequential(
                 torch.nn.Conv1d(self.hdim, self.hdim, self.kernel_width, padding='same'),
                 torch.nn.GroupNorm(self.num_groups, self.hdim),
-                torch.nn.Mish(),
+                torch.nn.ReLU(),
                 torch.nn.Conv1d(self.hdim, self.nx, self.kernel_width_out, padding='same'),
             )
             self.gradnorm = GradNormLayer(self.out_dim)
